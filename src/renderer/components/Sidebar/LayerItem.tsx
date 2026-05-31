@@ -60,6 +60,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
   // const setActiveLayer = useProjectStore((state) => state.setActiveLayer);
   const updateProject = useProjectStore((state) => state.updateProject);
   const showToast = useUIStore((state) => state.showToast);
+  const setStylingLayerId = useUIStore((state) => state.setStylingLayerId);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(layer.name);
@@ -189,6 +190,12 @@ const LayerItem: React.FC<LayerItemProps> = ({
     }
   };
 
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setStylingLayerId(layer.id);
+    window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
+  };
+
   // const handleDelete = (e: React.MouseEvent) => {
   //   e.stopPropagation();
   //   removeLayer(projectId, layer.id);
@@ -212,6 +219,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
         dropPosition === "above" ? "border-t-2 border-t-accent" : ""
       } ${dropPosition === "below" ? "border-b-2 border-b-accent" : ""}`}
       onClick={(e) => onClick(e, layer.id)}
+      onDoubleClick={handleDoubleClick}
       draggable={!isEditing}
       onDragStart={(e) => onDragStart(e, index)}
       onDragOver={handleDragOver}

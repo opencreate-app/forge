@@ -22,6 +22,30 @@ export interface TextSpan {
 }
 
 /**
+ * Represents the style for a layer stroke.
+ */
+export interface StrokeStyle {
+  /** Size of the stroke in pixels. */
+  size: number;
+  /** Position of the stroke relative to the layer content. */
+  position: "outside" | "center" | "inside";
+  /** Opacity of the stroke from 0 to 100. */
+  opacity: number;
+  /** Color of the stroke. */
+  color: string;
+  /** Whether the stroke is enabled. */
+  enabled: boolean;
+}
+
+/**
+ * Collection of styles applied to a layer.
+ */
+export interface LayerStyles {
+  /** Stroke style configuration. */
+  stroke?: StrokeStyle;
+}
+
+/**
  * Represents a layer in the project. Layers can be raster images, text, or groups.
  */
 export interface Layer {
@@ -98,6 +122,8 @@ export interface Layer {
   parentId?: string | null;
   /** Whether the group is expanded in the UI. */
   isExpanded?: boolean;
+  /** Styles applied to the layer. */
+  styles?: LayerStyles;
 }
 
 /**

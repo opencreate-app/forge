@@ -13,6 +13,7 @@ import HomeScreen from "./components/HomeScreen";
 import NewProject from "./components/modals/NewProject";
 import ExportModal from "./components/modals/ExportModal";
 import { PreferencesModal } from "./components/modals/PreferencesModal";
+import { LayerStylesModal } from "./components/modals/LayerStylesModal";
 import { usePreferencesStore } from "./store/preferencesStore";
 import { useAutosave } from "./hooks/useAutosave";
 import { useToolStore } from "@store/toolStore";
@@ -38,6 +39,7 @@ function App() {
   const initializeStore = useProjectStore((state) => state.initialize);
   const projects = useProjectStore((state) => state.projects);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
+  const stylingLayerId = useUIStore((state) => state.stylingLayerId);
 
   React.useEffect(() => {
     initializeStore();
@@ -49,6 +51,7 @@ function App() {
   >(undefined);
   const [isExportModalOpen, setIsExportModalOpen] = React.useState(false);
   const [isPreferencesModalOpen, setIsPreferencesModalOpen] = React.useState(false);
+  const [isLayerStylesModalOpen, setIsLayerStylesModalOpen] = React.useState(false);
 
   // Placeholder for update availability
   const [isUpdateAvailable, setIsUpdateAvailable] = React.useState(null as any);
@@ -256,15 +259,18 @@ function App() {
       setIsExportModalOpen(true);
     };
     const handleOpenPreferences = () => setIsPreferencesModalOpen(true);
+    const handleOpenLayerStyles = () => setIsLayerStylesModalOpen(true);
 
     window.addEventListener("forge:new-project", handleNewProject);
     window.addEventListener("forge:open-export-modal", handleOpenExportModal as any);
     window.addEventListener("forge:open-preferences", handleOpenPreferences);
+    window.addEventListener("forge:open-layer-styles", handleOpenLayerStyles);
 
     return () => {
       window.removeEventListener("forge:new-project", handleNewProject);
       window.removeEventListener("forge:open-export-modal", handleOpenExportModal as any);
       window.removeEventListener("forge:open-preferences", handleOpenPreferences);
+      window.removeEventListener("forge:open-layer-styles", handleOpenLayerStyles);
     };
   }, []);
 
@@ -292,6 +298,11 @@ function App() {
         key={isPreferencesModalOpen ? "open" : "closed"}
         isOpen={isPreferencesModalOpen}
         onClose={() => setIsPreferencesModalOpen(false)}
+      />
+      <LayerStylesModal
+        key={stylingLayerId || "none"}
+        isOpen={isLayerStylesModalOpen}
+        onClose={() => setIsLayerStylesModalOpen(false)}
       />
       {/* Update Notification */}
       {isUpdateAvailable && !isUpdateAvailable.isClosed && (

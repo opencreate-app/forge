@@ -1690,51 +1690,154 @@ export class ForgeEngine {
     }
 
     const drawingCanvas = isEditing ? tool?.getDrawingCanvas() : null;
+    const hasStroke = layer.styles?.stroke?.enabled && layer.styles.stroke.size > 0;
 
     if (drawingCanvas) {
       ctx.drawImage(drawingCanvas.canvas, drawingCanvas.x, drawingCanvas.y);
+    } else if (hasStroke && layer.type !== "text") {
+      // Generic stroke implementation for non-text layers (Raster, Group, Smart Object)
+      this.renderLayerWithStroke(ctx, renderLayerTarget, editingState);
     } else {
-      switch (renderLayerTarget.type) {
-        case "raster":
-          RasterLayer.render(
-            ctx,
-            renderLayerTarget,
-            this.layerCanvasCache,
-            this.layerReadyCache,
-            this.imageCache,
-            () => this.render(),
-          );
-          break;
-        case "text":
-          TextLayer.render(
-            ctx,
-            renderLayerTarget,
-            this.layerCanvasCache,
-            this.layerReadyCache,
-            editingState,
-          );
-          break;
-        case "group":
-          GroupLayer.render(
-            ctx,
-            renderLayerTarget,
-            this.project!.layers,
-            (c, l) => this.renderLayer(c, l),
-            this.project!.width,
-            this.project!.height,
-          );
-          break;
-        case "smart_object":
-          SmartObjectLayer.render(
-            ctx,
-            renderLayerTarget,
-            this.layerCanvasCache,
-            this.layerReadyCache,
-            this.imageCache,
-            () => this.render(),
-          );
-          break;
+      this.renderLayerToContext(ctx, renderLayerTarget, editingState);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Helper to render the core content of a layer to a specific context.
+   */
+  private renderLayerToContext(
+    ctx: CanvasRenderingContext2D,
+    layer: Layer,
+    editingState?: any,
+  ) {
+    switch (layer.type) {
+      case "raster":
+        RasterLayer.render(
+          ctx,
+          layer,
+          this.layerCanvasCache,
+          this.layerReadyCache,
+          this.imageCache,
+          () => this.render(),
+        );
+        break;
+      case "text":
+        TextLayer.render(
+          ctx,
+          layer,
+          this.layerCanvasCache,
+          this.layerReadyCache,
+          editingState,
+        );
+        break;
+      case "group":
+        GroupLayer.render(
+          ctx,
+          layer,
+          this.project!.layers,
+          (c, l) => this.renderLayer(c, l),
+          this.project!.width,
+          this.project!.height,
+        );
+        break;
+      case "smart_object":
+        SmartObjectLayer.render(
+          ctx,
+          layer,
+          this.layerCanvasCache,
+          this.layerReadyCache,
+          this.imageCache,
+          () => this.render(),
+        );
+        break;
+    }
+  }
+
+  /**
+   * Helper to render a layer with a stroke effect using a generic buffer approach.
+   */
+  private renderLayerWithStroke(
+    ctx: CanvasRenderingContext2D,
+    layer: Layer,
+    editingState?: any,
+  ) {
+    const stroke = layer.styles!.stroke!;
+    const size = stroke.size;
+
+    // 1. Render layer content into an offscreen buffer
+    const buffer = document.createElement("canvas");
+    // Expand buffer to accommodate the stroke. Padding should be at least the size of the stroke.
+    const padding = Math.ceil(size);
+    buffer.width = layer.width + padding * 2;
+    buffer.height = layer.height + padding * 2;
+    const bctx = buffer.getContext("2d")!;
+    bctx.imageSmoothingEnabled = false;
+
+    // Adjust layer coordinates for the buffer
+    const bufferLayer = { ...layer, x: padding, y: padding };
+    this.renderLayerToContext(bctx, bufferLayer, editingState);
+
+    // 2. Apply Stroke effect
+    const strokeBuffer = document.createElement("canvas");
+    strokeBuffer.width = buffer.width;
+    strokeBuffer.height = buffer.height;
+    const sctx = strokeBuffer.getContext("2d")!;
+    sctx.imageSmoothingEnabled = false;
+    
+    sctx.save();
+    sctx.globalAlpha = stroke.opacity / 100;
+
+    if (stroke.position === "outside" || stroke.position === "center") {
+      const dilation = stroke.position === "outside" ? size : size / 2;
+      
+      // Hard dilation: draw the content at multiple offsets to create a thick outline
+      // We use a high number of steps to ensure a smooth, solid boundary for large strokes.
+      const steps = Math.max(12, Math.min(64, Math.ceil(dilation * 2.5)));
+      for (let i = 0; i < steps; i++) {
+        const angle = (i / steps) * Math.PI * 2;
+        sctx.drawImage(buffer, Math.cos(angle) * dilation, Math.sin(angle) * dilation);
       }
+
+      // Fill the dilated mask with the stroke color
+      sctx.globalCompositeOperation = "source-in";
+      sctx.fillStyle = stroke.color;
+      sctx.fillRect(0, 0, strokeBuffer.width, strokeBuffer.height);
+      
+      if (stroke.position === "outside") {
+        // Cut out the original content so only the outer edge remains
+        sctx.globalCompositeOperation = "destination-out";
+        sctx.drawImage(buffer, 0, 0);
+      }
+    } else if (stroke.position === "inside") {
+      // Inside stroke: draw content, fill with color restricted to alpha, then erode
+      sctx.drawImage(buffer, 0, 0);
+      sctx.globalCompositeOperation = "source-in";
+      sctx.fillStyle = stroke.color;
+      sctx.fillRect(0, 0, strokeBuffer.width, strokeBuffer.height);
+
+      // To make it an actual inner stroke, we remove the eroded center
+      sctx.globalCompositeOperation = "destination-out";
+      const erosion = size;
+      const steps = Math.max(12, Math.min(64, Math.ceil(erosion * 2.5)));
+      for (let i = 0; i < steps; i++) {
+        const angle = (i / steps) * Math.PI * 2;
+        sctx.drawImage(buffer, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
+      }
+    }
+    sctx.restore();
+
+    // 3. Composite final result back to the main context
+    ctx.save();
+    // Offset the composite to align with original layer position
+    ctx.translate(layer.x - padding, layer.y - padding);
+    
+    if (stroke.position === "inside") {
+      ctx.drawImage(buffer, 0, 0);
+      ctx.drawImage(strokeBuffer, 0, 0);
+    } else {
+      ctx.drawImage(strokeBuffer, 0, 0);
+      ctx.drawImage(buffer, 0, 0);
     }
     ctx.restore();
   }
