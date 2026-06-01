@@ -35,6 +35,10 @@ export interface StrokeStyle {
   color: string;
   /** Whether the stroke is enabled. */
   enabled: boolean;
+  /** Whether the stroke has rounded corners. */
+  rounded: boolean;
+  /** Whether the stroke uses anti-aliasing. */
+  antiAlias: boolean;
 }
 
 /**

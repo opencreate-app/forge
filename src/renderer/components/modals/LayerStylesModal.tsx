@@ -38,6 +38,8 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   );
   const [strokeOpacity, setStrokeOpacity] = useState(layer?.styles?.stroke?.opacity ?? 100);
   const [strokeColor, setStrokeColor] = useState(layer?.styles?.stroke?.color ?? "#000000");
+  const [strokeRounded, setStrokeRounded] = useState(layer?.styles?.stroke?.rounded ?? true);
+  const [strokeAntiAlias, setStrokeAntiAlias] = useState(layer?.styles?.stroke?.antiAlias ?? true);
 
   const updateLayer = useProjectStore((state) => state.updateLayer);
   const pushHistory = useProjectStore((state) => state.pushHistory);
@@ -59,6 +61,8 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
         position: strokePosition,
         opacity: strokeOpacity,
         color: strokeColor,
+        rounded: strokeRounded,
+        antiAlias: strokeAntiAlias,
       },
     };
 
@@ -210,6 +214,40 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
                       onChange={(e) => setStrokeColor(e.target.value)}
                       className="flex-1 bg-bg-primary border border-border text-text p-2 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-accent transition-all"
                     />
+                  </div>
+                </div>
+
+                {/* Additional Options */}
+                <div className="flex gap-6 items-center pt-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="stroke-rounded"
+                      type="checkbox"
+                      checked={strokeRounded}
+                      onChange={(e) => setStrokeRounded(e.target.checked)}
+                      className="w-4 h-4 accent-accent cursor-pointer rounded"
+                    />
+                    <label
+                      htmlFor="stroke-rounded"
+                      className="text-xs text-text font-medium cursor-pointer"
+                    >
+                      Rounded
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="stroke-antialias"
+                      type="checkbox"
+                      checked={strokeAntiAlias}
+                      onChange={(e) => setStrokeAntiAlias(e.target.checked)}
+                      className="w-4 h-4 accent-accent cursor-pointer rounded"
+                    />
+                    <label
+                      htmlFor="stroke-antialias"
+                      className="text-xs text-text font-medium cursor-pointer"
+                    >
+                      Anti-aliasing
+                    </label>
                   </div>
                 </div>
               </div>

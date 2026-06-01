@@ -20,6 +20,7 @@ import {
   // quantizeImageData,
   safeBase64FromBuffer,
 } from "../utils/imageUtils";
+import { applyAlphaThreshold } from "../utils/imageUtils";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TextLayer } from "../layers/TextLayer";
 import { GroupLayer } from "../layers/GroupLayer";
@@ -1682,8 +1683,8 @@ export class ForgeEngine {
         };
       }
     } else if (layer.rotation) {
-      const centerX = layer.x + layer.width / 2;
-      const centerY = layer.y + layer.height / 2;
+      const centerX = Math.round(layer.x + layer.width / 2);
+      const centerY = Math.round(layer.y + layer.height / 2);
       ctx.translate(centerX, centerY);
       ctx.rotate((layer.rotation * Math.PI) / 180);
       ctx.translate(-centerX, -centerY);
@@ -1768,9 +1769,9 @@ export class ForgeEngine {
     // 1. Render layer content into an offscreen buffer
     const buffer = document.createElement("canvas");
     // Expand buffer to accommodate the stroke. Padding should be at least the size of the stroke.
-    const padding = Math.ceil(size);
-    buffer.width = layer.width + padding * 2;
-    buffer.height = layer.height + padding * 2;
+    const padding = Math.ceil(size) + 2; // Extra 2px safety margin
+    buffer.width = Math.ceil(layer.width + padding * 2);
+    buffer.height = Math.ceil(layer.height + padding * 2);
     const bctx = buffer.getContext("2d")!;
     bctx.imageSmoothingEnabled = false;
 
@@ -1783,61 +1784,124 @@ export class ForgeEngine {
     strokeBuffer.width = buffer.width;
     strokeBuffer.height = buffer.height;
     const sctx = strokeBuffer.getContext("2d")!;
-    sctx.imageSmoothingEnabled = false;
+    sctx.imageSmoothingEnabled = true; // Enable smoothing for the softening phase
     
     sctx.save();
-    sctx.globalAlpha = stroke.opacity / 100;
-
+    
+    // Create the mask for the stroke
     if (stroke.position === "outside" || stroke.position === "center") {
       const dilation = stroke.position === "outside" ? size : size / 2;
-      
-      // Hard dilation: draw the content at multiple offsets to create a thick outline
-      // We use a high number of steps to ensure a smooth, solid boundary for large strokes.
-      const steps = Math.max(12, Math.min(64, Math.ceil(dilation * 2.5)));
-      for (let i = 0; i < steps; i++) {
-        const angle = (i / steps) * Math.PI * 2;
-        sctx.drawImage(buffer, Math.cos(angle) * dilation, Math.sin(angle) * dilation);
-      }
 
-      // Fill the dilated mask with the stroke color
-      sctx.globalCompositeOperation = "source-in";
-      sctx.fillStyle = stroke.color;
-      sctx.fillRect(0, 0, strokeBuffer.width, strokeBuffer.height);
-      
-      if (stroke.position === "outside") {
-        // Cut out the original content so only the outer edge remains
-        sctx.globalCompositeOperation = "destination-out";
-        sctx.drawImage(buffer, 0, 0);
+      if (stroke.rounded) {
+        // Circular dilation for rounded corners
+        const radii = [dilation];
+        if (dilation > 2) radii.push(dilation * 0.5);
+        if (dilation > 6) radii.push(dilation * 0.75, dilation * 0.25);
+
+        radii.forEach((r) => {
+          const steps = Math.max(16, Math.min(128, Math.ceil(r * 6)));
+          for (let i = 0; i < steps; i++) {
+            const angle = (i / steps) * Math.PI * 2;
+            sctx.drawImage(buffer, Math.cos(angle) * r, Math.sin(angle) * r);
+          }
+        });
+      } else {
+        // Square dilation for sharp corners
+        // We use a separable approach for efficiency: horizontal then vertical
+        const tempBuffer = document.createElement("canvas");
+        tempBuffer.width = buffer.width;
+        tempBuffer.height = buffer.height;
+        const tctx = tempBuffer.getContext("2d")!;
+
+        // 1. Horizontal dilation
+        for (let x = -dilation; x <= dilation; x++) {
+          tctx.drawImage(buffer, x, 0);
+        }
+
+        // 2. Vertical dilation (using the horizontally dilated buffer)
+        for (let y = -dilation; y <= dilation; y++) {
+          sctx.drawImage(tempBuffer, 0, y);
+        }
       }
     } else if (stroke.position === "inside") {
-      // Inside stroke: draw content, fill with color restricted to alpha, then erode
+      // Inside stroke: start with content, then subtract eroded version
       sctx.drawImage(buffer, 0, 0);
       sctx.globalCompositeOperation = "source-in";
-      sctx.fillStyle = stroke.color;
-      sctx.fillRect(0, 0, strokeBuffer.width, strokeBuffer.height);
 
-      // To make it an actual inner stroke, we remove the eroded center
-      sctx.globalCompositeOperation = "destination-out";
+      // Create erosion mask
+      const erosionBuffer = document.createElement("canvas");
+      erosionBuffer.width = buffer.width;
+      erosionBuffer.height = buffer.height;
+      const ectx = erosionBuffer.getContext("2d")!;
+
       const erosion = size;
-      const steps = Math.max(12, Math.min(64, Math.ceil(erosion * 2.5)));
-      for (let i = 0; i < steps; i++) {
-        const angle = (i / steps) * Math.PI * 2;
-        sctx.drawImage(buffer, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
+
+      if (stroke.rounded) {
+        const steps = Math.max(16, Math.min(128, Math.ceil(erosion * 6)));
+        // To erode, we draw the content shifted in all directions and use 'destination-in'
+        ectx.drawImage(buffer, 0, 0);
+        ectx.globalCompositeOperation = "destination-in";
+        for (let i = 0; i < steps; i++) {
+          const angle = (i / steps) * Math.PI * 2;
+          ectx.drawImage(buffer, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
+        }
+      } else {
+        // Square erosion
+        const tempErosionBuffer = document.createElement("canvas");
+        tempErosionBuffer.width = buffer.width;
+        tempErosionBuffer.height = buffer.height;
+        const tetctx = tempErosionBuffer.getContext("2d")!;
+
+        // 1. Horizontal erosion
+        tetctx.drawImage(buffer, 0, 0);
+        tetctx.globalCompositeOperation = "destination-in";
+        for (let x = -erosion; x <= erosion; x++) {
+          tetctx.drawImage(buffer, x, 0);
+        }
+
+        // 2. Vertical erosion
+        ectx.drawImage(tempErosionBuffer, 0, 0);
+        ectx.globalCompositeOperation = "destination-in";
+        for (let y = -erosion; y <= erosion; y++) {
+          ectx.drawImage(tempErosionBuffer, 0, y);
+        }
       }
+
+      sctx.globalCompositeOperation = "destination-out";
+      sctx.drawImage(erosionBuffer, 0, 0);
+    }
+
+    // Fill the stroke mask with color and opacity
+    sctx.globalCompositeOperation = "source-in";
+    sctx.fillStyle = stroke.color;
+    sctx.globalAlpha = stroke.opacity / 100;
+    
+    // Softening phase for raster AA
+    if (stroke.antiAlias && layer.type !== "text") {
+       sctx.shadowColor = stroke.color;
+       sctx.shadowBlur = 0.5;
+    }
+
+    sctx.fillRect(0, 0, strokeBuffer.width, strokeBuffer.height);
+
+    if (!stroke.antiAlias) {
+      applyAlphaThreshold(strokeBuffer);
     }
     sctx.restore();
 
     // 3. Composite final result back to the main context
     ctx.save();
-    // Offset the composite to align with original layer position
-    ctx.translate(layer.x - padding, layer.y - padding);
+    // Use Math.round for pixel-perfect alignment
+    const destX = Math.round(layer.x - padding);
+    const destY = Math.round(layer.y - padding);
     
     if (stroke.position === "inside") {
-      ctx.drawImage(buffer, 0, 0);
-      ctx.drawImage(strokeBuffer, 0, 0);
+      ctx.drawImage(buffer, destX, destY);
+      ctx.drawImage(strokeBuffer, destX, destY);
     } else {
-      ctx.drawImage(strokeBuffer, 0, 0);
-      ctx.drawImage(buffer, 0, 0);
+      // Outside/Center: draw stroke first, then content on top (fixes halos)
+      ctx.drawImage(strokeBuffer, destX, destY);
+      ctx.drawImage(buffer, destX, destY);
     }
     ctx.restore();
   }

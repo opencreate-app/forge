@@ -137,3 +137,20 @@ export function safeBase64FromBuffer(buffer: ArrayBuffer): string {
 
   return btoa(binary);
 }
+
+/**
+ * Applies a binary threshold to the alpha channel of a canvas.
+ * This is useful for creating hard, crisp edges on anti-aliased content (like strokes).
+ * @param canvas The canvas to modify.
+ * @param threshold The alpha threshold (0-255). Values >= threshold become 255, others 0.
+ */
+export function applyAlphaThreshold(canvas: HTMLCanvasElement, threshold: number = 128) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let i = 3; i < data.length; i += 4) {
+    data[i] = data[i] >= threshold ? 255 : 0;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+

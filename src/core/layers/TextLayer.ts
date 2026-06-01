@@ -2,6 +2,7 @@
  * Purpose: Specialized rendering engine for text layers, supporting rich text styling, layout (point/area), caret management, and pixel-aligned rendering.
  */
 import { Layer } from "@/renderer/store/projectStore";
+import { applyAlphaThreshold } from "../utils/imageUtils";
 
 /**
  * Specialized rendering engine for text layers.
@@ -55,7 +56,7 @@ export class TextLayer {
 
     const spansKey = JSON.stringify(layer.textSpans || []);
     const strokeKey = layer.styles?.stroke?.enabled
-      ? `${layer.styles.stroke.size}|${layer.styles.stroke.position}|${layer.styles.stroke.color}|${layer.styles.stroke.opacity}`
+      ? `${layer.styles.stroke.size}|${layer.styles.stroke.position}|${layer.styles.stroke.color}|${layer.styles.stroke.opacity}|${layer.styles.stroke.rounded}|${layer.styles.stroke.antiAlias}`
       : "none";
     const propsKey = `${layer.text}|${spansKey}|${layer.fontSize}|${layer.fontFamily}|${layer.fontWeight}|${layer.color}|${layer.textAlign}|${layer.tracking}|${layer.lineHeight}|${layer.width}|${layer.height}|${textRendering}|${textOverflow}|${strokeKey}`;
 
@@ -68,12 +69,18 @@ export class TextLayer {
     // Width: For area text, it's constrained by layer.width, but point text can overflow.
     // If textOverflow is true, we allow the canvas to grow to fit the content.
     const strokePadding = layer.styles?.stroke?.enabled ? layer.styles.stroke.size * 2 : 0;
-    const targetWidth = (textOverflow ? Math.max(layer.width, metrics.width) : Math.max(1, layer.width)) + strokePadding * 2;
+    const targetWidth =
+      (textOverflow ? Math.max(layer.width, metrics.width) : Math.max(1, layer.width)) +
+      strokePadding * 2;
 
     // Height: Allow expansion if textOverflow is true.
     // We add a safety margin for character descents (like 'g', 'j', 'p', 'y').
     const safetyMargin = (layer.fontSize || 24) * 0.5;
-    const targetHeight = (textOverflow ? Math.max(layer.height, metrics.height + safetyMargin) : Math.max(1, layer.height)) + strokePadding * 2;
+    const targetHeight =
+      (textOverflow
+        ? Math.max(layer.height, metrics.height + safetyMargin)
+        : Math.max(1, layer.height)) +
+      strokePadding * 2;
 
     // Calculate horizontal offset for center/right aligned text that overflows the left boundary
     let offsetX = strokePadding;
@@ -98,9 +105,107 @@ export class TextLayer {
       (cachedCanvas as any)._propsKey = propsKey;
       const cctx = cachedCanvas.getContext("2d")!;
 
-      // Render text at 1:1 scale into the cache
-      // Apply offset if text overflows to the left or has stroke
-      this.drawTextToContext(cctx, { ...layer, x: offsetX, y: strokePadding });
+      // 1. Render text into a temporary buffer
+      const textBuffer = document.createElement("canvas");
+      textBuffer.width = cachedCanvas.width;
+      textBuffer.height = cachedCanvas.height;
+      const tbctx = textBuffer.getContext("2d")!;
+      this.drawTextToContext(tbctx, { ...layer, x: offsetX, y: strokePadding });
+
+      const stroke = layer.styles?.stroke;
+      if (stroke?.enabled && stroke.size > 0) {
+        // 2. Apply Raster Stroke logic (consistent with ForgeEngine)
+        const strokeBuffer = document.createElement("canvas");
+        strokeBuffer.width = cachedCanvas.width;
+        strokeBuffer.height = cachedCanvas.height;
+        const sctx = strokeBuffer.getContext("2d")!;
+        const size = stroke.size;
+
+        if (stroke.position === "outside" || stroke.position === "center") {
+          const dilation = stroke.position === "outside" ? size : size / 2;
+
+          if (stroke.rounded) {
+            // Circular dilation
+            const radii = [dilation];
+            if (dilation > 2) radii.push(dilation * 0.5);
+            if (dilation > 6) radii.push(dilation * 0.75, dilation * 0.25);
+            radii.forEach((r) => {
+              const steps = Math.max(16, Math.min(128, Math.ceil(r * 6)));
+              for (let i = 0; i < steps; i++) {
+                const angle = (i / steps) * Math.PI * 2;
+                sctx.drawImage(textBuffer, Math.cos(angle) * r, Math.sin(angle) * r);
+              }
+            });
+          } else {
+            // Square dilation
+            const tempBuffer = document.createElement("canvas");
+            tempBuffer.width = textBuffer.width;
+            tempBuffer.height = textBuffer.height;
+            const tctx = tempBuffer.getContext("2d")!;
+            for (let x = -dilation; x <= dilation; x++) {
+              tctx.drawImage(textBuffer, x, 0);
+            }
+            for (let y = -dilation; y <= dilation; y++) {
+              sctx.drawImage(tempBuffer, 0, y);
+            }
+          }
+        } else if (stroke.position === "inside") {
+          sctx.drawImage(textBuffer, 0, 0);
+          sctx.globalCompositeOperation = "source-in";
+          const erosionBuffer = document.createElement("canvas");
+          erosionBuffer.width = textBuffer.width;
+          erosionBuffer.height = textBuffer.height;
+          const ectx = erosionBuffer.getContext("2d")!;
+          const erosion = size;
+          if (stroke.rounded) {
+            const steps = Math.max(16, Math.min(128, Math.ceil(erosion * 6)));
+            ectx.drawImage(textBuffer, 0, 0);
+            ectx.globalCompositeOperation = "destination-in";
+            for (let i = 0; i < steps; i++) {
+              const angle = (i / steps) * Math.PI * 2;
+              ectx.drawImage(textBuffer, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
+            }
+          } else {
+            const tempErosionBuffer = document.createElement("canvas");
+            tempErosionBuffer.width = textBuffer.width;
+            tempErosionBuffer.height = textBuffer.height;
+            const tetctx = tempErosionBuffer.getContext("2d")!;
+            tetctx.drawImage(textBuffer, 0, 0);
+            tetctx.globalCompositeOperation = "destination-in";
+            for (let x = -erosion; x <= erosion; x++) {
+              tetctx.drawImage(textBuffer, x, 0);
+            }
+            ectx.drawImage(tempErosionBuffer, 0, 0);
+            ectx.globalCompositeOperation = "destination-in";
+            for (let y = -erosion; y <= erosion; y++) {
+              ectx.drawImage(tempErosionBuffer, 0, y);
+            }
+          }
+          sctx.globalCompositeOperation = "destination-out";
+          sctx.drawImage(erosionBuffer, 0, 0);
+        }
+
+        // Fill stroke color and opacity
+        sctx.globalCompositeOperation = "source-in";
+        sctx.fillStyle = stroke.color;
+        sctx.globalAlpha = stroke.opacity / 100;
+        sctx.fillRect(0, 0, strokeBuffer.width, strokeBuffer.height);
+
+        // 3. Combine in cachedCanvas
+        if (stroke.position === "inside") {
+          cctx.drawImage(textBuffer, 0, 0);
+          cctx.drawImage(strokeBuffer, 0, 0);
+        } else {
+          cctx.drawImage(strokeBuffer, 0, 0);
+          cctx.drawImage(textBuffer, 0, 0);
+        }
+
+        if (!stroke.antiAlias) {
+          applyAlphaThreshold(cachedCanvas);
+        }
+      } else {
+        cctx.drawImage(textBuffer, 0, 0);
+      }
 
       if (textRendering === "nearest") {
         this.applyAlphaThreshold(cctx, cachedCanvas.width, cachedCanvas.height);
@@ -114,8 +219,9 @@ export class TextLayer {
     if (textRendering === "nearest") {
       ctx.imageSmoothingEnabled = false;
     }
-    // Draw the cached text, compensating for the horizontal offset and padding
-    ctx.drawImage(cachedCanvas, layer.x - offsetX, layer.y - strokePadding);
+    // Draw the cached text, compensating for the horizontal offset and padding.
+    // Use Math.round to ensure pixel alignment and consistent stroke thickness.
+    ctx.drawImage(cachedCanvas, Math.round(layer.x - offsetX), Math.round(layer.y - strokePadding));
     ctx.restore();
   }
 
@@ -388,6 +494,7 @@ export class TextLayer {
     const baseFontWeight = layer.fontWeight || "normal";
     const baseColor = layer.color || "#000000";
 
+    const roundedY = Math.round(y);
     let currentX = x;
 
     for (let i = 0; i < text.length; i++) {
@@ -400,41 +507,10 @@ export class TextLayer {
       const color = style.color || baseColor;
 
       ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}"`;
+      ctx.fillStyle = color;
 
-      // Handle Stroke
-      const stroke = layer.styles?.stroke;
-      if (stroke?.enabled && stroke.size > 0) {
-        ctx.save();
-        ctx.strokeStyle = stroke.color;
-        ctx.globalAlpha *= stroke.opacity / 100;
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-
-        if (stroke.position === "outside") {
-          ctx.lineWidth = stroke.size * 2;
-          ctx.strokeText(char, currentX, y);
-          ctx.fillStyle = color;
-          ctx.fillText(char, currentX, y);
-        } else if (stroke.position === "center") {
-          ctx.lineWidth = stroke.size;
-          ctx.strokeText(char, currentX, y);
-          ctx.fillStyle = color;
-          ctx.fillText(char, currentX, y);
-        } else if (stroke.position === "inside") {
-          // Inside stroke is tricky with strokeText. 
-          // One way is to clip to the text path and then stroke with 2x width.
-          ctx.save();
-          ctx.fillText(char, currentX, y); // Draw base text first
-          ctx.globalCompositeOperation = "source-atop";
-          ctx.lineWidth = stroke.size * 2;
-          ctx.strokeText(char, currentX, y);
-          ctx.restore();
-        }
-        ctx.restore();
-      } else {
-        ctx.fillStyle = color;
-        ctx.fillText(char, currentX, y);
-      }
+      const roundedX = Math.round(currentX);
+      ctx.fillText(char, roundedX, roundedY);
 
       currentX += ctx.measureText(char).width + tracking;
     }
