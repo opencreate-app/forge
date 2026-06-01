@@ -39,7 +39,6 @@ function App() {
   const initializeStore = useProjectStore((state) => state.initialize);
   const projects = useProjectStore((state) => state.projects);
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
-  const stylingLayerId = useUIStore((state) => state.stylingLayerId);
 
   React.useEffect(() => {
     initializeStore();
@@ -295,12 +294,10 @@ function App() {
         project={exportProject || undefined}
       />{" "}
       <PreferencesModal
-        key={isPreferencesModalOpen ? "open" : "closed"}
         isOpen={isPreferencesModalOpen}
         onClose={() => setIsPreferencesModalOpen(false)}
       />
       <LayerStylesModal
-        key={stylingLayerId || "none"}
         isOpen={isLayerStylesModalOpen}
         onClose={() => setIsLayerStylesModalOpen(false)}
       />

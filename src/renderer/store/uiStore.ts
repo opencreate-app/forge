@@ -23,6 +23,7 @@ interface UIState {
   activeModals: Set<string>;
   stylingLayerId: string | null;
   lastLayerStyleEffects: Record<string, any>;
+  modalSettings: Record<string, { x: number; y: number; width?: number; height?: number }>;
   setActiveTab: (tab: "home" | string) => void;
   removeFromHistory: (tabId: string) => void;
   showToast: (message: string, type?: "info" | "warning" | "error", duration?: number) => void;
@@ -36,6 +37,10 @@ interface UIState {
   isAnyModalOpen: () => boolean;
   setStylingLayerId: (layerId: string | null) => void;
   setLastLayerStyleEffect: (layerId: string, effectId: any) => void;
+  setModalSettings: (
+    modalId: string,
+    settings: { x: number; y: number; width?: number; height?: number },
+  ) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -54,6 +59,7 @@ export const useUIStore = create<UIState>()(
       activeModals: new Set(),
       stylingLayerId: null,
       lastLayerStyleEffects: {},
+      modalSettings: {},
       setActiveTab: (tab) =>
         set((state) => {
           const newHistory = state.tabHistory.filter((id) => id !== tab);
@@ -102,6 +108,10 @@ export const useUIStore = create<UIState>()(
         set((state) => ({
           lastLayerStyleEffects: { ...state.lastLayerStyleEffects, [layerId]: effectId },
         })),
+      setModalSettings: (modalId, settings) =>
+        set((state) => ({
+          modalSettings: { ...state.modalSettings, [modalId]: settings },
+        })),
     }),
     {
       name: "forge-ui-storage",
@@ -114,6 +124,7 @@ export const useUIStore = create<UIState>()(
         lastExportFormat: state.lastExportFormat,
         lastExportQuality: state.lastExportQuality,
         lastLockAspectRatio: state.lastLockAspectRatio,
+        modalSettings: state.modalSettings,
       }),
     },
   ),

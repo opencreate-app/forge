@@ -32,6 +32,12 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
     return project.layers.find((l) => l.id === stylingLayerId);
   }, [project, stylingLayerId]);
 
+  // Keep a reference to the last valid layer so it stays visible during exit animation
+  const [renderedLayer, setRenderedLayer] = useState(layer);
+  if (layer && layer !== renderedLayer) {
+    setRenderedLayer(layer);
+  }
+
   const [activeEffectId, setActiveEffectId] = useState<keyof LayerStyles | null>(
     layer ? lastLayerStyleEffects[layer.id] || null : null,
   );
@@ -54,11 +60,12 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   };
 
   const handleApply = () => {
-    if (!project || !layer) return;
+    if (!project || !renderedLayer) return;
 
     pushHistory(project.id, "Layer Style");
-    updateLayer(project.id, layer.id, { styles: localStyles });
-    if (layer) setLastLayerStyleEffect(layer.id, activeEffectId ? activeEffectId : null);
+    updateLayer(project.id, renderedLayer.id, { styles: localStyles });
+    if (renderedLayer)
+      setLastLayerStyleEffect(renderedLayer.id, activeEffectId ? activeEffectId : null);
     handleClose();
   };
 
@@ -92,7 +99,7 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
     }));
   };
 
-  if (!layer) return null;
+  if (!renderedLayer && !isOpen) return null;
 
   const activeEffectDef = activeEffectId
     ? LAYER_STYLE_DEFINITIONS.find((d) => d.id === activeEffectId)
@@ -106,15 +113,19 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
       id="layer-styles-modal"
       isOpen={isOpen}
       onClose={handleClose}
-      title={`Layer Styles - ${layer.name}`}
+      title={`Layer Styles - ${renderedLayer?.name || "..."}`}
       icon={EffectsIcon}
       width="700px"
       height="550px"
+      draggable
+      resizable
+      centered={false}
+      closeOnOutsideClick={false}
     >
       <div className="flex flex-1 overflow-hidden">
         {/* Left Styles List (Photoshop-style) */}
         <div
-          className="w-[200px] border-r border-bg-tertiary flex flex-col bg-[#1e1e1e] cursor-default"
+          className="w-[200px] flex-shrink-0 border-r border-bg-tertiary flex flex-col bg-[#1e1e1e] cursor-default"
           onClick={() => {
             setActiveEffectId(null);
             // if (layer) setLastLayerStyleEffect(layer.id, null);
