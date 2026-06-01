@@ -44,17 +44,32 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   const [localStyles, setLocalStyles] = useState<LayerStyles>(layer?.styles || {});
   const [prevLayerId, setPrevLayerId] = useState(layer?.id);
 
+  // Intelligent History Tracking
+  const [hasPushedHistory, setHasPushedHistory] = useState(false);
+
   if (layer?.id !== prevLayerId) {
     setPrevLayerId(layer?.id);
     setLocalStyles(layer?.styles || {});
     setActiveEffectId(layer ? lastLayerStyleEffects[layer.id] || null : null);
+    setHasPushedHistory(false); // Reset history tracking for the new layer
   }
 
   const updateLayer = useProjectStore((state) => state.updateLayer);
   const pushHistory = useProjectStore((state) => state.pushHistory);
+  const undo = useProjectStore((state) => state.undo);
   const setStylingLayerId = useUIStore((state) => state.setStylingLayerId);
 
-  const handleClose = () => {
+  const ensureHistoryPushed = () => {
+    if (!hasPushedHistory && project) {
+      pushHistory(project.id, "Layer Style");
+      setHasPushedHistory(true);
+    }
+  };
+
+  const handleCancel = () => {
+    if (hasPushedHistory && project) {
+      undo(project.id);
+    }
     setStylingLayerId(null);
     onClose();
   };
@@ -62,11 +77,13 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   const handleApply = () => {
     if (!project || !renderedLayer) return;
 
-    pushHistory(project.id, "Layer Style");
-    updateLayer(project.id, renderedLayer.id, { styles: localStyles });
+    // Changes are already applied in real-time.
+    // We just need to save the last effect and close.
     if (renderedLayer)
       setLastLayerStyleEffect(renderedLayer.id, activeEffectId ? activeEffectId : null);
-    handleClose();
+
+    setStylingLayerId(null);
+    onClose();
   };
 
   const getDefaultValues = (effectId: keyof LayerStyles) => {
@@ -80,23 +97,35 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   };
 
   const toggleEffect = (effectId: keyof LayerStyles, enabled: boolean) => {
-    setLocalStyles((prev) => ({
-      ...prev,
+    const newStyles = {
+      ...localStyles,
       [effectId]: {
-        ...(prev[effectId] || getDefaultValues(effectId)),
+        ...(localStyles[effectId] || getDefaultValues(effectId)),
         enabled,
       },
-    }));
+    };
+    setLocalStyles(newStyles);
+
+    if (project && renderedLayer) {
+      ensureHistoryPushed();
+      updateLayer(project.id, renderedLayer.id, { styles: newStyles });
+    }
   };
 
   const updateEffectOption = (effectId: keyof LayerStyles, optionId: string, value: any) => {
-    setLocalStyles((prev) => ({
-      ...prev,
+    const newStyles = {
+      ...localStyles,
       [effectId]: {
-        ...(prev[effectId] || getDefaultValues(effectId)),
+        ...(localStyles[effectId] || getDefaultValues(effectId)),
         [optionId]: value,
       },
-    }));
+    };
+    setLocalStyles(newStyles);
+
+    if (project && renderedLayer) {
+      ensureHistoryPushed();
+      updateLayer(project.id, renderedLayer.id, { styles: newStyles });
+    }
   };
 
   if (!renderedLayer && !isOpen) return null;
@@ -112,7 +141,7 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
     <BaseModal
       id="layer-styles-modal"
       isOpen={isOpen}
-      onClose={handleClose}
+      onClose={handleCancel}
       title={`Layer Styles - ${renderedLayer?.name || "..."}`}
       icon={EffectsIcon}
       width="700px"
