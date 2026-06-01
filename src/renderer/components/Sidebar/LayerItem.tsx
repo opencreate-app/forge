@@ -2,7 +2,7 @@
  * Purpose: Individual layer entry component within the layer list, handling visibility, locking, renaming, and selection from thumbnails.
  */
 import React, { useState, useRef, useEffect } from "react";
-import { useProjectStore, Layer } from "@store/projectStore";
+import { useProjectStore, Layer, BaseStyle } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
 import { getOptimizedBoundingBox } from "@/core/utils/imageUtils";
 import {
@@ -36,6 +36,52 @@ interface LayerItemProps {
   onToggleExpansion: (projectId: string, layerId: string) => void;
   onContextMenu: (e: React.MouseEvent, layer: Layer) => void;
 }
+
+export const EffectsIcon = ({
+  size = 24,
+  stroke = "currentColor",
+  strokeWidth = 2,
+  ...props
+}: React.SVGProps<SVGSVGElement> & { size?: number | string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    fill="none"
+    stroke={stroke}
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="m14.6 3c-3.8 0-7 2.7-7.7 6.4l-2 10.6m-1.9-9.2h9" />
+    <path d="m19.7 20c-3.8 0-3.8-9.2-7.7-9.2m-1.3 9.2l10.3-9.2" />
+  </svg>
+);
+
+export const EffectsSmallIcon = ({
+  size = 24,
+  stroke = "currentColor",
+  strokeWidth = 2,
+  ...props
+}: React.SVGProps<SVGSVGElement> & { size?: number | string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    fill="none"
+    stroke={stroke}
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="m14 5c-2.9 0-5.4 2.1-5.9 4.9l-1.6 8.1m-1.5-7h7" />
+    <path d="m18 18c-3 0-3-7-6-7m-1 7l8-7" />
+  </svg>
+);
 
 const LayerItem: React.FC<LayerItemProps> = ({
   layer,
@@ -196,6 +242,10 @@ const LayerItem: React.FC<LayerItemProps> = ({
     window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
   };
 
+  const hasStylesEnabled = Object.values(layer.styles ?? {}).some(
+    (style) => (style as BaseStyle)?.enabled === true,
+  );
+
   // const handleDelete = (e: React.MouseEvent) => {
   //   e.stopPropagation();
   //   removeLayer(projectId, layer.id);
@@ -233,6 +283,9 @@ const LayerItem: React.FC<LayerItemProps> = ({
           // Prevent click from selecting the layer when toggling visibility
           e.stopPropagation();
         }}
+        onDoubleClick={(e) => {
+          e.stopPropagation(); // Prevent opening LayerStylesModal on double click
+        }}
         onMouseDown={(e) => onVisibilityMouseDown(e, layer.id)}
         onMouseEnter={(e) => onVisibilityMouseEnter(e, layer.id)}
         tabIndex={-1}
@@ -265,7 +318,8 @@ const LayerItem: React.FC<LayerItemProps> = ({
       {layer.type === "group" ? (
         <button
           className="p-2 py-1 text-text"
-          onClick={() => {
+          onClick={(e) => {
+            e.stopPropagation(); // Prevent opening LayerStylesModal on double click
             // toggle expand or collapse on click
             onToggleExpansion(projectId, layer.id);
           }}
@@ -276,7 +330,8 @@ const LayerItem: React.FC<LayerItemProps> = ({
         <div
           className={`w-8 h-8 bg-[#333] relative rounded border flex items-center justify-center overflow-hidden mr-2 shrink-0 transition-colors ${isActive ? "border-accent" : "border-white/10"}`}
           onClick={handleThumbnailClick}
-          onDoubleClick={() => {
+          onDoubleClick={(e) => {
+            e.stopPropagation(); // Prevent opening LayerStylesModal on double click
             if (layer.type === "smart_object") {
               openSmartObject(projectId, layer.id);
             }
@@ -319,7 +374,8 @@ const LayerItem: React.FC<LayerItemProps> = ({
         ) : (
           <div
             className="text-[0.85rem] text-text truncate"
-            onDoubleClick={() => {
+            onDoubleClick={(e) => {
+              e.stopPropagation(); // Prevent opening LayerStylesModal on double click
               setEditName(layer.name);
               setIsEditing(true);
             }}
@@ -330,7 +386,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
       </div>
 
       <div
-        className={`flex items-center gap-1 ${!layer.locked ? "opacity-0" : ""} group-hover:opacity-100 transition-opacity ml-1`}
+        className={`flex items-center text-current ${!layer.locked ? "opacity-0" : ""} group-hover:opacity-100 transition-opacity ml-1`}
       >
         {/* <button
           onClick={handleDuplicate}
@@ -346,6 +402,19 @@ const LayerItem: React.FC<LayerItemProps> = ({
         >
           <Trash2 size={12} />
         </button> */}
+        {hasStylesEnabled && !isEditing && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setStylingLayerId(layer.id);
+              window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
+            }}
+            title="Layer Styles"
+            className="p-1 !cursor-pointer hover:text-current text-[#666] transition-colors"
+          >
+            <EffectsIcon size={16} />
+          </button>
+        )}
         <button
           onClick={toggleLock}
           tabIndex={-1}

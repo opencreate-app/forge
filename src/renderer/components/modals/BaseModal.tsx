@@ -10,7 +10,7 @@ interface BaseModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
-  icon?: LucideIcon;
+  icon?: LucideIcon | React.ComponentType<React.SVGProps<SVGSVGElement>>;
   width?: string;
   height?: string;
   children: React.ReactNode;
