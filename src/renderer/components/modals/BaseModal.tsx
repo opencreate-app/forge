@@ -89,9 +89,9 @@ const BaseModal: React.FC<BaseModalProps> = ({
   }, [isOpen]);
 
   // This function is the key to FadeOut: it removes the modal from the DOM
-  // ONLY after the CSS transitions have finished.
-  const handleTransitionEnd = (e: React.TransitionEvent) => {
-    // We ensure the transition that ended was on the main container (e.g., opacity)
+  // ONLY after the CSS transitions or animations have finished.
+  const handleTransitionEnd = (e: React.TransitionEvent | React.AnimationEvent) => {
+    // We ensure the transition/animation that ended was on the main container
     if (e.target === e.currentTarget && !isOpen && !isVisible) {
       setIsRendered(false);
     }
@@ -235,8 +235,8 @@ const BaseModal: React.FC<BaseModalProps> = ({
 
   return (
     <div
-      className={`fixed inset-0 ${closeOnOutsideClick ? "bg-black/30" : "pointer-events-none"} z-[1000] ${!draggable && "transition-all duration-300 ease-in-out"} ${containerClass} ${
-        isVisible ? "opacity-100" : !draggable ? "opacity-0 pointer-events-none" : ""
+      className={`fixed inset-0 ${closeOnOutsideClick ? "bg-black/30" : "pointer-events-none"} z-[1000] transition-opacity duration-300 ease-in-out ${containerClass} ${
+        isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
       }`}
       onMouseDown={(e) => closeOnOutsideClick && e.target === e.currentTarget && onClose()}
       onTransitionEnd={handleTransitionEnd}
@@ -247,7 +247,6 @@ const BaseModal: React.FC<BaseModalProps> = ({
               from {
                 opacity: 0;
                 transform: scale(0.95);
-                
               }
               to {
                 opacity: 1;
@@ -267,22 +266,33 @@ const BaseModal: React.FC<BaseModalProps> = ({
             }
             
             .animate-zoom-in {
-              animation: zoom-in 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+              animation: zoom-in 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
             }
             
             .animate-zoom-out {
-              animation: zoom-out 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+              animation: zoom-out 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+            }
           `}
         </style>
       )}
       <div
         ref={modalRef}
         style={modalStyle}
-        className={`bg-[#252525] flex flex-col rounded-lg border border-border overflow-hidden shadow-2xl ${!draggable ? "transition-all duration-300" : "animate-zoom-in pointer-events-auto"} transform ${
-          isVisible && !draggable
-            ? "opacity-100 translate-y-0 ease-out pointer-events-auto"
-            : "opacity-0 translate-y-8 ease-in"
-        } ${draggable && !isVisible ? "animate-zoom-out pointer-events-none" : ""}`}
+        className={`bg-[#252525] flex flex-col rounded-lg border border-border overflow-hidden shadow-2xl ${
+          !draggable
+            ? "transition-all duration-300"
+            : isVisible
+              ? "animate-zoom-in"
+              : "animate-zoom-out"
+        } transform ${
+          !draggable
+            ? isVisible
+              ? "opacity-100 translate-y-0 ease-out pointer-events-auto"
+              : "opacity-0 translate-y-8 ease-in pointer-events-none"
+            : isVisible
+              ? "pointer-events-auto"
+              : "pointer-events-none"
+        }`}
       >
         {/* Header */}
         <div

@@ -38,8 +38,14 @@ export const useMenuHandler = () => {
       const isModalOpen = useUIStore.getState().isAnyModalOpen();
 
       // Guard all other actions if a modal is open, except standard edit operations
-      if (isModalOpen && action !== "select-all" && action !== "undo" && action !== "redo") {
-        return;
+      if (isModalOpen) {
+        if (action === "undo" || action === "redo" || action === "select-all") {
+          // Standard edit operations are allowed ONLY if an input is focused
+          if (!isInputFocused) return;
+        } else {
+          // All other actions are strictly blocked
+          return;
+        }
       }
 
       switch (action) {
