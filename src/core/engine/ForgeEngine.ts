@@ -7,6 +7,7 @@ import {
   useProjectStore,
   StrokeStyle,
   DropShadowStyle,
+  InnerShadowStyle,
 } from "@/renderer/store/projectStore";
 import { BaseTool, ToolContext } from "../tools/BaseTool";
 import { MoveTool } from "../tools/MoveTool";
@@ -1696,9 +1697,9 @@ export class ForgeEngine {
     }
 
     const drawingCanvas = isEditing ? tool?.getDrawingCanvas() : null;
-    const hasStyles =
-      (layer.styles?.stroke?.enabled && layer.styles.stroke.size > 0) ||
-      (layer.styles?.dropShadow?.enabled && layer.styles.dropShadow.size >= 0);
+    const hasStyles = layer.styles
+      ? Object.values(layer.styles).some((s: any) => s?.enabled)
+      : false;
 
     if (drawingCanvas) {
       ctx.save();
@@ -1774,6 +1775,7 @@ export class ForgeEngine {
   private renderLayerWithStyles(ctx: CanvasRenderingContext2D, layer: Layer, editingState?: any) {
     const stroke = layer.styles?.stroke;
     const dropShadow = layer.styles?.dropShadow;
+    const innerShadow = layer.styles?.innerShadow;
 
     // Calculate padding needed for all effects
     let padding = 0;
@@ -1782,6 +1784,7 @@ export class ForgeEngine {
       const shadowPadding = Math.ceil(dropShadow.distance + dropShadow.size) + 10;
       padding = Math.max(padding, shadowPadding);
     }
+    // Inner shadow doesn't usually need padding outside the layer, but we use the same buffer logic.
 
     // 1. Render layer content into an offscreen buffer
     const buffer = document.createElement("canvas");
@@ -1807,7 +1810,7 @@ export class ForgeEngine {
     const destY = Math.round(layer.y - padding);
     const fillAlpha = (layer.fill ?? 100) / 100;
 
-    // Render order (bottom to top): Drop Shadow -> Stroke -> Content (or Content -> Stroke for 'inside')
+    // Render order (bottom to top): Drop Shadow -> Content (Fill) -> Inner Shadow -> Stroke
 
     // --- DROP SHADOW ---
     if (dropShadow?.enabled) {
@@ -1832,54 +1835,49 @@ export class ForgeEngine {
       compCtx.drawImage(dsCanvas, 0, 0);
     }
 
-    // --- STROKE ---
-    if (stroke?.enabled && stroke.size > 0) {
+    // --- STROKE (OUTSIDE/CENTER) ---
+    // These go behind the content
+    if (stroke?.enabled && stroke.size > 0 && stroke.position !== "inside") {
       const strokeBuffer = document.createElement("canvas");
       strokeBuffer.width = buffer.width;
       strokeBuffer.height = buffer.height;
       const sctx = strokeBuffer.getContext("2d")!;
       sctx.imageSmoothingEnabled = true;
 
-      sctx.save();
       this.applyStrokeToBuffer(sctx, buffer, stroke, layer.type === "text");
-      sctx.restore();
-
-      if (stroke.position === "inside") {
-        // Draw content with Fill alpha
-        compCtx.save();
-        compCtx.globalAlpha = fillAlpha;
-        compCtx.drawImage(buffer, 0, 0);
-        compCtx.restore();
-        
-        // Draw stroke on top (not affected by Fill)
-        compCtx.drawImage(strokeBuffer, 0, 0);
-      } else {
-        // For Outside/Center, we want to avoid halos. 
-        // If Fill is 100%, we can draw the stroke BEHIND without a hole for perfect results.
-        if (fillAlpha >= 0.99) {
-          compCtx.drawImage(strokeBuffer, 0, 0);
-          compCtx.drawImage(buffer, 0, 0);
-        } else {
-          // If semi-transparent, we MUST cut the hole to avoid show-through,
-          // but we use 1-pass mask to minimize the gap.
-          sctx.save();
-          sctx.globalCompositeOperation = "destination-out";
-          sctx.drawImage(buffer, 0, 0);
-          sctx.restore();
-
-          compCtx.drawImage(strokeBuffer, 0, 0);
-          compCtx.save();
-          compCtx.globalAlpha = fillAlpha;
-          compCtx.drawImage(buffer, 0, 0);
-          compCtx.restore();
-        }
+      
+      // If Fill is < 100%, we knock out the center of the stroke to avoid show-through
+      if (fillAlpha < 0.99) {
+        sctx.save();
+        sctx.globalCompositeOperation = "destination-out";
+        sctx.drawImage(buffer, 0, 0);
+        sctx.restore();
       }
-    } else {
-      // Just render the content if no stroke, with Fill alpha
-      compCtx.save();
-      compCtx.globalAlpha = fillAlpha;
-      compCtx.drawImage(buffer, 0, 0);
-      compCtx.restore();
+      
+      compCtx.drawImage(strokeBuffer, 0, 0);
+    }
+
+    // --- CONTENT (FILL) ---
+    compCtx.save();
+    compCtx.globalAlpha = fillAlpha;
+    compCtx.drawImage(buffer, 0, 0);
+    compCtx.restore();
+
+    // --- INNER SHADOW ---
+    if (innerShadow?.enabled) {
+      this.renderInnerShadow(compCtx, buffer, innerShadow, 0, 0, layer.id, padding, padding);
+    }
+
+    // --- STROKE (INSIDE) ---
+    if (stroke?.enabled && stroke.size > 0 && stroke.position === "inside") {
+      const strokeBuffer = document.createElement("canvas");
+      strokeBuffer.width = buffer.width;
+      strokeBuffer.height = buffer.height;
+      const sctx = strokeBuffer.getContext("2d")!;
+      sctx.imageSmoothingEnabled = true;
+
+      this.applyStrokeToBuffer(sctx, buffer, stroke, layer.type === "text");
+      compCtx.drawImage(strokeBuffer, 0, 0);
     }
 
     // 3. Final Draw to main context
@@ -2089,6 +2087,138 @@ export class ForgeEngine {
     ctx.drawImage(blurCanvas, x + offsetX, y + offsetY);
     ctx.restore();
 
+    ctx.restore();
+  }
+
+  /**
+   * Renders Inner Shadow effect.
+   * Logic: We create an inverted mask (hole) of the layer, draw a shadow from that hole,
+   * and clip it to the original layer content.
+   */
+  private renderInnerShadow(
+    ctx: CanvasRenderingContext2D,
+    contentBuffer: HTMLCanvasElement,
+    style: InnerShadowStyle,
+    x: number,
+    y: number,
+    layerId: string,
+    layerBufferX: number = 0,
+    layerBufferY: number = 0,
+  ) {
+    const { color, opacity, angle, distance, size, spread, noise } = style;
+
+    // Calculate offsets based on angle and distance
+    // NOTE: For Inner Shadow, positive distance moves the shadow INSIDE the shape.
+    // Photoshop behavior: distance 10 at 90 deg moves shadow 10px DOWN, 
+    // effectively showing the TOP inner edge.
+    const rad = (angle * Math.PI) / 180;
+    const rawOffsetX = Math.cos(rad) * distance;
+    const rawOffsetY = Math.sin(rad) * distance;
+    const offsetX = Math.round(rawOffsetX);
+    const offsetY = Math.round(rawOffsetY);
+
+    const spreadSize = (size * spread) / 100;
+    const blurSize = size - spreadSize;
+
+    // 1. Create Inverted Mask (The "Hole")
+    // We need a canvas that is solid everywhere EXCEPT where the layer is.
+    // We add extra margin to ensure the shadow can bleed in from far away if distance is high.
+    const margin = Math.ceil(distance + size + 20);
+    const holeCanvas = document.createElement("canvas");
+    holeCanvas.width = contentBuffer.width + margin * 2;
+    holeCanvas.height = contentBuffer.height + margin * 2;
+    const hctx = holeCanvas.getContext("2d")!;
+
+    // Fill with solid color
+    hctx.fillStyle = "black";
+    hctx.fillRect(0, 0, holeCanvas.width, holeCanvas.height);
+
+    // Cut the layer shape out
+    hctx.globalCompositeOperation = "destination-out";
+    hctx.drawImage(contentBuffer, margin, margin);
+
+    // 2. Render Shadow from the hole
+    const shadowCanvas = document.createElement("canvas");
+    shadowCanvas.width = holeCanvas.width;
+    shadowCanvas.height = holeCanvas.height;
+    const sctx = shadowCanvas.getContext("2d", { willReadFrequently: noise > 0 })!;
+
+    if (spreadSize > 0) {
+      const steps = Math.min(128, Math.max(12, Math.ceil(spreadSize * 4)));
+      for (let i = 0; i < steps; i++) {
+        const a = (i / steps) * Math.PI * 2;
+        sctx.drawImage(holeCanvas, Math.cos(a) * spreadSize, Math.sin(a) * spreadSize);
+      }
+      sctx.drawImage(holeCanvas, 0, 0);
+    } else {
+      sctx.drawImage(holeCanvas, 0, 0);
+    }
+
+    sctx.globalCompositeOperation = "source-in";
+    sctx.fillStyle = color;
+    sctx.fillRect(0, 0, shadowCanvas.width, shadowCanvas.height);
+
+    // 3. Blur the shadow
+    const blurCanvas = document.createElement("canvas");
+    blurCanvas.width = shadowCanvas.width;
+    blurCanvas.height = shadowCanvas.height;
+    const bctx = blurCanvas.getContext("2d", { willReadFrequently: noise > 0 })!;
+
+    if (blurSize > 0) {
+      bctx.shadowColor = color;
+      bctx.shadowBlur = blurSize;
+      bctx.shadowOffsetX = 20000;
+      bctx.shadowOffsetY = 0;
+      bctx.drawImage(shadowCanvas, -20000, 0);
+    } else {
+      bctx.drawImage(shadowCanvas, 0, 0);
+    }
+
+    // 4. Apply Noise (Anchored to layer origin)
+    if (noise > 0) {
+      const imageData = bctx.getImageData(0, 0, blurCanvas.width, blurCanvas.height);
+      const data = imageData.data;
+      const noiseFactor = noise / 100;
+      const width = blurCanvas.width;
+      const seedBase = this.hashString(layerId);
+
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] > 0) {
+          const pixelIndex = i / 4;
+          const px = pixelIndex % width;
+          const py = Math.floor(pixelIndex / width);
+
+          // For Inner Shadow, the holeCanvas is shifted by 'margin'.
+          // So (px, py) in blurCanvas corresponds to (px-margin, py-margin) in contentBuffer space.
+          // We anchor to layer origin by adding offset and subtracting padding and margin.
+          const anchoredX = (px - margin) + offsetX - layerBufferX;
+          const anchoredY = (py - margin) + offsetY - layerBufferY;
+
+          const rand = this.seededRandom(seedBase + anchoredX * 31337 + anchoredY * 13331);
+          const variation = (rand * 2 - 1) * noiseFactor;
+          data[i + 3] = Math.max(0, Math.min(255, data[i + 3] * (1 + variation)));
+        }
+      }
+      bctx.putImageData(imageData, 0, 0);
+    }
+
+    // 5. Final Clip and Draw
+    // We only want the shadow parts that overlap with the original layer
+    ctx.save();
+    ctx.globalAlpha = opacity / 100;
+    
+    // Use the original content as a mask
+    const finalCanvas = document.createElement("canvas");
+    finalCanvas.width = contentBuffer.width;
+    finalCanvas.height = contentBuffer.height;
+    const fctx = finalCanvas.getContext("2d")!;
+    
+    fctx.drawImage(contentBuffer, 0, 0);
+    fctx.globalCompositeOperation = "source-in";
+    // Draw the shadow with offset
+    fctx.drawImage(blurCanvas, -margin + offsetX, -margin + offsetY);
+    
+    ctx.drawImage(finalCanvas, x, y);
     ctx.restore();
   }
 

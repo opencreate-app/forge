@@ -61,6 +61,19 @@ export interface DropShadowStyle extends BaseStyle {
 }
 
 /**
+ * Configuration for an inner shadow style.
+ */
+export interface InnerShadowStyle extends BaseStyle {
+  color: string;
+  opacity: number;
+  angle: number;
+  distance: number;
+  spread: number;
+  size: number;
+  noise: number;
+}
+
+/**
  * Collection of styles applied to a layer.
  */
 export interface LayerStyles {
@@ -68,6 +81,8 @@ export interface LayerStyles {
   stroke?: StrokeStyle;
   /** Drop shadow style configuration. */
   dropShadow?: DropShadowStyle;
+  /** Inner shadow style configuration. */
+  innerShadow?: InnerShadowStyle;
 }
 
 /**
@@ -123,6 +138,19 @@ export const LAYER_STYLE_DEFINITIONS: LayerStyleDefinition[] = [
   {
     id: "dropShadow",
     name: "Drop Shadow",
+    options: [
+      { id: "color", name: "Color", type: "color", default: "#000000" },
+      { id: "opacity", name: "Opacity", type: "number", min: 0, max: 100, default: 75, unit: "%" },
+      { id: "angle", name: "Angle", type: "number", min: -180, max: 180, default: 90, unit: "°" },
+      { id: "distance", name: "Distance", type: "number", min: 0, max: 100, default: 5, unit: "px" },
+      { id: "spread", name: "Spread", type: "number", min: 0, max: 100, default: 0, unit: "%" },
+      { id: "size", name: "Size", type: "number", min: 0, max: 250, default: 5, unit: "px" },
+      { id: "noise", name: "Noise", type: "number", min: 0, max: 100, default: 0, unit: "%" },
+    ],
+  },
+  {
+    id: "innerShadow",
+    name: "Inner Shadow",
     options: [
       { id: "color", name: "Color", type: "color", default: "#000000" },
       { id: "opacity", name: "Opacity", type: "number", min: 0, max: 100, default: 75, unit: "%" },
