@@ -1643,7 +1643,7 @@ export class ForgeEngine {
    */
   private renderLayer(ctx: CanvasRenderingContext2D, layer: Layer) {
     ctx.save();
-    ctx.globalAlpha = (layer.opacity / 100) * ((layer.fill ?? 100) / 100);
+    ctx.globalAlpha = layer.opacity / 100;
     ctx.globalCompositeOperation = layer.blendMode;
 
     const tool = this.getActiveTool();
@@ -1701,11 +1701,15 @@ export class ForgeEngine {
       (layer.styles?.dropShadow?.enabled && layer.styles.dropShadow.size >= 0);
 
     if (drawingCanvas) {
+      ctx.save();
+      ctx.globalAlpha *= (layer.fill ?? 100) / 100;
       ctx.drawImage(drawingCanvas.canvas, drawingCanvas.x, drawingCanvas.y);
+      ctx.restore();
     } else if (hasStyles) {
       // Generic styles implementation for all layer types (Raster, Text, Group, Smart Object)
       this.renderLayerWithStyles(ctx, renderLayerTarget, editingState);
     } else {
+      ctx.globalAlpha *= (layer.fill ?? 100) / 100;
       this.renderLayerToContext(ctx, renderLayerTarget, editingState);
     }
     ctx.restore();
@@ -1767,11 +1771,7 @@ export class ForgeEngine {
   /**
    * Helper to render a layer with multiple styles (Stroke, Drop Shadow, etc.)
    */
-  private renderLayerWithStyles(
-    ctx: CanvasRenderingContext2D,
-    layer: Layer,
-    editingState?: any,
-  ) {
+  private renderLayerWithStyles(ctx: CanvasRenderingContext2D, layer: Layer, editingState?: any) {
     const stroke = layer.styles?.stroke;
     const dropShadow = layer.styles?.dropShadow;
 
@@ -1794,15 +1794,42 @@ export class ForgeEngine {
     const bufferLayer = { ...layer, x: padding, y: padding };
     this.renderLayerToContext(bctx, bufferLayer, editingState, { skipStyles: true });
 
-    // 2. Prepare Effect Buffers
+    // 2. Prepare Composition Buffer
+    // We render everything into a single offscreen buffer to avoid sub-pixel gaps (halos)
+    // when multiple semi-transparent pieces are drawn to the main context.
+    const compCanvas = document.createElement("canvas");
+    compCanvas.width = buffer.width;
+    compCanvas.height = buffer.height;
+    const compCtx = compCanvas.getContext("2d")!;
+    compCtx.imageSmoothingEnabled = true;
+
     const destX = Math.round(layer.x - padding);
     const destY = Math.round(layer.y - padding);
+    const fillAlpha = (layer.fill ?? 100) / 100;
 
     // Render order (bottom to top): Drop Shadow -> Stroke -> Content (or Content -> Stroke for 'inside')
-    
+
     // --- DROP SHADOW ---
     if (dropShadow?.enabled) {
-      this.renderDropShadow(ctx, buffer, dropShadow, destX, destY);
+      // Use a temporary canvas for the shadow so we can mask it (Knock out)
+      const dsCanvas = document.createElement("canvas");
+      dsCanvas.width = buffer.width;
+      dsCanvas.height = buffer.height;
+      const dsCtx = dsCanvas.getContext("2d")!;
+
+      this.renderDropShadow(dsCtx, buffer, dropShadow, 0, 0);
+
+      // MASKING: "Layer Knocks Out Drop Shadow"
+      // Optimization: If Fill is 100%, we draw shadow behind without a hole to avoid anti-aliasing gaps (halos)
+      if (fillAlpha < 0.99) {
+        dsCtx.save();
+        dsCtx.globalCompositeOperation = "destination-out";
+        // Use a single draw for the mask to avoid over-erasing (halos)
+        dsCtx.drawImage(buffer, 0, 0);
+        dsCtx.restore();
+      }
+
+      compCtx.drawImage(dsCanvas, 0, 0);
     }
 
     // --- STROKE ---
@@ -1818,16 +1845,45 @@ export class ForgeEngine {
       sctx.restore();
 
       if (stroke.position === "inside") {
-        ctx.drawImage(buffer, destX, destY);
-        ctx.drawImage(strokeBuffer, destX, destY);
+        // Draw content with Fill alpha
+        compCtx.save();
+        compCtx.globalAlpha = fillAlpha;
+        compCtx.drawImage(buffer, 0, 0);
+        compCtx.restore();
+        
+        // Draw stroke on top (not affected by Fill)
+        compCtx.drawImage(strokeBuffer, 0, 0);
       } else {
-        ctx.drawImage(strokeBuffer, destX, destY);
-        ctx.drawImage(buffer, destX, destY);
+        // For Outside/Center, we want to avoid halos. 
+        // If Fill is 100%, we can draw the stroke BEHIND without a hole for perfect results.
+        if (fillAlpha >= 0.99) {
+          compCtx.drawImage(strokeBuffer, 0, 0);
+          compCtx.drawImage(buffer, 0, 0);
+        } else {
+          // If semi-transparent, we MUST cut the hole to avoid show-through,
+          // but we use 1-pass mask to minimize the gap.
+          sctx.save();
+          sctx.globalCompositeOperation = "destination-out";
+          sctx.drawImage(buffer, 0, 0);
+          sctx.restore();
+
+          compCtx.drawImage(strokeBuffer, 0, 0);
+          compCtx.save();
+          compCtx.globalAlpha = fillAlpha;
+          compCtx.drawImage(buffer, 0, 0);
+          compCtx.restore();
+        }
       }
     } else {
-      // Just render the content if no stroke
-      ctx.drawImage(buffer, destX, destY);
+      // Just render the content if no stroke, with Fill alpha
+      compCtx.save();
+      compCtx.globalAlpha = fillAlpha;
+      compCtx.drawImage(buffer, 0, 0);
+      compCtx.restore();
     }
+
+    // 3. Final Draw to main context
+    ctx.drawImage(compCanvas, destX, destY);
   }
 
   /**
@@ -1979,9 +2035,9 @@ export class ForgeEngine {
     // 5. Render to main context with Blur (Softness) and Offset
     ctx.save();
     ctx.globalAlpha = opacity / 100;
-    
+
     if (blurSize > 0) {
-      // Use the "far-away offset" trick to draw ONLY the shadow (blur) 
+      // Use the "far-away offset" trick to draw ONLY the shadow (blur)
       // of the dilated mask, avoiding drawing the mask itself twice.
       ctx.shadowColor = color;
       ctx.shadowBlur = blurSize;
@@ -2001,11 +2057,7 @@ export class ForgeEngine {
    * Helper to render a layer with a stroke effect using a generic buffer approach.
    * @deprecated Use renderLayerWithStyles instead
    */
-  private renderLayerWithStroke(
-    ctx: CanvasRenderingContext2D,
-    layer: Layer,
-    editingState?: any,
-  ) {
+  private renderLayerWithStroke(ctx: CanvasRenderingContext2D, layer: Layer, editingState?: any) {
     this.renderLayerWithStyles(ctx, layer, editingState);
   }
 
