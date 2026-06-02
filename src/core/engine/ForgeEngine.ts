@@ -1817,7 +1817,7 @@ export class ForgeEngine {
       dsCanvas.height = buffer.height;
       const dsCtx = dsCanvas.getContext("2d")!;
 
-      this.renderDropShadow(dsCtx, buffer, dropShadow, 0, 0);
+      this.renderDropShadow(dsCtx, buffer, dropShadow, 0, 0, layer.id, padding, padding);
 
       // MASKING: "Layer Knocks Out Drop Shadow"
       // Optimization: If Fill is 100%, we draw shadow behind without a hole to avoid anti-aliasing gaps (halos)
@@ -1975,13 +1975,21 @@ export class ForgeEngine {
     style: DropShadowStyle,
     x: number,
     y: number,
+    layerId: string,
+    layerBufferX: number = 0,
+    layerBufferY: number = 0,
   ) {
     const { color, opacity, angle, distance, size, spread, noise } = style;
 
     // Calculate offsets based on angle and distance
     const rad = (angle * Math.PI) / 180;
-    const offsetX = Math.cos(rad) * distance;
-    const offsetY = Math.sin(rad) * distance;
+    const rawOffsetX = Math.cos(rad) * distance;
+    const rawOffsetY = Math.sin(rad) * distance;
+    
+    // We MUST round these to integers if noise is enabled (or always for parity)
+    // to prevent "sub-pixel swimming" and blurring of the 1px noise pattern.
+    const offsetX = Math.round(rawOffsetX);
+    const offsetY = Math.round(rawOffsetY);
 
     // Photoshop/Photopea parity logic:
     // Size = total influence.
@@ -2017,37 +2025,68 @@ export class ForgeEngine {
     sctx.fillStyle = color;
     sctx.fillRect(0, 0, shadowCanvas.width, shadowCanvas.height);
 
-    // 4. Apply Noise (if any) - Applied to the solid/dilated mask
-    if (noise > 0) {
-      const imageData = sctx.getImageData(0, 0, shadowCanvas.width, shadowCanvas.height);
-      const data = imageData.data;
-      const noiseFactor = noise / 100;
-
-      for (let i = 0; i < data.length; i += 4) {
-        if (data[i + 3] > 0) {
-          const rand = (Math.random() - 0.5) * 255 * noiseFactor;
-          data[i + 3] = Math.max(0, Math.min(255, data[i + 3] + rand));
-        }
-      }
-      sctx.putImageData(imageData, 0, 0);
-    }
-
-    // 5. Render to main context with Blur (Softness) and Offset
-    ctx.save();
-    ctx.globalAlpha = opacity / 100;
+    // 4. Render the blurred shadow into an intermediate buffer
+    // This is necessary so we can apply noise AFTER the blur.
+    const blurCanvas = document.createElement("canvas");
+    blurCanvas.width = shadowCanvas.width;
+    blurCanvas.height = shadowCanvas.height;
+    const bctx = blurCanvas.getContext("2d", { willReadFrequently: noise > 0 })!;
 
     if (blurSize > 0) {
-      // Use the "far-away offset" trick to draw ONLY the shadow (blur)
-      // of the dilated mask, avoiding drawing the mask itself twice.
-      ctx.shadowColor = color;
-      ctx.shadowBlur = blurSize;
-      ctx.shadowOffsetX = offsetX + 20000;
-      ctx.shadowOffsetY = offsetY;
-      ctx.drawImage(shadowCanvas, x - 20000, y);
+      bctx.shadowColor = color;
+      bctx.shadowBlur = blurSize;
+      bctx.shadowOffsetX = 20000;
+      bctx.shadowOffsetY = 0;
+      bctx.drawImage(shadowCanvas, -20000, 0);
     } else {
-      // 100% Spread - Hard edge, just draw the dilated mask at offset
-      ctx.drawImage(shadowCanvas, x + offsetX, y + offsetY);
+      bctx.drawImage(shadowCanvas, 0, 0);
     }
+
+    // 5. Apply Noise (if any) - Applied to the blurred result
+    if (noise > 0) {
+      const imageData = bctx.getImageData(0, 0, blurCanvas.width, blurCanvas.height);
+      const data = imageData.data;
+      const noiseFactor = noise / 100;
+      const width = blurCanvas.width;
+
+      // Seed based on layer ID for deterministic noise (static patterns)
+      const seedBase = this.hashString(layerId);
+
+      for (let i = 0; i < data.length; i += 4) {
+        const originalAlpha = data[i + 3];
+        if (originalAlpha > 0) {
+          const pixelIndex = i / 4;
+          const px = pixelIndex % width;
+          const py = Math.floor(pixelIndex / width);
+
+          // FIX: To keep noise fixed relative to the layer, we anchor the 
+          // seeding coordinates to the layer's origin by:
+          // 1. Adding the shadow offset (since px/py are in shadow-space and will be shifted by offsetX/Y later)
+          // 2. Subtracting the buffer padding (layerBufferX/Y)
+          const anchoredX = px + offsetX - layerBufferX;
+          const anchoredY = py + offsetY - layerBufferY;
+
+          // Robust 2D seeding for better entropy and to avoid patterns
+          const rand = this.seededRandom(seedBase + anchoredX * 31337 + anchoredY * 13331);
+
+          // Weighted Noise Model:
+          // We perturb the alpha channel, but scale the intensity by the original alpha.
+          // This ensures that the noise follows the shadow's density and never
+          // expands beyond its original footprint (no halos/contours).
+          // 100% noise allows a swing from 0 to 2x the original alpha.
+          const variation = (rand * 2 - 1) * noiseFactor;
+          
+          // Clamp the result to [0, 255]
+          data[i + 3] = Math.max(0, Math.min(255, originalAlpha * (1 + variation)));
+        }
+      }
+      bctx.putImageData(imageData, 0, 0);
+    }
+
+    // 6. Final draw to the target context
+    ctx.save();
+    ctx.globalAlpha = opacity / 100;
+    ctx.drawImage(blurCanvas, x + offsetX, y + offsetY);
     ctx.restore();
 
     ctx.restore();
@@ -2415,5 +2454,30 @@ export class ForgeEngine {
     }
 
     return exportCanvas.toDataURL(format, quality);
+  }
+
+  /**
+   * Simple string hashing function.
+   */
+  private hashString(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+    return hash;
+  }
+
+  /**
+   * Fast seeded random generator using 32-bit MurmurHash3-style mixing.
+   */
+  private seededRandom(seed: number): number {
+    seed |= 0;
+    seed = (seed ^ (seed >>> 16)) * 0x85ebca6b;
+    seed |= 0;
+    seed = (seed ^ (seed >>> 13)) * 0xc2b2ae35;
+    seed |= 0;
+    seed = (seed ^ (seed >>> 16)) >>> 0;
+    return seed / 4294967296;
   }
 }
