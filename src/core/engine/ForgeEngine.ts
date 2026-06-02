@@ -1,7 +1,13 @@
 /**
  * Purpose: Core engine class responsible for project rendering, viewport management (zoom/pan), tool orchestration, and selection handling.
  */
-import { Layer, Project, useProjectStore } from "@/renderer/store/projectStore";
+import {
+  Layer,
+  Project,
+  useProjectStore,
+  StrokeStyle,
+  DropShadowStyle,
+} from "@/renderer/store/projectStore";
 import { BaseTool, ToolContext } from "../tools/BaseTool";
 import { MoveTool } from "../tools/MoveTool";
 import { BrushTool } from "../tools/BrushTool";
@@ -20,7 +26,6 @@ import {
   // quantizeImageData,
   safeBase64FromBuffer,
 } from "../utils/imageUtils";
-import { applyAlphaThreshold } from "../utils/imageUtils";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TextLayer } from "../layers/TextLayer";
 import { GroupLayer } from "../layers/GroupLayer";
@@ -1691,13 +1696,15 @@ export class ForgeEngine {
     }
 
     const drawingCanvas = isEditing ? tool?.getDrawingCanvas() : null;
-    const hasStroke = layer.styles?.stroke?.enabled && layer.styles.stroke.size > 0;
+    const hasStyles =
+      (layer.styles?.stroke?.enabled && layer.styles.stroke.size > 0) ||
+      (layer.styles?.dropShadow?.enabled && layer.styles.dropShadow.size >= 0);
 
     if (drawingCanvas) {
       ctx.drawImage(drawingCanvas.canvas, drawingCanvas.x, drawingCanvas.y);
-    } else if (hasStroke && layer.type !== "text") {
-      // Generic stroke implementation for non-text layers (Raster, Group, Smart Object)
-      this.renderLayerWithStroke(ctx, renderLayerTarget, editingState);
+    } else if (hasStyles) {
+      // Generic styles implementation for all layer types (Raster, Text, Group, Smart Object)
+      this.renderLayerWithStyles(ctx, renderLayerTarget, editingState);
     } else {
       this.renderLayerToContext(ctx, renderLayerTarget, editingState);
     }
@@ -1711,6 +1718,7 @@ export class ForgeEngine {
     ctx: CanvasRenderingContext2D,
     layer: Layer,
     editingState?: any,
+    options?: { skipStyles?: boolean },
   ) {
     switch (layer.type) {
       case "raster":
@@ -1730,6 +1738,7 @@ export class ForgeEngine {
           this.layerCanvasCache,
           this.layerReadyCache,
           editingState,
+          options,
         );
         break;
       case "group":
@@ -1756,20 +1765,26 @@ export class ForgeEngine {
   }
 
   /**
-   * Helper to render a layer with a stroke effect using a generic buffer approach.
+   * Helper to render a layer with multiple styles (Stroke, Drop Shadow, etc.)
    */
-  private renderLayerWithStroke(
+  private renderLayerWithStyles(
     ctx: CanvasRenderingContext2D,
     layer: Layer,
     editingState?: any,
   ) {
-    const stroke = layer.styles!.stroke!;
-    const size = stroke.size;
+    const stroke = layer.styles?.stroke;
+    const dropShadow = layer.styles?.dropShadow;
+
+    // Calculate padding needed for all effects
+    let padding = 0;
+    if (stroke?.enabled) padding = Math.max(padding, Math.ceil(stroke.size) + 2);
+    if (dropShadow?.enabled) {
+      const shadowPadding = Math.ceil(dropShadow.distance + dropShadow.size) + 10;
+      padding = Math.max(padding, shadowPadding);
+    }
 
     // 1. Render layer content into an offscreen buffer
     const buffer = document.createElement("canvas");
-    // Expand buffer to accommodate the stroke. Padding should be at least the size of the stroke.
-    const padding = Math.ceil(size) + 2; // Extra 2px safety margin
     buffer.width = Math.ceil(layer.width + padding * 2);
     buffer.height = Math.ceil(layer.height + padding * 2);
     const bctx = buffer.getContext("2d")!;
@@ -1777,23 +1792,60 @@ export class ForgeEngine {
 
     // Adjust layer coordinates for the buffer
     const bufferLayer = { ...layer, x: padding, y: padding };
-    this.renderLayerToContext(bctx, bufferLayer, editingState);
+    this.renderLayerToContext(bctx, bufferLayer, editingState, { skipStyles: true });
 
-    // 2. Apply Stroke effect
-    const strokeBuffer = document.createElement("canvas");
-    strokeBuffer.width = buffer.width;
-    strokeBuffer.height = buffer.height;
-    const sctx = strokeBuffer.getContext("2d")!;
-    sctx.imageSmoothingEnabled = true; // Enable smoothing for the softening phase
+    // 2. Prepare Effect Buffers
+    const destX = Math.round(layer.x - padding);
+    const destY = Math.round(layer.y - padding);
+
+    // Render order (bottom to top): Drop Shadow -> Stroke -> Content (or Content -> Stroke for 'inside')
     
-    sctx.save();
-    
+    // --- DROP SHADOW ---
+    if (dropShadow?.enabled) {
+      this.renderDropShadow(ctx, buffer, dropShadow, destX, destY);
+    }
+
+    // --- STROKE ---
+    if (stroke?.enabled && stroke.size > 0) {
+      const strokeBuffer = document.createElement("canvas");
+      strokeBuffer.width = buffer.width;
+      strokeBuffer.height = buffer.height;
+      const sctx = strokeBuffer.getContext("2d")!;
+      sctx.imageSmoothingEnabled = true;
+
+      sctx.save();
+      this.applyStrokeToBuffer(sctx, buffer, stroke, layer.type === "text");
+      sctx.restore();
+
+      if (stroke.position === "inside") {
+        ctx.drawImage(buffer, destX, destY);
+        ctx.drawImage(strokeBuffer, destX, destY);
+      } else {
+        ctx.drawImage(strokeBuffer, destX, destY);
+        ctx.drawImage(buffer, destX, destY);
+      }
+    } else {
+      // Just render the content if no stroke
+      ctx.drawImage(buffer, destX, destY);
+    }
+  }
+
+  /**
+   * Internal helper to apply stroke logic to a buffer.
+   */
+  private applyStrokeToBuffer(
+    sctx: CanvasRenderingContext2D,
+    contentBuffer: HTMLCanvasElement,
+    stroke: StrokeStyle,
+    isText: boolean,
+  ) {
+    const { size, position, rounded, color, opacity, antiAlias } = stroke;
+
     // Create the mask for the stroke
-    if (stroke.position === "outside" || stroke.position === "center") {
-      const dilation = stroke.position === "outside" ? size : size / 2;
+    if (position === "outside" || position === "center") {
+      const dilation = position === "outside" ? size : size / 2;
 
-      if (stroke.rounded) {
-        // Circular dilation for rounded corners
+      if (rounded) {
         const radii = [dilation];
         if (dilation > 2) radii.push(dilation * 0.5);
         if (dilation > 6) radii.push(dilation * 0.75, dilation * 0.25);
@@ -1802,108 +1854,159 @@ export class ForgeEngine {
           const steps = Math.max(16, Math.min(128, Math.ceil(r * 6)));
           for (let i = 0; i < steps; i++) {
             const angle = (i / steps) * Math.PI * 2;
-            sctx.drawImage(buffer, Math.cos(angle) * r, Math.sin(angle) * r);
+            sctx.drawImage(contentBuffer, Math.cos(angle) * r, Math.sin(angle) * r);
           }
         });
       } else {
-        // Square dilation for sharp corners
-        // We use a separable approach for efficiency: horizontal then vertical
         const tempBuffer = document.createElement("canvas");
-        tempBuffer.width = buffer.width;
-        tempBuffer.height = buffer.height;
+        tempBuffer.width = contentBuffer.width;
+        tempBuffer.height = contentBuffer.height;
         const tctx = tempBuffer.getContext("2d")!;
-
-        // 1. Horizontal dilation
-        for (let x = -dilation; x <= dilation; x++) {
-          tctx.drawImage(buffer, x, 0);
-        }
-
-        // 2. Vertical dilation (using the horizontally dilated buffer)
-        for (let y = -dilation; y <= dilation; y++) {
-          sctx.drawImage(tempBuffer, 0, y);
-        }
+        for (let x = -dilation; x <= dilation; x++) tctx.drawImage(contentBuffer, x, 0);
+        for (let y = -dilation; y <= dilation; y++) sctx.drawImage(tempBuffer, 0, y);
       }
-    } else if (stroke.position === "inside") {
-      // Inside stroke: start with content, then subtract eroded version
-      sctx.drawImage(buffer, 0, 0);
+    } else if (position === "inside") {
+      sctx.drawImage(contentBuffer, 0, 0);
       sctx.globalCompositeOperation = "source-in";
-
-      // Create erosion mask
       const erosionBuffer = document.createElement("canvas");
-      erosionBuffer.width = buffer.width;
-      erosionBuffer.height = buffer.height;
+      erosionBuffer.width = contentBuffer.width;
+      erosionBuffer.height = contentBuffer.height;
       const ectx = erosionBuffer.getContext("2d")!;
-
       const erosion = size;
 
-      if (stroke.rounded) {
+      if (rounded) {
         const steps = Math.max(16, Math.min(128, Math.ceil(erosion * 6)));
-        // To erode, we draw the content shifted in all directions and use 'destination-in'
-        ectx.drawImage(buffer, 0, 0);
+        ectx.drawImage(contentBuffer, 0, 0);
         ectx.globalCompositeOperation = "destination-in";
         for (let i = 0; i < steps; i++) {
           const angle = (i / steps) * Math.PI * 2;
-          ectx.drawImage(buffer, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
+          ectx.drawImage(contentBuffer, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
         }
       } else {
-        // Square erosion
         const tempErosionBuffer = document.createElement("canvas");
-        tempErosionBuffer.width = buffer.width;
-        tempErosionBuffer.height = buffer.height;
+        tempErosionBuffer.width = contentBuffer.width;
+        tempErosionBuffer.height = contentBuffer.height;
         const tetctx = tempErosionBuffer.getContext("2d")!;
-
-        // 1. Horizontal erosion
-        tetctx.drawImage(buffer, 0, 0);
+        tetctx.drawImage(contentBuffer, 0, 0);
         tetctx.globalCompositeOperation = "destination-in";
-        for (let x = -erosion; x <= erosion; x++) {
-          tetctx.drawImage(buffer, x, 0);
-        }
-
-        // 2. Vertical erosion
+        for (let x = -erosion; x <= erosion; x++) tetctx.drawImage(contentBuffer, x, 0);
         ectx.drawImage(tempErosionBuffer, 0, 0);
         ectx.globalCompositeOperation = "destination-in";
-        for (let y = -erosion; y <= erosion; y++) {
-          ectx.drawImage(tempErosionBuffer, 0, y);
-        }
+        for (let y = -erosion; y <= erosion; y++) ectx.drawImage(tempErosionBuffer, 0, y);
       }
-
       sctx.globalCompositeOperation = "destination-out";
       sctx.drawImage(erosionBuffer, 0, 0);
     }
 
-    // Fill the stroke mask with color and opacity
     sctx.globalCompositeOperation = "source-in";
-    sctx.fillStyle = stroke.color;
-    sctx.globalAlpha = stroke.opacity / 100;
-    
-    // Softening phase for raster AA
-    if (stroke.antiAlias && layer.type !== "text") {
-       sctx.shadowColor = stroke.color;
-       sctx.shadowBlur = 0.5;
+    sctx.fillStyle = color;
+    sctx.globalAlpha = opacity / 100;
+
+    if (antiAlias && !isText) {
+      sctx.shadowColor = color;
+      sctx.shadowBlur = 0.5;
     }
 
-    sctx.fillRect(0, 0, strokeBuffer.width, strokeBuffer.height);
+    sctx.fillRect(0, 0, contentBuffer.width, contentBuffer.height);
+  }
 
-    if (!stroke.antiAlias) {
-      applyAlphaThreshold(strokeBuffer);
-    }
-    sctx.restore();
+  /**
+   * Renders Drop Shadow effect using native canvas shadow and buffer manipulation.
+   */
+  private renderDropShadow(
+    ctx: CanvasRenderingContext2D,
+    contentBuffer: HTMLCanvasElement,
+    style: DropShadowStyle,
+    x: number,
+    y: number,
+  ) {
+    const { color, opacity, angle, distance, size, spread, noise } = style;
 
-    // 3. Composite final result back to the main context
+    // Calculate offsets based on angle and distance
+    const rad = (angle * Math.PI) / 180;
+    const offsetX = Math.cos(rad) * distance;
+    const offsetY = Math.sin(rad) * distance;
+
+    // Photoshop/Photopea parity logic:
+    // Size = total influence.
+    // Spread = percentage of that influence that is solid (dilated).
+    // Remaining = softness (blur).
+    const spreadSize = (size * spread) / 100;
+    const blurSize = size - spreadSize;
+
     ctx.save();
-    // Use Math.round for pixel-perfect alignment
-    const destX = Math.round(layer.x - padding);
-    const destY = Math.round(layer.y - padding);
-    
-    if (stroke.position === "inside") {
-      ctx.drawImage(buffer, destX, destY);
-      ctx.drawImage(strokeBuffer, destX, destY);
+
+    // 1. Create a shadow mask buffer (black mask of the expanded shape)
+    const shadowCanvas = document.createElement("canvas");
+    shadowCanvas.width = contentBuffer.width;
+    shadowCanvas.height = contentBuffer.height;
+    const sctx = shadowCanvas.getContext("2d", { willReadFrequently: noise > 0 })!;
+
+    // 2. Expand the shape (Spread)
+    // We dilate the original shape to create a smooth, solid core.
+    if (spreadSize > 0) {
+      // Circular dilation for smooth expansion
+      const steps = Math.min(128, Math.max(12, Math.ceil(spreadSize * 4)));
+      for (let i = 0; i < steps; i++) {
+        const a = (i / steps) * Math.PI * 2;
+        sctx.drawImage(contentBuffer, Math.cos(a) * spreadSize, Math.sin(a) * spreadSize);
+      }
+      sctx.drawImage(contentBuffer, 0, 0); // Fill center
     } else {
-      // Outside/Center: draw stroke first, then content on top (fixes halos)
-      ctx.drawImage(strokeBuffer, destX, destY);
-      ctx.drawImage(buffer, destX, destY);
+      sctx.drawImage(contentBuffer, 0, 0);
+    }
+
+    // 3. Fill the expanded mask with the shadow color
+    sctx.globalCompositeOperation = "source-in";
+    sctx.fillStyle = color;
+    sctx.fillRect(0, 0, shadowCanvas.width, shadowCanvas.height);
+
+    // 4. Apply Noise (if any) - Applied to the solid/dilated mask
+    if (noise > 0) {
+      const imageData = sctx.getImageData(0, 0, shadowCanvas.width, shadowCanvas.height);
+      const data = imageData.data;
+      const noiseFactor = noise / 100;
+
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] > 0) {
+          const rand = (Math.random() - 0.5) * 255 * noiseFactor;
+          data[i + 3] = Math.max(0, Math.min(255, data[i + 3] + rand));
+        }
+      }
+      sctx.putImageData(imageData, 0, 0);
+    }
+
+    // 5. Render to main context with Blur (Softness) and Offset
+    ctx.save();
+    ctx.globalAlpha = opacity / 100;
+    
+    if (blurSize > 0) {
+      // Use the "far-away offset" trick to draw ONLY the shadow (blur) 
+      // of the dilated mask, avoiding drawing the mask itself twice.
+      ctx.shadowColor = color;
+      ctx.shadowBlur = blurSize;
+      ctx.shadowOffsetX = offsetX + 20000;
+      ctx.shadowOffsetY = offsetY;
+      ctx.drawImage(shadowCanvas, x - 20000, y);
+    } else {
+      // 100% Spread - Hard edge, just draw the dilated mask at offset
+      ctx.drawImage(shadowCanvas, x + offsetX, y + offsetY);
     }
     ctx.restore();
+
+    ctx.restore();
+  }
+
+  /**
+   * Helper to render a layer with a stroke effect using a generic buffer approach.
+   * @deprecated Use renderLayerWithStyles instead
+   */
+  private renderLayerWithStroke(
+    ctx: CanvasRenderingContext2D,
+    layer: Layer,
+    editingState?: any,
+  ) {
+    this.renderLayerWithStyles(ctx, layer, editingState);
   }
 
   /**

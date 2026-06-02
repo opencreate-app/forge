@@ -29,8 +29,13 @@ export class TextLayer {
       isFocused: boolean;
       isCtrlPressed?: boolean;
     },
+    options?: {
+      skipStyles?: boolean;
+    },
   ) {
     if (!layer.text && !editingState?.isFocused) return;
+
+    const skipStyles = options?.skipStyles ?? false;
 
     // 1. Text Rendering (Always pixel-based, tied to project resolution)
     const textRendering = layer.textRendering || "bilinear";
@@ -55,9 +60,10 @@ export class TextLayer {
     }
 
     const spansKey = JSON.stringify(layer.textSpans || []);
-    const strokeKey = layer.styles?.stroke?.enabled
-      ? `${layer.styles.stroke.size}|${layer.styles.stroke.position}|${layer.styles.stroke.color}|${layer.styles.stroke.opacity}|${layer.styles.stroke.rounded}|${layer.styles.stroke.antiAlias}`
-      : "none";
+    const strokeKey =
+      layer.styles?.stroke?.enabled && !skipStyles
+        ? `${layer.styles.stroke.size}|${layer.styles.stroke.position}|${layer.styles.stroke.color}|${layer.styles.stroke.opacity}|${layer.styles.stroke.rounded}|${layer.styles.stroke.antiAlias}`
+        : "none";
     const propsKey = `${layer.text}|${spansKey}|${layer.fontSize}|${layer.fontFamily}|${layer.fontWeight}|${layer.color}|${layer.textAlign}|${layer.tracking}|${layer.lineHeight}|${layer.width}|${layer.height}|${textRendering}|${textOverflow}|${strokeKey}`;
 
     let cachedCanvas = cache.get(layer.id);
@@ -68,7 +74,8 @@ export class TextLayer {
 
     // Width: For area text, it's constrained by layer.width, but point text can overflow.
     // If textOverflow is true, we allow the canvas to grow to fit the content.
-    const strokePadding = layer.styles?.stroke?.enabled ? layer.styles.stroke.size * 2 : 0;
+    const strokePadding =
+      layer.styles?.stroke?.enabled && !skipStyles ? layer.styles.stroke.size * 2 : 0;
     const targetWidth =
       (textOverflow ? Math.max(layer.width, metrics.width) : Math.max(1, layer.width)) +
       strokePadding * 2;
@@ -113,7 +120,7 @@ export class TextLayer {
       this.drawTextToContext(tbctx, { ...layer, x: offsetX, y: strokePadding });
 
       const stroke = layer.styles?.stroke;
-      if (stroke?.enabled && stroke.size > 0) {
+      if (stroke?.enabled && stroke.size > 0 && !skipStyles) {
         // 2. Apply Raster Stroke logic (consistent with ForgeEngine)
         const strokeBuffer = document.createElement("canvas");
         strokeBuffer.width = cachedCanvas.width;
