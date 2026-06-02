@@ -1835,26 +1835,9 @@ export class ForgeEngine {
       compCtx.drawImage(dsCanvas, 0, 0);
     }
 
-    // --- STROKE (OUTSIDE/CENTER) ---
-    // These go behind the content
-    if (stroke?.enabled && stroke.size > 0 && stroke.position !== "inside") {
-      const strokeBuffer = document.createElement("canvas");
-      strokeBuffer.width = buffer.width;
-      strokeBuffer.height = buffer.height;
-      const sctx = strokeBuffer.getContext("2d")!;
-      sctx.imageSmoothingEnabled = true;
-
-      this.applyStrokeToBuffer(sctx, buffer, stroke, layer.type === "text");
-      
-      // If Fill is < 100%, we knock out the center of the stroke to avoid show-through
-      if (fillAlpha < 0.99) {
-        sctx.save();
-        sctx.globalCompositeOperation = "destination-out";
-        sctx.drawImage(buffer, 0, 0);
-        sctx.restore();
-      }
-      
-      compCtx.drawImage(strokeBuffer, 0, 0);
+    // --- STROKE (OUTSIDE) ---
+    if (stroke?.enabled && stroke.size > 0 && stroke.position === "outside") {
+      this.renderStroke(compCtx, buffer, stroke, layer.type === "text", fillAlpha);
     }
 
     // --- CONTENT (FILL) ---
@@ -1868,16 +1851,9 @@ export class ForgeEngine {
       this.renderInnerShadow(compCtx, buffer, innerShadow, 0, 0, layer.id, padding, padding);
     }
 
-    // --- STROKE (INSIDE) ---
-    if (stroke?.enabled && stroke.size > 0 && stroke.position === "inside") {
-      const strokeBuffer = document.createElement("canvas");
-      strokeBuffer.width = buffer.width;
-      strokeBuffer.height = buffer.height;
-      const sctx = strokeBuffer.getContext("2d")!;
-      sctx.imageSmoothingEnabled = true;
-
-      this.applyStrokeToBuffer(sctx, buffer, stroke, layer.type === "text");
-      compCtx.drawImage(strokeBuffer, 0, 0);
+    // --- STROKE (CENTER / INSIDE) ---
+    if (stroke?.enabled && stroke.size > 0 && stroke.position !== "outside") {
+      this.renderStroke(compCtx, buffer, stroke, layer.type === "text", fillAlpha);
     }
 
     // 3. Final Draw to main context
@@ -1887,71 +1863,55 @@ export class ForgeEngine {
   /**
    * Internal helper to apply stroke logic to a buffer.
    */
-  private applyStrokeToBuffer(
-    sctx: CanvasRenderingContext2D,
+  private renderStroke(
+    ctx: CanvasRenderingContext2D,
     contentBuffer: HTMLCanvasElement,
     stroke: StrokeStyle,
     isText: boolean,
+    fillAlpha: number = 1,
   ) {
     const { size, position, rounded, color, opacity, antiAlias } = stroke;
 
-    // Create the mask for the stroke
-    if (position === "outside" || position === "center") {
-      const dilation = position === "outside" ? size : size / 2;
+    const strokeBuffer = document.createElement("canvas");
+    strokeBuffer.width = contentBuffer.width;
+    strokeBuffer.height = contentBuffer.height;
+    const sctx = strokeBuffer.getContext("2d")!;
+    sctx.imageSmoothingEnabled = true;
 
-      if (rounded) {
-        const radii = [dilation];
-        if (dilation > 2) radii.push(dilation * 0.5);
-        if (dilation > 6) radii.push(dilation * 0.75, dilation * 0.25);
+    // Unified logic for all positions:
+    // 1. Calculate dilation and erosion values
+    const dilation = position === "outside" ? size : position === "center" ? size / 2 : 0;
+    const erosion = position === "inside" ? size : position === "center" ? size / 2 : 0;
 
-        radii.forEach((r) => {
-          const steps = Math.max(16, Math.min(128, Math.ceil(r * 6)));
-          for (let i = 0; i < steps; i++) {
-            const angle = (i / steps) * Math.PI * 2;
-            sctx.drawImage(contentBuffer, Math.cos(angle) * r, Math.sin(angle) * r);
-          }
-        });
-      } else {
-        const tempBuffer = document.createElement("canvas");
-        tempBuffer.width = contentBuffer.width;
-        tempBuffer.height = contentBuffer.height;
-        const tctx = tempBuffer.getContext("2d")!;
-        for (let x = -dilation; x <= dilation; x++) tctx.drawImage(contentBuffer, x, 0);
-        for (let y = -dilation; y <= dilation; y++) sctx.drawImage(tempBuffer, 0, y);
-      }
-    } else if (position === "inside") {
+    // 2. Build the base mask (Content + Dilation)
+    if (dilation > 0) {
+      this.drawDilation(sctx, contentBuffer, dilation, rounded);
+    } else {
       sctx.drawImage(contentBuffer, 0, 0);
-      sctx.globalCompositeOperation = "source-in";
-      const erosionBuffer = document.createElement("canvas");
-      erosionBuffer.width = contentBuffer.width;
-      erosionBuffer.height = contentBuffer.height;
-      const ectx = erosionBuffer.getContext("2d")!;
-      const erosion = size;
-
-      if (rounded) {
-        const steps = Math.max(16, Math.min(128, Math.ceil(erosion * 6)));
-        ectx.drawImage(contentBuffer, 0, 0);
-        ectx.globalCompositeOperation = "destination-in";
-        for (let i = 0; i < steps; i++) {
-          const angle = (i / steps) * Math.PI * 2;
-          ectx.drawImage(contentBuffer, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
-        }
-      } else {
-        const tempErosionBuffer = document.createElement("canvas");
-        tempErosionBuffer.width = contentBuffer.width;
-        tempErosionBuffer.height = contentBuffer.height;
-        const tetctx = tempErosionBuffer.getContext("2d")!;
-        tetctx.drawImage(contentBuffer, 0, 0);
-        tetctx.globalCompositeOperation = "destination-in";
-        for (let x = -erosion; x <= erosion; x++) tetctx.drawImage(contentBuffer, x, 0);
-        ectx.drawImage(tempErosionBuffer, 0, 0);
-        ectx.globalCompositeOperation = "destination-in";
-        for (let y = -erosion; y <= erosion; y++) ectx.drawImage(tempErosionBuffer, 0, y);
-      }
-      sctx.globalCompositeOperation = "destination-out";
-      sctx.drawImage(erosionBuffer, 0, 0);
     }
 
+    // 3. Subtract the "hole" (Content - Erosion)
+    if (erosion > 0) {
+      const erosionCanvas = document.createElement("canvas");
+      erosionCanvas.width = contentBuffer.width;
+      erosionCanvas.height = contentBuffer.height;
+      const ectx = erosionCanvas.getContext("2d")!;
+      this.drawErosion(ectx, contentBuffer, erosion, rounded);
+
+      sctx.save();
+      sctx.globalCompositeOperation = "destination-out";
+      sctx.drawImage(erosionCanvas, 0, 0);
+      sctx.restore();
+    } else if (fillAlpha < 0.99) {
+      // For Outside strokes, if Fill is semi-transparent, we knock out the center
+      // so the fill doesn't blend with the stroke behind it.
+      sctx.save();
+      sctx.globalCompositeOperation = "destination-out";
+      sctx.drawImage(contentBuffer, 0, 0);
+      sctx.restore();
+    }
+
+    // 4. Colorize the resulting mask
     sctx.globalCompositeOperation = "source-in";
     sctx.fillStyle = color;
     sctx.globalAlpha = opacity / 100;
@@ -1962,6 +1922,67 @@ export class ForgeEngine {
     }
 
     sctx.fillRect(0, 0, contentBuffer.width, contentBuffer.height);
+
+    // 5. Final Draw to the target context
+    ctx.drawImage(strokeBuffer, 0, 0);
+  }
+
+  private drawDilation(
+    ctx: CanvasRenderingContext2D,
+    source: HTMLCanvasElement,
+    dilation: number,
+    rounded: boolean,
+  ) {
+    if (rounded) {
+      const radii = [dilation];
+      if (dilation > 2) radii.push(dilation * 0.5);
+      if (dilation > 6) radii.push(dilation * 0.75, dilation * 0.25);
+
+      radii.forEach((r) => {
+        const steps = Math.max(16, Math.min(128, Math.ceil(r * 6)));
+        for (let i = 0; i < steps; i++) {
+          const angle = (i / steps) * Math.PI * 2;
+          ctx.drawImage(source, Math.cos(angle) * r, Math.sin(angle) * r);
+        }
+      });
+    } else {
+      const tempBuffer = document.createElement("canvas");
+      tempBuffer.width = source.width;
+      tempBuffer.height = source.height;
+      const tctx = tempBuffer.getContext("2d")!;
+      for (let x = -dilation; x <= dilation; x++) tctx.drawImage(source, x, 0);
+      for (let y = -dilation; y <= dilation; y++) ctx.drawImage(tempBuffer, 0, y);
+    }
+  }
+
+  private drawErosion(
+    ctx: CanvasRenderingContext2D,
+    source: HTMLCanvasElement,
+    erosion: number,
+    rounded: boolean,
+  ) {
+    ctx.save();
+    if (rounded) {
+      const steps = Math.max(16, Math.min(128, Math.ceil(erosion * 6)));
+      ctx.drawImage(source, 0, 0);
+      ctx.globalCompositeOperation = "destination-in";
+      for (let i = 0; i < steps; i++) {
+        const angle = (i / steps) * Math.PI * 2;
+        ctx.drawImage(source, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
+      }
+    } else {
+      const tempErosionBuffer = document.createElement("canvas");
+      tempErosionBuffer.width = source.width;
+      tempErosionBuffer.height = source.height;
+      const tetctx = tempErosionBuffer.getContext("2d")!;
+      tetctx.drawImage(source, 0, 0);
+      tetctx.globalCompositeOperation = "destination-in";
+      for (let x = -erosion; x <= erosion; x++) tetctx.drawImage(source, x, 0);
+      ctx.drawImage(tempErosionBuffer, 0, 0);
+      ctx.globalCompositeOperation = "destination-in";
+      for (let y = -erosion; y <= erosion; y++) ctx.drawImage(tempErosionBuffer, 0, y);
+    }
+    ctx.restore();
   }
 
   /**
