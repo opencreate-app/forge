@@ -184,6 +184,7 @@ export class BrushTool extends BaseTool {
 
     if (this.offscreenCanvas && this.layerId && this.offscreenCtx) {
       const layer = context.project.layers.find((l) => l.id === this.layerId)!;
+      const isEditingMask = context.project.activeMaskId === layer.id;
 
       // Optimization: Instead of scanning the entire canvas (which now has STROKE_PADDING),
       // we only scan the union of the original layer area and the new stroke area.
@@ -199,13 +200,16 @@ export class BrushTool extends BaseTool {
         height: 0,
       };
 
+      const targetWidth = isEditingMask ? layer.mask!.width : layer.width;
+      const targetHeight = isEditingMask ? layer.mask!.height : layer.height;
+
       const searchMaxX = Math.min(
         this.offscreenCanvas.width,
-        Math.max(this.STROKE_PADDING + layer.width, strokeLocalMaxX),
+        Math.max(this.STROKE_PADDING + targetWidth, strokeLocalMaxX),
       );
       const searchMaxY = Math.min(
         this.offscreenCanvas.height,
-        Math.max(this.STROKE_PADDING + layer.height, strokeLocalMaxY),
+        Math.max(this.STROKE_PADDING + targetHeight, strokeLocalMaxY),
       );
 
       searchBounds.width = searchMaxX - searchBounds.x;
@@ -233,25 +237,43 @@ export class BrushTool extends BaseTool {
 
         const dataUrl = croppedCanvas.toDataURL("image/png");
 
-        context.setLayerCache(this.layerId, croppedCanvas);
+        if (!isEditingMask) {
+          context.setLayerCache(this.layerId, croppedCanvas);
+        } else {
+          context.invalidateCache(this.layerId);
+        }
 
         const layers = context.project.layers.map((l) => {
           if (l.id === this.layerId) {
-            return {
-              ...l,
-              data: dataUrl,
-              x: this.strokeOriginX + bounds.x,
-              y: this.strokeOriginY + bounds.y,
-              width: bounds.width,
-              height: bounds.height,
-            };
+            if (isEditingMask) {
+              return {
+                ...l,
+                mask: {
+                  ...l.mask!,
+                  data: dataUrl,
+                  x: this.strokeOriginX + bounds.x,
+                  y: this.strokeOriginY + bounds.y,
+                  width: bounds.width,
+                  height: bounds.height,
+                },
+              };
+            } else {
+              return {
+                ...l,
+                data: dataUrl,
+                x: this.strokeOriginX + bounds.x,
+                y: this.strokeOriginY + bounds.y,
+                width: bounds.width,
+                height: bounds.height,
+              };
+            }
           }
           return l;
         });
 
         if (this.historySnapshot) {
           context.addHistoryEntry({
-            description: "Brush Tool",
+            description: isEditingMask ? "Brush Mask" : "Brush Tool",
             state: this.historySnapshot,
           });
         }
@@ -300,34 +322,40 @@ export class BrushTool extends BaseTool {
   }
 
   private initOffscreen(layer: any, context: ToolContext) {
-    this.strokeOriginX = layer.x - this.STROKE_PADDING;
-    this.strokeOriginY = layer.y - this.STROKE_PADDING;
-    const width = layer.width + this.STROKE_PADDING * 2;
-    const height = layer.height + this.STROKE_PADDING * 2;
+    const isEditingMask = context.project.activeMaskId === layer.id;
+    const targetX = isEditingMask ? layer.mask.x : layer.x;
+    const targetY = isEditingMask ? layer.mask.y : layer.y;
+    const targetWidth = isEditingMask ? layer.mask.width : layer.width;
+    const targetHeight = isEditingMask ? layer.mask.height : layer.height;
+    const targetData = isEditingMask ? layer.mask.data : layer.data;
+
+    this.strokeOriginX = targetX - this.STROKE_PADDING;
+    this.strokeOriginY = targetY - this.STROKE_PADDING;
+    const width = targetWidth + this.STROKE_PADDING * 2;
+    const height = targetHeight + this.STROKE_PADDING * 2;
 
     this.offscreenCanvas = document.createElement("canvas");
     this.offscreenCanvas.width = width;
     this.offscreenCanvas.height = height;
-    // this.offscreenCtx = this.offscreenCanvas.getContext("2d", {
-    //   willReadFrequently: true,
-    // })!;
     this.offscreenCtx = this.offscreenCanvas.getContext("2d")!;
 
-    // Try to get from cache first (synchronously) for speed
-    const cachedResult = context.getLayerCanvas(layer.id);
-    if (cachedResult) {
-      // Clear to avoid overlap in case the engine tries to draw the base layer again
-      this.offscreenCtx.clearRect(0, 0, width, height);
-      this.offscreenCtx.drawImage(cachedResult.canvas, this.STROKE_PADDING, this.STROKE_PADDING);
+    // Try to get from cache first (synchronously) for speed (only for non-mask layers)
+    if (!isEditingMask) {
+      const cachedResult = context.getLayerCanvas(layer.id);
+      if (cachedResult) {
+        // Clear to avoid overlap in case the engine tries to draw the base layer again
+        this.offscreenCtx.clearRect(0, 0, width, height);
+        this.offscreenCtx.drawImage(cachedResult.canvas, this.STROKE_PADDING, this.STROKE_PADDING);
 
-      // If the cache was already ready, we don't need to load from the data URL
-      if (cachedResult.ready) {
-        return;
+        // If the cache was already ready, we don't need to load from the data URL
+        if (cachedResult.ready) {
+          return;
+        }
       }
     }
 
     // If the cache was not ready or did not exist, load from the original data URL
-    if (layer.data) {
+    if (targetData) {
       this.isLoadingBaseImage = true;
       const img = new Image();
       img.onload = () => {
@@ -341,7 +369,7 @@ export class BrushTool extends BaseTool {
         }
         this.isLoadingBaseImage = false;
       };
-      img.src = layer.data;
+      img.src = targetData;
     }
   }
 

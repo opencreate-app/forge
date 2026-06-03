@@ -4,6 +4,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useProjectStore, Layer, BaseStyle } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
+import { useToolStore } from "@store/toolStore";
 import { getOptimizedBoundingBox } from "@/core/utils/imageUtils";
 import {
   Eye,
@@ -107,6 +108,12 @@ const LayerItem: React.FC<LayerItemProps> = ({
   const updateProject = useProjectStore((state) => state.updateProject);
   const showToast = useUIStore((state) => state.showToast);
   const setStylingLayerId = useUIStore((state) => state.setStylingLayerId);
+  const setActiveMask = useProjectStore((state) => state.setActiveMask);
+  const setForegroundColor = useToolStore((state) => state.setForegroundColor);
+  const setBackgroundColor = useToolStore((state) => state.setBackgroundColor);
+  const activeMaskId = useProjectStore(
+    (state) => state.projects.find((p) => p.id === projectId)?.activeMaskId,
+  );
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(layer.name);
@@ -315,50 +322,101 @@ const LayerItem: React.FC<LayerItemProps> = ({
       )} */}
 
       {/* Thumbnail or Icon */}
-      {layer.type === "group" ? (
-        <button
-          className="p-2 py-1 text-text"
-          onClick={(e) => {
-            e.stopPropagation(); // Prevent opening LayerStylesModal on double click
-            // toggle expand or collapse on click
-            onToggleExpansion(projectId, layer.id);
-          }}
-        >
-          {layer.isExpanded ? <FolderOpen size={16} /> : <Folder size={16} />}
-        </button>
-      ) : layer.data ? (
-        <div
-          className={`w-8 h-8 bg-[#333] relative rounded border flex items-center justify-center overflow-hidden mr-2 shrink-0 transition-colors ${isActive ? "border-accent" : "border-white/10"}`}
-          onClick={handleThumbnailClick}
-          onDoubleClick={(e) => {
-            e.stopPropagation(); // Prevent opening LayerStylesModal on double click
-            if (layer.type === "smart_object") {
-              openSmartObject(projectId, layer.id);
-            }
-          }}
-        >
-          <img
-            src={layer.data}
-            alt=""
-            className="max-w-full max-h-full object-contain pointer-events-none"
-          />
+      <div className="flex items-center gap-1 mr-2 shrink-0">
+        {layer.type === "group" ? (
+          <button
+            className="p-2 py-1 text-text"
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent opening LayerStylesModal on double click
+              // toggle expand or collapse on click
+              onToggleExpansion(projectId, layer.id);
+            }}
+          >
+            {layer.isExpanded ? <FolderOpen size={16} /> : <Folder size={16} />}
+          </button>
+        ) : layer.data ? (
+          <div
+            className={`w-8 h-8 bg-[#333] relative rounded border flex items-center justify-center overflow-hidden shrink-0 transition-colors ${
+              isActive && activeMaskId !== layer.id
+                ? "border-accent ring-1 ring-accent/30"
+                : "border-white/10 hover:border-white/30"
+            }`}
+            onClick={(e) => {
+              if (isActive) {
+                e.stopPropagation();
+                setActiveMask(projectId, null);
+                handleThumbnailClick(e);
+              } else {
+                handleThumbnailClick(e);
+              }
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation(); // Prevent opening LayerStylesModal on double click
+              if (layer.type === "smart_object") {
+                openSmartObject(projectId, layer.id);
+              }
+            }}
+          >
+            <img
+              src={layer.data}
+              alt=""
+              className="max-w-full max-h-full object-contain pointer-events-none"
+            />
 
-          {layer.type === "smart_object" && (
-            <div className="absolute right-0 bottom-0 w-4 h-4 bg-bg-secondary text-text rounded-tl flex items-center justify-center">
-              <Box size={12} />
-            </div>
-          )}
-        </div>
-      ) : (
-        <div
-          className={`w-8 h-8 bg-[#333] rounded border flex items-center justify-center overflow-hidden mr-2 shrink-0 transition-colors ${isActive ? "border-accent" : "border-white/10"}`}
-          onClick={handleThumbnailClick}
-        >
-          <div className="text-[0.6rem] text-[#555] pointer-events-none">
-            {layer.type[0].toUpperCase()}
+            {layer.type === "smart_object" && (
+              <div className="absolute right-0 bottom-0 w-4 h-4 bg-bg-secondary text-text rounded-tl flex items-center justify-center">
+                <Box size={12} />
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        ) : (
+          <div
+            className={`w-8 h-8 bg-[#333] rounded border flex items-center justify-center overflow-hidden shrink-0 transition-colors ${
+              isActive && activeMaskId !== layer.id
+                ? "border-accent ring-1 ring-accent/30"
+                : "border-white/10 hover:border-white/30"
+            }`}
+            onClick={(e) => {
+              if (isActive) {
+                e.stopPropagation();
+                setActiveMask(projectId, null);
+              } else {
+                handleThumbnailClick(e);
+              }
+            }}
+          >
+            <div className="text-[0.6rem] text-[#555] pointer-events-none">
+              {layer.type[0].toUpperCase()}
+            </div>
+          </div>
+        )}
+
+        {/* Mask Thumbnail */}
+        {layer.mask && (
+          <div
+            className={`w-8 h-8 bg-black relative rounded border flex items-center justify-center overflow-hidden shrink-0 transition-colors ${
+              isActive && activeMaskId === layer.id
+                ? "border-accent ring-1 ring-accent/30"
+                : "border-white/10 hover:border-white/30"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isActive) {
+                onClick(e, layer.id);
+              }
+              setActiveMask(projectId, layer.id);
+              setForegroundColor("#000000");
+              setBackgroundColor("#ffffff");
+            }}
+          >
+            <img
+              src={layer.mask.data}
+              alt=""
+              className="max-w-full max-h-full object-contain pointer-events-none"
+            />
+          </div>
+        )}
+      </div>
 
       <div className="flex-1 flex items-center min-w-0">
         {isEditing ? (

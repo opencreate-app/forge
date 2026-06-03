@@ -10,7 +10,8 @@ export class MoveTool extends BaseTool {
   private isDragging = false;
   private startX = 0;
   private startY = 0;
-  private initialPositions: Map<string, { x: number; y: number }> = new Map();
+  private initialPositions: Map<string, { x: number; y: number; maskX?: number; maskY?: number }> =
+    new Map();
   private movingLayerIds: string[] = [];
   private isFloating = false;
   private historySnapshot: HistoryState | null = null;
@@ -128,7 +129,12 @@ export class MoveTool extends BaseTool {
       for (const id of this.movingLayerIds) {
         const layer = project.layers.find((l) => l.id === id);
         if (layer) {
-          this.initialPositions.set(id, { x: layer.x, y: layer.y });
+          this.initialPositions.set(id, {
+            x: layer.x,
+            y: layer.y,
+            maskX: layer.mask?.x,
+            maskY: layer.mask?.y,
+          });
         }
       }
     }
@@ -168,11 +174,20 @@ export class MoveTool extends BaseTool {
       const layers = context.project.layers.map((l) => {
         const initial = this.initialPositions.get(l.id);
         if (initial) {
-          return {
+          const updates: any = {
             ...l,
             x: initial.x + dx,
             y: initial.y + dy,
           };
+
+          if (l.mask?.linked && initial.maskX !== undefined && initial.maskY !== undefined) {
+            updates.mask = {
+              ...l.mask,
+              x: initial.maskX + dx,
+              y: initial.maskY + dy,
+            };
+          }
+          return updates;
         }
         return l;
       });
@@ -227,7 +242,15 @@ export class MoveTool extends BaseTool {
 
     const layers = project.layers.map((l) => {
       if (targetSet.has(l.id)) {
-        return { ...l, x: l.x + dx, y: l.y + dy };
+        const updates: any = { ...l, x: l.x + dx, y: l.y + dy };
+        if (l.mask?.linked) {
+          updates.mask = {
+            ...l.mask,
+            x: l.mask.x + dx,
+            y: l.mask.y + dy,
+          };
+        }
+        return updates;
       }
       return l;
     });

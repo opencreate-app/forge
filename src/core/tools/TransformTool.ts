@@ -580,17 +580,28 @@ export class TransformTool extends BaseTool {
       // Non-destructive update for smart objects
       const finalWidth = t.width * t.scaleX;
       const finalHeight = t.height * t.scaleY;
+      const newX = t.x - finalWidth * t.anchor.x;
+      const newY = t.y - finalHeight * t.anchor.y;
 
       context.updateProject({
         layers: context.project.layers.map((l) =>
           l.id === layer.id
             ? {
                 ...l,
-                x: t.x - finalWidth * t.anchor.x,
-                y: t.y - finalHeight * t.anchor.y,
+                x: newX,
+                y: newY,
                 width: finalWidth,
                 height: finalHeight,
                 rotation: t.rotation,
+                mask: l.mask?.linked
+                  ? {
+                      ...l.mask,
+                      x: newX,
+                      y: newY,
+                      // Note: For now, scaling/rotating raster masks on smart objects is limited
+                      // since we don't bake them here. But movement will work.
+                    }
+                  : l.mask,
               }
             : l,
         ),
@@ -614,6 +625,38 @@ export class TransformTool extends BaseTool {
       octx.scale(t.scaleX, t.scaleY);
       octx.drawImage(layerCanvas.canvas, -t.width * t.anchor.x, -t.height * t.anchor.y);
 
+      let newMaskData = layer.mask?.data;
+      if (layer.mask?.linked && layer.mask.data) {
+        const maskImg = new Image();
+        maskImg.src = layer.mask.data;
+        await new Promise((resolve) => {
+          maskImg.onload = resolve;
+          maskImg.onerror = resolve;
+        });
+
+        if (maskImg.complete && maskImg.width > 0) {
+          const mCanvas = document.createElement("canvas");
+          mCanvas.width = newWidth;
+          mCanvas.height = newHeight;
+          const mctx = mCanvas.getContext("2d")!;
+          mctx.translate(-newX, -newY);
+          mctx.translate(t.x, t.y);
+          mctx.rotate(rot);
+          mctx.scale(t.scaleX, t.scaleY);
+
+          // Original relationship: mask.x, mask.y
+          // We need to draw the mask image at its original position relative to the layer's center
+          // The center of the transformation is t.x, t.y (world coords)
+          // The layer's original center was this.originalLayer!.x + this.originalLayer!.width/2
+          const origL = this.originalLayer!;
+          const dx = layer.mask.x - origL.x;
+          const dy = layer.mask.y - origL.y;
+
+          mctx.drawImage(maskImg, dx - origL.width * t.anchor.x, dy - origL.height * t.anchor.y);
+          newMaskData = mCanvas.toDataURL();
+        }
+      }
+
       if (this.isFloating) {
         const newFloating = {
           ...layer,
@@ -623,6 +666,16 @@ export class TransformTool extends BaseTool {
           height: newHeight,
           data: offCanvas.toDataURL(),
           rotation: 0,
+          mask: layer.mask
+            ? {
+                ...layer.mask,
+                data: newMaskData!,
+                x: newX,
+                y: newY,
+                width: newWidth,
+                height: newHeight,
+              }
+            : undefined,
         };
         context.updateProject({
           selection: {
@@ -646,6 +699,16 @@ export class TransformTool extends BaseTool {
                   height: newHeight,
                   data: offCanvas.toDataURL(),
                   rotation: 0,
+                  mask: l.mask
+                    ? {
+                        ...l.mask,
+                        data: newMaskData!,
+                        x: newX,
+                        y: newY,
+                        width: newWidth,
+                        height: newHeight,
+                      }
+                    : undefined,
                 }
               : l,
           ),

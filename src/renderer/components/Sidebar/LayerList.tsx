@@ -86,6 +86,8 @@ const LayerList: React.FC = () => {
   const convertToSmartObject = useProjectStore((state) => state.convertToSmartObject);
   const rasterizeSmartObject = useProjectStore((state) => state.rasterizeSmartObject);
   const resetSmartObjectTransform = useProjectStore((state) => state.resetSmartObjectTransform);
+  const addLayerMask = useProjectStore((state) => state.addLayerMask);
+  const removeLayerMask = useProjectStore((state) => state.removeLayerMask);
 
   const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
   const [visibilityDrag, setVisibilityDrag] = React.useState<{
@@ -504,6 +506,24 @@ const LayerList: React.FC = () => {
       {/* Layer Actions Footer */}
       <div className="p-2 border-t border-bg-tertiary flex justify-end gap-2">
         <button
+          onClick={() => {
+            if (project.activeLayerId) {
+              const layer = project.layers.find((l) => l.id === project.activeLayerId);
+              if (layer && !layer.mask) {
+                addLayerMask(project.id, layer.id);
+              }
+            }
+          }}
+          disabled={
+            !project.activeLayerId ||
+            !!project.layers.find((l) => l.id === project.activeLayerId)?.mask
+          }
+          className="p-1.5 hover:bg-white/10 rounded transition-colors text-[#ccc] hover:text-white disabled:opacity-30"
+          title="Add Layer Mask"
+        >
+          <CircleHalfDashed size={16} />
+        </button>
+        <button
           onClick={handleGroupSelectedLayers}
           disabled={!project.activeLayerId}
           className="p-1.5 hover:bg-white/10 rounded transition-colors text-[#ccc] hover:text-white disabled:opacity-30"
@@ -602,6 +622,23 @@ const LayerList: React.FC = () => {
                     label: "Convert to Smart Object",
                     icon: Box,
                     onClick: () => convertToSmartObject(project.id, project.selectedLayerIds),
+                  },
+                ]),
+            { isSeparator: true },
+            ...(contextMenu.layer.mask
+              ? [
+                  {
+                    label: "Delete Layer Mask",
+                    icon: Trash2,
+                    danger: true,
+                    onClick: () => removeLayerMask(project.id, contextMenu.layer.id),
+                  },
+                ]
+              : [
+                  {
+                    label: "Add Layer Mask",
+                    icon: CircleHalfDashed,
+                    onClick: () => addLayerMask(project.id, contextMenu.layer.id),
                   },
                 ]),
           ]}

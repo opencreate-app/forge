@@ -513,11 +513,33 @@ export class CropTool extends BaseTool {
 
         // If it's not a raster layer or we don't want to delete pixels, just update transform
         if (layer.type !== "raster" || !settings.deleteCropped) {
+          const newX = newCenterX - layer.width / 2;
+          const newY = newCenterY - layer.height / 2;
+
+          let newMask = layer.mask;
+          if (layer.mask?.linked) {
+            const mcx = layer.mask.x + layer.mask.width / 2;
+            const mcy = layer.mask.y + layer.mask.height / 2;
+            const mRelX = mcx - t.x;
+            const mRelY = mcy - t.y;
+            const mRotX = mRelX * cos - mRelY * sin;
+            const mRotY = mRelX * sin + mRelY * cos;
+            const newMCX = mRotX - localLeft;
+            const newMCY = mRotY - localTop;
+
+            newMask = {
+              ...layer.mask,
+              x: newMCX - layer.mask.width / 2,
+              y: newMCY - layer.mask.height / 2,
+            };
+          }
+
           return {
             ...layer,
             rotation: newRotation,
-            x: newCenterX - layer.width / 2,
-            y: newCenterY - layer.height / 2,
+            x: newX,
+            y: newY,
+            mask: newMask,
           };
         }
 
@@ -630,6 +652,32 @@ export class CropTool extends BaseTool {
         }
 
         context.invalidateCache(layer.id);
+
+        let newMask = layer.mask;
+        if (layer.mask?.linked) {
+          // Calculate mask's new position in the cropped project space
+          const mcx = layer.mask.x + layer.mask.width / 2;
+          const mcy = layer.mask.y + layer.mask.height / 2;
+
+          const mRelX = mcx - t.x;
+          const mRelY = mcy - t.y;
+          const mRotX = mRelX * cos - mRelY * sin;
+          const mRotY = mRelX * sin + mRelY * cos;
+
+          const newMCX = mRotX - localLeft;
+          const newMCY = mRotY - localTop;
+
+          newMask = {
+            ...layer.mask,
+            x: newMCX - layer.mask.width / 2,
+            y: newMCY - layer.mask.height / 2,
+            // Note: In non-rasterize mode, we just move it.
+          };
+
+          // If we also want to rasterize the mask (like we did for the layer),
+          // it would be more consistent. But for now movement is a good start.
+        }
+
         return {
           ...layer,
           rotation: 0, // Baked
@@ -638,6 +686,7 @@ export class CropTool extends BaseTool {
           height: finalCanvas.height,
           x: finalX,
           y: finalY,
+          mask: newMask,
         };
       }),
     );

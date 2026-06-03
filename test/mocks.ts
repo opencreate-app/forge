@@ -24,6 +24,7 @@ export const createMockProject = (overrides: Partial<Project> = {}): Project => 
     },
   ],
   activeLayerId: "layer-1",
+  activeMaskId: null,
   selectedLayerIds: ["layer-1"],
   selection: { hasSelection: false, bounds: null },
   zoom: 1,

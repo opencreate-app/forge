@@ -1676,12 +1676,25 @@ export class ForgeEngine {
         };
       } else {
         ctx.scale(transform.scaleX, transform.scaleY);
+        const lx = -transform.width * transform.anchor.x;
+        const ly = -transform.height * transform.anchor.y;
+
         renderLayerTarget = {
           ...layer,
-          x: -transform.width * transform.anchor.x,
-          y: -transform.height * transform.anchor.y,
+          x: lx,
+          y: ly,
           rotation: 0,
         };
+
+        if (layer.mask?.linked) {
+          const relX = layer.mask.x - layer.x;
+          const relY = layer.mask.y - layer.y;
+          renderLayerTarget.mask = {
+            ...layer.mask,
+            x: lx + relX,
+            y: ly + relY,
+          };
+        }
       }
     } else if (layer.rotation) {
       const centerX = Math.round(layer.x + layer.width / 2);
@@ -1692,18 +1705,21 @@ export class ForgeEngine {
     }
 
     const drawingCanvas = isEditing ? tool?.getDrawingCanvas() : null;
+    const isEditingMask = isEditing && this.project?.activeMaskId === layer.id;
+
     const hasStyles = layer.styles
       ? Object.values(layer.styles).some((s: any) => s?.enabled)
       : false;
+    const hasMask = layer.mask?.enabled || isEditingMask;
 
-    if (drawingCanvas) {
+    if (drawingCanvas && !isEditingMask) {
       ctx.save();
       ctx.globalAlpha *= (layer.fill ?? 100) / 100;
       ctx.drawImage(drawingCanvas.canvas, drawingCanvas.x, drawingCanvas.y);
       ctx.restore();
-    } else if (hasStyles) {
-      // Generic styles implementation for all layer types (Raster, Text, Group, Smart Object)
-      this.renderLayerWithStyles(ctx, renderLayerTarget, editingState);
+    } else if (hasStyles || hasMask) {
+      // Generic styles and mask implementation for all layer types (Raster, Text, Group, Smart Object)
+      this.renderLayerWithStyles(ctx, renderLayerTarget, editingState, isEditingMask ? drawingCanvas : undefined);
     } else {
       ctx.globalAlpha *= (layer.fill ?? 100) / 100;
       this.renderLayerToContext(ctx, renderLayerTarget, editingState);
@@ -1767,7 +1783,12 @@ export class ForgeEngine {
   /**
    * Helper to render a layer with multiple styles (Stroke, Drop Shadow, etc.)
    */
-  private renderLayerWithStyles(ctx: CanvasRenderingContext2D, layer: Layer, editingState?: any) {
+  private renderLayerWithStyles(
+    ctx: CanvasRenderingContext2D,
+    layer: Layer,
+    editingState?: any,
+    maskPreview?: { canvas: HTMLCanvasElement; x: number; y: number } | null,
+  ) {
     const stroke = layer.styles?.stroke;
     const dropShadow = layer.styles?.dropShadow;
     const innerShadow = layer.styles?.innerShadow;
@@ -1813,6 +1834,11 @@ export class ForgeEngine {
     bctx.translate(padding - x, padding - y);
     this.renderLayerToContext(bctx, layer, editingState, { skipStyles: true });
     bctx.restore();
+
+    // --- LAYER MASK (Applied to content before styles so styles adapt) ---
+    if (layer.mask?.enabled || maskPreview) {
+      this.applyLayerMask(bctx, layer.mask, buffer.width, buffer.height, padding, x, y, maskPreview);
+    }
 
     // 2. Prepare Composition Buffer
     // We render everything into a single offscreen buffer to avoid sub-pixel gaps (halos)
@@ -1875,6 +1901,78 @@ export class ForgeEngine {
 
     // 3. Final Draw to main context
     ctx.drawImage(compCanvas, destX, destY);
+  }
+
+  /**
+   * Applies a layer mask to a context.
+   */
+  private applyLayerMask(
+    ctx: CanvasRenderingContext2D,
+    mask: any,
+    width: number,
+    height: number,
+    padding: number,
+    layerX: number,
+    layerY: number,
+    maskPreview?: { canvas: HTMLCanvasElement; x: number; y: number } | null,
+  ) {
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = width;
+    maskCanvas.height = height;
+    const mctx = maskCanvas.getContext("2d")!;
+
+    // 1. Draw base mask data
+    if (mask?.enabled) {
+      const img = this.imageCache.get(mask.data);
+      if (img) {
+        // Align mask with the layer content in buffer space
+        // mask.x, mask.y are in project coordinates
+        // layerX, layerY are also project coordinates
+        const drawX = padding + (mask.x - layerX);
+        const drawY = padding + (mask.y - layerY);
+        mctx.drawImage(img, drawX, drawY, mask.width, mask.height);
+      } else {
+        // Load it for next time
+        const newImg = new Image();
+        newImg.onload = () => {
+          this.imageCache.set(mask.data, newImg);
+          this.render();
+        };
+        newImg.src = mask.data;
+        // While loading, treat as fully opaque (white)
+        mctx.fillStyle = "white";
+        mctx.fillRect(0, 0, width, height);
+      }
+    } else {
+      // If mask is disabled or missing but we have a preview, start with white
+      mctx.fillStyle = "white";
+      mctx.fillRect(0, 0, width, height);
+    }
+
+    // 2. Overlay real-time mask painting if available
+    if (maskPreview) {
+      // maskPreview.x/y are project coordinates
+      const drawX = padding + (maskPreview.x - layerX);
+      const drawY = padding + (maskPreview.y - layerY);
+      mctx.drawImage(maskPreview.canvas, drawX, drawY);
+    }
+
+    // 3. Convert grayscale luminosity to alpha
+    const imgData = mctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      // luminosity = (R + G + B) / 3
+      const luminosity = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      // data[i+3] is the original alpha of the mask pixel
+      data[i + 3] = (data[i + 3] * luminosity) / 255;
+    }
+    mctx.putImageData(imgData, 0, 0);
+
+    // 4. Apply to target context
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.drawImage(maskCanvas, 0, 0);
+    ctx.restore();
   }
 
   /**

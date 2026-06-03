@@ -27,6 +27,26 @@ export interface TextSpan {
 }
 
 /**
+ * Represents a non-destructive mask applied to a layer.
+ */
+export interface LayerMask {
+  /** Base64 encoded grayscale image (Black hides, White shows). */
+  data: string;
+  /** X coordinate in project space. */
+  x: number;
+  /** Y coordinate in project space. */
+  y: number;
+  /** Width of the mask in pixels. */
+  width: number;
+  /** Height of the mask in pixels. */
+  height: number;
+  /** Whether the mask is enabled. */
+  enabled: boolean;
+  /** If true, the mask moves with the layer. */
+  linked: boolean;
+}
+
+/**
  * Represents a layer in the project. Layers can be raster images, text, or groups.
  */
 export interface Layer {
@@ -105,6 +125,8 @@ export interface Layer {
   isExpanded?: boolean;
   /** Styles applied to the layer. */
   styles?: LayerStyles;
+  /** Non-destructive mask applied to the layer. */
+  mask?: LayerMask;
 }
 
 /**
@@ -129,6 +151,7 @@ export interface HistoryState {
   height: number;
   layers: Layer[];
   activeLayerId: string | null;
+  activeMaskId?: string | null;
   selectedLayerIds: string[];
   selection: Selection;
 }
@@ -159,6 +182,8 @@ export interface Project {
   layers: Layer[];
   /** ID of the currently selected layer. */
   activeLayerId: string | null;
+  /** ID of the layer whose mask is currently being edited. */
+  activeMaskId?: string | null;
   /** IDs of all selected layers for multi-selection. */
   selectedLayerIds: string[];
   /** Current selection state. */
@@ -265,6 +290,14 @@ interface ProjectState {
   openSmartObject: (projectId: string, layerId: string) => void;
   /** Synchronizes changes from a Smart Object tab back to its parent layer. */
   syncSmartObject: (smartProjectId: string) => Promise<void>;
+  /** Adds a layer mask to a specific layer. */
+  addLayerMask: (projectId: string, layerId: string) => void;
+  /** Removes a layer mask from a specific layer. */
+  removeLayerMask: (projectId: string, layerId: string) => void;
+  /** Updates properties of a layer mask. */
+  updateLayerMask: (projectId: string, layerId: string, updates: Partial<LayerMask>) => void;
+  /** Sets the active mask for a project. */
+  setActiveMask: (projectId: string, layerId: string | null) => void;
   /** Sets the active layer for a project. */
   setActiveLayer: (projectId: string, layerId: string | null) => void;
   /** Sets the selected layers for a project. */
@@ -335,6 +368,7 @@ export const createHistoryState = (project: Project): HistoryState => ({
   height: project.height,
   layers: JSON.parse(JSON.stringify(project.layers)),
   activeLayerId: project.activeLayerId,
+  activeMaskId: project.activeMaskId,
   selectedLayerIds: [
     ...(project.selectedLayerIds || (project.activeLayerId ? [project.activeLayerId] : [])),
   ],
@@ -1514,6 +1548,83 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }),
     })),
 
+  addLayerMask: (projectId, layerId) => {
+    const project = get().projects.find((p) => p.id === projectId);
+    if (!project) return;
+    const layer = project.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    get().pushHistory(projectId, "Add Layer Mask");
+
+    const canvas = document.createElement("canvas");
+    canvas.width = project.width;
+    canvas.height = project.height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const mask: LayerMask = {
+      data: canvas.toDataURL(),
+      x: 0,
+      y: 0,
+      width: project.width,
+      height: project.height,
+      enabled: true,
+      linked: true,
+    };
+
+    set((state) => ({
+      projects: state.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              activeMaskId: layerId,
+              layers: p.layers.map((l) => (l.id === layerId ? { ...l, mask } : l)),
+              isDirty: true,
+            }
+          : p,
+      ),
+    }));
+  },
+
+  removeLayerMask: (projectId, layerId) => {
+    get().pushHistory(projectId, "Delete Layer Mask");
+    set((state) => ({
+      projects: state.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              activeMaskId: p.activeMaskId === layerId ? null : p.activeMaskId,
+              layers: p.layers.map((l) => (l.id === layerId ? { ...l, mask: undefined } : l)),
+              isDirty: true,
+            }
+          : p,
+      ),
+    }));
+  },
+
+  updateLayerMask: (projectId, layerId, updates) =>
+    set((state) => ({
+      projects: state.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              layers: p.layers.map((l) =>
+                l.id === layerId && l.mask ? { ...l, mask: { ...l.mask, ...updates } } : l,
+              ),
+              isDirty: true,
+            }
+          : p,
+      ),
+    })),
+
+  setActiveMask: (projectId, layerId) =>
+    set((state) => ({
+      projects: state.projects.map((p) =>
+        p.id === projectId ? { ...p, activeMaskId: layerId } : p,
+      ),
+    })),
+
   setActiveLayer: (projectId, layerId) =>
     set((state) => ({
       projects: state.projects.map((p) =>
@@ -1521,6 +1632,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           ? {
               ...p,
               activeLayerId: layerId,
+              activeMaskId: null,
               selectedLayerIds: layerId ? [layerId] : [],
             }
           : p,
