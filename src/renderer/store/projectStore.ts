@@ -5,6 +5,8 @@ import { create } from "zustand";
 import { usePreferencesStore } from "./preferencesStore";
 import { useUIStore } from "./uiStore";
 import { LayerStyles } from "./layerStylesStore";
+import { getCombinedStyledBounds } from "@utils/projectUtils";
+import { ForgeEngine } from "@core/engine/ForgeEngine";
 
 export * from "./layerStylesStore";
 
@@ -1111,77 +1113,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const selectedLayers = project.layers.filter((l) => movingLayerIds.has(l.id));
     if (selectedLayers.length === 0) return;
 
-    // Calculate bounding box of all selected layers (including groups)
-    // Filter out groups for bounds calculation if they don't have explicit size,
-    // but in our engine groups usually have 0,0 size unless calculated.
-    // If only groups with 0 size, we might need to calculate their content bounds
-    // For now, let's assume we use all layers that have x,y,width,height
-    const layersWithBounds = selectedLayers.filter((l) => l.type !== "group");
-
-    let minX, minY, maxX, maxY;
-
-    if (layersWithBounds.length > 0) {
-      minX = Math.min(...layersWithBounds.map((l) => l.x));
-      minY = Math.min(...layersWithBounds.map((l) => l.y));
-      maxX = Math.max(...layersWithBounds.map((l) => l.x + l.width));
-      maxY = Math.max(...layersWithBounds.map((l) => l.y + l.height));
-    } else {
-      // Fallback to groups or default
-      minX = Math.min(...selectedLayers.map((l) => l.x));
-      minY = Math.min(...selectedLayers.map((l) => l.y));
-      maxX = Math.max(...selectedLayers.map((l) => l.x + l.width));
-      maxY = Math.max(...selectedLayers.map((l) => l.y + l.height));
-    }
-
-    const width = Math.max(1, Math.ceil(maxX - minX));
-    const height = Math.max(1, Math.ceil(maxY - minY));
+    // Calculate bounding box of all selected layers including their styles
+    const styledBounds = getCombinedStyledBounds(selectedLayers);
+    const minX = styledBounds.x;
+    const minY = styledBounds.y;
+    const width = styledBounds.width;
+    const height = styledBounds.height;
 
     const smartObjectId = Math.random().toString(36).substr(2, 9);
 
-    // Create a preview by rendering the layers to a temporary canvas
+    // Create a preview by rendering the layers using the engine (headless)
     const previewCanvas = document.createElement("canvas");
     previewCanvas.width = width;
     previewCanvas.height = height;
-    const previewCtx = previewCanvas.getContext("2d")!;
-
-    // Basic rendering for preview
-    for (const layer of selectedLayers) {
-      if (!layer.visible) continue;
-
-      previewCtx.save();
-      previewCtx.globalAlpha = (layer.opacity / 100) * ((layer.fill ?? 100) / 100);
-      previewCtx.globalCompositeOperation = layer.blendMode;
-
-      if (layer.type === "raster" && layer.data) {
-        const img = new Image();
-        img.src = layer.data;
-        await new Promise((resolve) => {
-          img.onload = resolve;
-          img.onerror = resolve;
-        });
-        previewCtx.drawImage(img, layer.x - minX, layer.y - minY, layer.width, layer.height);
-      } else if (layer.type === "text" && layer.text) {
-        // Simple text preview (can be improved later with full TextLayer logic)
-        previewCtx.fillStyle = layer.color || "white";
-        previewCtx.font = `${layer.fontWeight || "normal"} ${layer.fontSize || 20}px ${layer.fontFamily || "sans-serif"}`;
-        previewCtx.textBaseline = "top";
-        previewCtx.fillText(layer.text, layer.x - minX, layer.y - minY);
-      } else if (layer.type === "smart_object" && (layer.dataOriginal || layer.data)) {
-        // Recursively render smart objects if they have data (prefer original for quality)
-        const sourceData = (layer.dataOriginal || layer.data)!;
-        const img = new Image();
-        img.src = sourceData;
-        await new Promise((resolve) => {
-          img.onload = resolve;
-          img.onerror = resolve;
-        });
-        previewCtx.drawImage(img, layer.x - minX, layer.y - minY, layer.width, layer.height);
-      }
-
-      previewCtx.restore();
-    }
-
-    const dataURL = previewCanvas.toDataURL();
 
     const nestedLayers: Layer[] = selectedLayers.map((l) => ({
       ...JSON.parse(JSON.stringify(l)),
@@ -1189,6 +1133,22 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       y: l.y - minY,
       parentId: l.parentId && movingLayerIds.has(l.parentId) ? l.parentId : null,
     }));
+
+    // Use ForgeEngine to render a high-quality preview with all styles
+    const tempEngine = new ForgeEngine(previewCanvas, () => {}, { headless: true });
+    tempEngine.setProject({
+      ...project,
+      width,
+      height,
+      layers: nestedLayers,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    });
+
+    await tempEngine.preloadImages();
+    const dataURL = await tempEngine.exportProject("image/png", 1);
+    tempEngine.stopRenderLoop(); // Just in case, although headless shouldn't start it
 
     // Find the correct parentId for the Smart Object itself.
     // It should inherit the parent of the topmost moving layer,
