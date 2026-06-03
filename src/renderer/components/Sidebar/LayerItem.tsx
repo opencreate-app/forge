@@ -14,6 +14,7 @@ import {
   Folder,
   FolderOpen,
   Box,
+  X,
   // ChevronRight,
   // ChevronDown,
   // Trash2,
@@ -109,6 +110,8 @@ const LayerItem: React.FC<LayerItemProps> = ({
   const showToast = useUIStore((state) => state.showToast);
   const setStylingLayerId = useUIStore((state) => state.setStylingLayerId);
   const setActiveMask = useProjectStore((state) => state.setActiveMask);
+  const updateLayerMask = useProjectStore((state) => state.updateLayerMask);
+  const pushHistory = useProjectStore((state) => state.pushHistory);
   const setForegroundColor = useToolStore((state) => state.setForegroundColor);
   const setBackgroundColor = useToolStore((state) => state.setBackgroundColor);
   const activeMaskId = useProjectStore(
@@ -401,6 +404,16 @@ const LayerItem: React.FC<LayerItemProps> = ({
             }`}
             onClick={(e) => {
               e.stopPropagation();
+
+              if (e.shiftKey) {
+                pushHistory(
+                  projectId,
+                  layer.mask!.enabled ? "Disable Layer Mask" : "Enable Layer Mask",
+                );
+                updateLayerMask(projectId, layer.id, { enabled: !layer.mask!.enabled });
+                return;
+              }
+
               if (!isActive) {
                 onClick(e, layer.id);
               }
@@ -408,12 +421,20 @@ const LayerItem: React.FC<LayerItemProps> = ({
               setForegroundColor("#000000");
               setBackgroundColor("#ffffff");
             }}
+            onDoubleClick={(e) => {
+              e.stopPropagation(); // Prevent opening LayerStylesModal on double click
+            }}
           >
             <img
               src={layer.mask.data}
               alt=""
-              className="max-w-full max-h-full object-contain pointer-events-none"
+              className={`max-w-full max-h-full object-contain pointer-events-none ${!layer.mask.enabled ? "opacity-30 grayscale" : ""}`}
             />
+            {!layer.mask.enabled && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <X size={24} className="text-red-500 opacity-80" strokeWidth={3} />
+              </div>
+            )}
           </div>
         )}
       </div>

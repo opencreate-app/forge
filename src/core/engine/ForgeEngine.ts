@@ -295,48 +295,65 @@ export class ForgeEngine {
       console.warn("Font preloading failed", e);
     }
 
-    // 2. Wait for all raster and smart object images to be loaded and decoded
+    // 2. Wait for all raster, smart object images, and masks to be loaded and decoded
     const promises = this.project.layers.map(async (layer) => {
       const sourceData = (
         layer.type === "smart_object" ? layer.dataOriginal || layer.data : layer.data
       ) as string | undefined;
 
+      const maskData = layer.mask?.data;
+
+      const tasks: Promise<void>[] = [];
+
       if ((layer.type === "raster" || layer.type === "smart_object") && sourceData) {
-        return new Promise<void>((resolve) => {
-          let img = this.imageCache.get(sourceData);
-          if (!img) {
-            img = new Image();
-            img.src = sourceData;
-            this.imageCache.set(sourceData, img);
-          }
-
-          const onDone = async () => {
-            img?.removeEventListener("load", onDone);
-            img?.removeEventListener("error", onDone);
-
-            // Wait for decoding to ensure it's ready for canvas drawing
-            try {
-              if (img?.decode) await img.decode();
-            } catch (e) {
-              console.warn("Image decode failed", e);
-            }
-            resolve();
-          };
-
-          if (img.complete && img.naturalWidth > 0) {
-            onDone();
-          } else {
-            img.addEventListener("load", onDone);
-            img.addEventListener("error", onDone);
-            // Safety: if it failed and is complete, naturalWidth will be 0
-            if (img.complete && img.naturalWidth === 0) resolve();
-          }
-        });
+        tasks.push(this.preloadImage(sourceData));
       }
-      return Promise.resolve();
+
+      if (maskData) {
+        tasks.push(this.preloadImage(maskData));
+      }
+
+      await Promise.all(tasks);
     });
 
     await Promise.all(promises);
+  }
+
+  /**
+   * Internal helper to load and decode an image for caching.
+   * @param src The image source (DataURL or URL).
+   */
+  private preloadImage(src: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let img = this.imageCache.get(src);
+      if (!img) {
+        img = new Image();
+        img.src = src;
+        this.imageCache.set(src, img);
+      }
+
+      const onDone = async () => {
+        img?.removeEventListener("load", onDone);
+        img?.removeEventListener("error", onDone);
+
+        // Wait for decoding to ensure it's ready for canvas drawing
+        try {
+          if (img?.decode) await img.decode();
+        } catch (e) {
+          console.warn("Image decode failed", e);
+        }
+        resolve();
+      };
+
+      if (img.complete && img.naturalWidth > 0) {
+        onDone();
+      } else {
+        img.addEventListener("load", onDone);
+        img.addEventListener("error", onDone);
+        // Safety: if it failed and is complete, naturalWidth will be 0
+        if (img.complete && img.naturalWidth === 0) resolve();
+      }
+    });
   }
 
   /**

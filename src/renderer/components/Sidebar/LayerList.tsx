@@ -88,6 +88,7 @@ const LayerList: React.FC = () => {
   const resetSmartObjectTransform = useProjectStore((state) => state.resetSmartObjectTransform);
   const addLayerMask = useProjectStore((state) => state.addLayerMask);
   const removeLayerMask = useProjectStore((state) => state.removeLayerMask);
+  const updateLayerMask = useProjectStore((state) => state.updateLayerMask);
 
   const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
   const [visibilityDrag, setVisibilityDrag] = React.useState<{
@@ -627,6 +628,16 @@ const LayerList: React.FC = () => {
             { isSeparator: true },
             ...(contextMenu.layer.mask
               ? [
+                  {
+                    label: contextMenu.layer.mask.enabled ? "Disable Layer Mask" : "Enable Layer Mask",
+                    icon: CircleHalfDashed,
+                    onClick: () => {
+                      pushHistory(project.id, contextMenu.layer.mask!.enabled ? "Disable Layer Mask" : "Enable Layer Mask");
+                      updateLayerMask(project.id, contextMenu.layer.id, {
+                        enabled: !contextMenu.layer.mask!.enabled,
+                      });
+                    },
+                  },
                   {
                     label: "Delete Layer Mask",
                     icon: Trash2,

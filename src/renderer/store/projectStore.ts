@@ -1161,12 +1161,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     previewCanvas.width = width;
     previewCanvas.height = height;
 
-    const nestedLayers: Layer[] = selectedLayers.map((l) => ({
-      ...JSON.parse(JSON.stringify(l)),
-      x: l.x - minX,
-      y: l.y - minY,
-      parentId: l.parentId && movingLayerIds.has(l.parentId) ? l.parentId : null,
-    }));
+    const nestedLayers: Layer[] = selectedLayers.map((l) => {
+      const layerClone = JSON.parse(JSON.stringify(l));
+      if (layerClone.mask) {
+        layerClone.mask.x -= minX;
+        layerClone.mask.y -= minY;
+      }
+      return {
+        ...layerClone,
+        x: l.x - minX,
+        y: l.y - minY,
+        parentId: l.parentId && movingLayerIds.has(l.parentId) ? l.parentId : null,
+      };
+    });
 
     // Use ForgeEngine to render a high-quality preview with all styles
     const tempEngine = new ForgeEngine(previewCanvas, () => {}, { headless: true });
@@ -1400,48 +1407,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const parentLayer = parentProject.layers.find((l) => l.id === smartProject.parentLayerId);
     if (!parentLayer || !parentLayer.dataObject) return;
 
-    // 1. Render the smart project to a DataURL
+    // 1. Render the smart project to a DataURL (High Quality)
     const width = smartProject.width;
     const height = smartProject.height;
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext("2d")!;
 
-    // Basic rendering (reuse logic from convertToSmartObject)
-    for (const layer of smartProject.layers) {
-      if (!layer.visible) continue;
-      ctx.save();
-      ctx.globalAlpha = (layer.opacity / 100) * ((layer.fill ?? 100) / 100);
-      ctx.globalCompositeOperation = layer.blendMode;
+    const tempEngine = new ForgeEngine(canvas, () => {}, { headless: true });
+    tempEngine.setProject({
+      ...smartProject,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    });
 
-      if (layer.type === "raster" && layer.data) {
-        const img = new Image();
-        img.src = layer.data;
-        await new Promise((resolve) => {
-          img.onload = resolve;
-          img.onerror = resolve;
-        });
-        ctx.drawImage(img, layer.x, layer.y, layer.width, layer.height);
-      } else if (layer.type === "text" && layer.text) {
-        ctx.fillStyle = layer.color || "white";
-        ctx.font = `${layer.fontWeight || "normal"} ${layer.fontSize || 20}px ${layer.fontFamily || "sans-serif"}`;
-        ctx.textBaseline = "top";
-        ctx.fillText(layer.text, layer.x, layer.y);
-      } else if (layer.type === "smart_object" && (layer.dataOriginal || layer.data)) {
-        const sourceData = (layer.dataOriginal || layer.data)!;
-        const img = new Image();
-        img.src = sourceData;
-        await new Promise((resolve) => {
-          img.onload = resolve;
-          img.onerror = resolve;
-        });
-        ctx.drawImage(img, layer.x, layer.y, layer.width, layer.height);
-      }
-      ctx.restore();
-    }
-
-    const dataURL = canvas.toDataURL();
+    await tempEngine.preloadImages();
+    const dataURL = await tempEngine.exportProject("image/png", 1);
+    tempEngine.stopRenderLoop();
 
     // Calculate new dimensions to prevent distortion
     const oldInternalWidth = parentLayer.dataObject.width;
