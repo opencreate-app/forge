@@ -2,7 +2,8 @@
  * Purpose: Modal for managing layer styles such as stroke, drop shadows, and other effects, similar to Photoshop's Layer Style dialog.
  */
 import React, { useState, useMemo } from "react";
-import { useProjectStore, LayerStyles, LAYER_STYLE_DEFINITIONS } from "@store/projectStore";
+import { useProjectStore } from "@store/projectStore";
+import { useLayerStylesStore, LayerStyles } from "@store/layerStylesStore";
 import { useUIStore } from "@store/uiStore";
 import BaseModal from "./BaseModal";
 import { EffectsIcon } from "../Sidebar/LayerItem";
@@ -19,6 +20,7 @@ interface LayerStylesModalProps {
  * It features a list of effects on the left and detailed properties on the right.
  */
 export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onClose }) => {
+  const layerStyleDefinitions = useLayerStylesStore((state) => state.getAllLayerStyles());
   const activeTab = useUIStore((state) => state.activeTab);
   const stylingLayerId = useUIStore((state) => state.stylingLayerId);
   const lastLayerStyleEffects = useUIStore((state) => state.lastLayerStyleEffects);
@@ -87,7 +89,7 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   };
 
   const getDefaultValues = (effectId: keyof LayerStyles) => {
-    const def = LAYER_STYLE_DEFINITIONS.find((d) => d.id === effectId);
+    const def = layerStyleDefinitions.find((d) => d.id === effectId);
     if (!def) return { enabled: false };
     const defaults: any = { enabled: false };
     def.options.forEach((opt) => {
@@ -131,7 +133,7 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   if (!renderedLayer && !isOpen) return null;
 
   const activeEffectDef = activeEffectId
-    ? LAYER_STYLE_DEFINITIONS.find((d) => d.id === activeEffectId)
+    ? layerStyleDefinitions.find((d) => d.id === activeEffectId)
     : null;
   const activeEffectState = activeEffectId
     ? localStyles[activeEffectId] || getDefaultValues(activeEffectId)
@@ -161,7 +163,7 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
           }}
         >
           <div className="flex-1 overflow-y-auto custom-scrollbar py-2 space-y-1">
-            {LAYER_STYLE_DEFINITIONS.map((def) => {
+            {layerStyleDefinitions.map((def) => {
               const isEnabled = localStyles[def.id]?.enabled ?? false;
               return (
                 <div

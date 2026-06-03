@@ -1,14 +1,8 @@
 /**
  * Purpose: Core engine class responsible for project rendering, viewport management (zoom/pan), tool orchestration, and selection handling.
  */
-import {
-  Layer,
-  Project,
-  useProjectStore,
-  StrokeStyle,
-  DropShadowStyle,
-  InnerShadowStyle,
-} from "@/renderer/store/projectStore";
+import { Layer, Project, useProjectStore } from "@/renderer/store/projectStore";
+import { StrokeStyle, DropShadowStyle, InnerShadowStyle } from "@/renderer/store/layerStylesStore";
 import { BaseTool, ToolContext } from "../tools/BaseTool";
 import { MoveTool } from "../tools/MoveTool";
 import { BrushTool } from "../tools/BrushTool";
