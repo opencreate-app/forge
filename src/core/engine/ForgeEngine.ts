@@ -21,6 +21,7 @@ import {
   // quantizeImageData,
   safeBase64FromBuffer,
 } from "../utils/imageUtils";
+import { getCombinedStyledBounds } from "@/renderer/utils/projectUtils";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TextLayer } from "../layers/TextLayer";
 import { GroupLayer } from "../layers/GroupLayer";
@@ -1771,6 +1772,24 @@ export class ForgeEngine {
     const dropShadow = layer.styles?.dropShadow;
     const innerShadow = layer.styles?.innerShadow;
 
+    let { x, y, width, height } = layer;
+
+    // Groups in our engine often have 0 size. If they have styles, we must find their content bounds.
+    if (layer.type === "group" && (width === 0 || height === 0)) {
+      const allDescendantIds = this.getGroupDescendants(layer.id);
+      const visibleDescendants = this.project!.layers.filter(
+        (l) => allDescendantIds.has(l.id) && l.visible,
+      );
+
+      if (visibleDescendants.length > 0) {
+        const bounds = getCombinedStyledBounds(visibleDescendants);
+        x = bounds.x;
+        y = bounds.y;
+        width = bounds.width;
+        height = bounds.height;
+      }
+    }
+
     // Calculate padding needed for all effects
     let padding = 0;
     if (stroke?.enabled) padding = Math.max(padding, Math.ceil(stroke.size) + 2);
@@ -1782,14 +1801,18 @@ export class ForgeEngine {
 
     // 1. Render layer content into an offscreen buffer
     const buffer = document.createElement("canvas");
-    buffer.width = Math.ceil(layer.width + padding * 2);
-    buffer.height = Math.ceil(layer.height + padding * 2);
+    buffer.width = Math.ceil(width + padding * 2);
+    buffer.height = Math.ceil(height + padding * 2);
     const bctx = buffer.getContext("2d")!;
     bctx.imageSmoothingEnabled = false;
 
     // Adjust layer coordinates for the buffer
-    const bufferLayer = { ...layer, x: padding, y: padding };
-    this.renderLayerToContext(bctx, bufferLayer, editingState, { skipStyles: true });
+    // We need to translate the context so that the group's "content origin"
+    // aligns with 'padding, padding' in the buffer.
+    bctx.save();
+    bctx.translate(padding - x, padding - y);
+    this.renderLayerToContext(bctx, layer, editingState, { skipStyles: true });
+    bctx.restore();
 
     // 2. Prepare Composition Buffer
     // We render everything into a single offscreen buffer to avoid sub-pixel gaps (halos)
@@ -1800,8 +1823,8 @@ export class ForgeEngine {
     const compCtx = compCanvas.getContext("2d")!;
     compCtx.imageSmoothingEnabled = true;
 
-    const destX = Math.round(layer.x - padding);
-    const destY = Math.round(layer.y - padding);
+    const destX = Math.round(x - padding);
+    const destY = Math.round(y - padding);
     const fillAlpha = (layer.fill ?? 100) / 100;
 
     // Render order (bottom to top): Drop Shadow -> Content (Fill) -> Inner Shadow -> Stroke
@@ -2611,6 +2634,27 @@ export class ForgeEngine {
       hash |= 0; // Convert to 32bit integer
     }
     return hash;
+  }
+
+  /**
+   * Recursively finds all descendant layer IDs of a group.
+   */
+  private getGroupDescendants(groupId: string): Set<string> {
+    const descendants = new Set<string>();
+    if (!this.project) return descendants;
+
+    const findChildren = (parentId: string) => {
+      const children = this.project!.layers.filter((l) => l.parentId === parentId);
+      for (const child of children) {
+        descendants.add(child.id);
+        if (child.type === "group") {
+          findChildren(child.id);
+        }
+      }
+    };
+
+    findChildren(groupId);
+    return descendants;
   }
 
   /**
