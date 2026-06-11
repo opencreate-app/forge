@@ -36,7 +36,7 @@ const BaseModal: React.FC<BaseModalProps> = ({
   centered = true,
   closeOnOutsideClick = true,
 }) => {
-  const [isRendered, setIsRendered] = useState(isOpen);
+  const [isRendered, setIsRendered] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -72,6 +72,19 @@ const BaseModal: React.FC<BaseModalProps> = ({
         ? { width: modalSettings.width, height: modalSettings.height }
         : null,
     );
+
+    // If is centered and draggable, we reset the offset to center it in the viewport. Otherwise, we keep the last position.
+    if (centered && draggable) {
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const modalWidth = manualSize?.width || parseInt(initialWidth);
+      const modalHeight = manualSize?.height || parseInt(initialHeight);
+
+      setDragOffset({
+        x: Math.max(16, (viewportWidth - modalWidth) / 2),
+        y: Math.max(16, (viewportHeight - modalHeight) / 2),
+      });
+    }
   }
 
   // 2. If closed via prop, trigger the exit animation (fadeOut/slideDown)

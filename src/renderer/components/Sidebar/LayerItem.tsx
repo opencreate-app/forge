@@ -15,6 +15,7 @@ import {
   FolderOpen,
   Box,
   X,
+  PaintBucket,
   // ChevronRight,
   // ChevronDown,
   // Trash2,
@@ -248,6 +249,11 @@ const LayerItem: React.FC<LayerItemProps> = ({
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (layer.type === "color_fill") {
+      setStylingLayerId(layer.id);
+      window.dispatchEvent(new CustomEvent("forge:open-color-fill-modal"));
+      return;
+    }
     setStylingLayerId(layer.id);
     window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
   };
@@ -374,11 +380,11 @@ const LayerItem: React.FC<LayerItemProps> = ({
           </div>
         ) : (
           <div
-            className={`w-8 h-8 bg-[#333] rounded border flex items-center justify-center overflow-hidden shrink-0 transition-colors ${
+            className={`w-8 h-8 bg-[#333] relative rounded border flex items-center justify-center overflow-hidden shrink-0 transition-colors ${
               isActive && activeMaskId !== layer.id
                 ? "border-accent ring-1 ring-accent/30"
                 : "border-white/10 hover:border-white/30"
-            }`}
+            } bg-[var(--thumbnail-color-fill)]`}
             onClick={(e) => {
               if (isActive) {
                 e.stopPropagation();
@@ -387,10 +393,23 @@ const LayerItem: React.FC<LayerItemProps> = ({
                 handleThumbnailClick(e);
               }
             }}
+            style={
+              {
+                "--thumbnail-color-fill": layer.colorFill?.color || "#ffffff",
+              } as React.CSSProperties
+            }
           >
-            <div className="text-[0.6rem] text-[#555] pointer-events-none">
-              {layer.type[0].toUpperCase()}
-            </div>
+            {(layer.type === "color_fill" && (
+              <div
+                className={`absolute right-0 bottom-0 w-4 h-4 bg-bg-secondary text-text rounded-tl flex items-center justify-center`}
+              >
+                <PaintBucket size={12} />
+              </div>
+            )) || (
+              <div className="text-[0.6rem] text-[#555] pointer-events-none">
+                {layer.type[0].toUpperCase()}
+              </div>
+            )}
           </div>
         )}
 

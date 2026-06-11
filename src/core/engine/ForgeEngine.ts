@@ -26,6 +26,7 @@ import { RasterLayer } from "../layers/RasterLayer";
 import { TextLayer } from "../layers/TextLayer";
 import { GroupLayer } from "../layers/GroupLayer";
 import { SmartObjectLayer } from "../layers/SmartObjectLayer";
+import { ColorFillLayer } from "../layers/ColorFillLayer";
 
 /**
  * Represents the current state of the canvas viewport.
@@ -1793,6 +1794,9 @@ export class ForgeEngine {
           this.imageCache,
           () => this.render(),
         );
+        break;
+      case "color_fill":
+        ColorFillLayer.render(ctx, layer);
         break;
     }
   }

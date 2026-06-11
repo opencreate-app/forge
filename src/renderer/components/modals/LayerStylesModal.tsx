@@ -49,9 +49,9 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   // Intelligent History Tracking
   const [hasPushedHistory, setHasPushedHistory] = useState(false);
 
-  if (layer?.id !== prevLayerId) {
-    setPrevLayerId(layer?.id);
-    setLocalStyles(layer?.styles || {});
+  if (layer && layer.id !== prevLayerId) {
+    setPrevLayerId(layer.id);
+    setLocalStyles(layer.styles || {});
     setActiveEffectId(layer ? lastLayerStyleEffects[layer.id] || null : null);
     setHasPushedHistory(false); // Reset history tracking for the new layer
   }
@@ -150,7 +150,7 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
       height="550px"
       draggable
       resizable
-      centered={false}
+      centered={true}
       closeOnOutsideClick={false}
     >
       <div className="flex flex-1 overflow-hidden">

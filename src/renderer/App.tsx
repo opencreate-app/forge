@@ -14,6 +14,7 @@ import NewProject from "./components/modals/NewProject";
 import ExportModal from "./components/modals/ExportModal";
 import { PreferencesModal } from "./components/modals/PreferencesModal";
 import { LayerStylesModal } from "./components/modals/LayerStylesModal";
+import { ColorFillModal } from "./components/modals/ColorFillModal";
 import { usePreferencesStore } from "./store/preferencesStore";
 import { useAutosave } from "./hooks/useAutosave";
 import { useToolStore } from "@store/toolStore";
@@ -51,6 +52,7 @@ function App() {
   const [isExportModalOpen, setIsExportModalOpen] = React.useState(false);
   const [isPreferencesModalOpen, setIsPreferencesModalOpen] = React.useState(false);
   const [isLayerStylesModalOpen, setIsLayerStylesModalOpen] = React.useState(false);
+  const [isColorFillModalOpen, setIsColorFillModalOpen] = React.useState(false);
 
   // Placeholder for update availability
   const [isUpdateAvailable, setIsUpdateAvailable] = React.useState(null as any);
@@ -259,17 +261,20 @@ function App() {
     };
     const handleOpenPreferences = () => setIsPreferencesModalOpen(true);
     const handleOpenLayerStyles = () => setIsLayerStylesModalOpen(true);
+    const handleOpenColorFill = () => setIsColorFillModalOpen(true);
 
     window.addEventListener("forge:new-project", handleNewProject);
     window.addEventListener("forge:open-export-modal", handleOpenExportModal as any);
     window.addEventListener("forge:open-preferences", handleOpenPreferences);
     window.addEventListener("forge:open-layer-styles", handleOpenLayerStyles);
+    window.addEventListener("forge:open-color-fill-modal", handleOpenColorFill);
 
     return () => {
       window.removeEventListener("forge:new-project", handleNewProject);
       window.removeEventListener("forge:open-export-modal", handleOpenExportModal as any);
       window.removeEventListener("forge:open-preferences", handleOpenPreferences);
       window.removeEventListener("forge:open-layer-styles", handleOpenLayerStyles);
+      window.removeEventListener("forge:open-color-fill-modal", handleOpenColorFill);
     };
   }, []);
 
@@ -300,6 +305,10 @@ function App() {
       <LayerStylesModal
         isOpen={isLayerStylesModalOpen}
         onClose={() => setIsLayerStylesModalOpen(false)}
+      />
+      <ColorFillModal
+        isOpen={isColorFillModalOpen}
+        onClose={() => setIsColorFillModalOpen(false)}
       />
       {/* Update Notification */}
       {isUpdateAvailable && !isUpdateAvailable.isClosed && (

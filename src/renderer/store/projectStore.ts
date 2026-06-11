@@ -55,7 +55,7 @@ export interface Layer {
   /** Display name of the layer. */
   name: string;
   /** The type of layer content. */
-  type: "raster" | "text" | "group" | "smart_object";
+  type: "raster" | "text" | "group" | "smart_object" | "color_fill";
   /** Whether the layer is currently visible. */
   visible: boolean;
   /** Whether the layer is locked for editing. */
@@ -78,6 +78,10 @@ export interface Layer {
   dataOriginal?: string;
   /** Nested project data for smart objects. */
   dataObject?: Project;
+  /** Solid color fill settings for color_fill layers. */
+  colorFill?: {
+    color: string;
+  };
   /** Original transformation for smart objects (used for reset). */
   originalTransform?: {
     x: number;

@@ -2,7 +2,12 @@
  * Purpose: Implementation of the Paint Bucket tool for filling areas with color based on tolerance and contiguity.
  */
 import { BaseTool, ToolContext, ToolId } from "./BaseTool";
-import { createHistoryState, HistoryState } from "@/renderer/store/projectStore";
+import {
+  createHistoryState,
+  HistoryState,
+  useProjectStore,
+  Layer,
+} from "@/renderer/store/projectStore";
 import { useUIStore } from "@store/uiStore";
 
 export class PaintBucketTool extends BaseTool {
@@ -13,45 +18,184 @@ export class PaintBucketTool extends BaseTool {
   onMouseDown(e: MouseEvent, context: ToolContext): void {
     if (e.button !== 0) return;
 
-    const activeLayerId = context.project.activeLayerId;
-    if (!activeLayerId) return;
-
-    if (context.isLayerLocked(activeLayerId) || !context.isLayerVisible(activeLayerId)) return;
-
-    const layer = context.project.layers.find((l) => l.id === activeLayerId);
-    if (!layer) return;
-
-    if (layer.type !== "raster") {
-      if (layer.type === "smart_object") {
-        useUIStore
-          .getState()
-          .showToast("Cannot fill on a smart object. Double-click to edit its content.", "warning");
-      } else {
-        useUIStore.getState().showToast("Cannot fill on a non-raster layer", "warning");
-      }
-      return;
-    }
+    const settings = context.settings.paintBucket || {
+      tolerance: 40,
+      antiAliasing: true,
+      contiguous: true,
+      fillTarget: "raster",
+    };
 
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
     const clickX = Math.floor(x);
     const clickY = Math.floor(y);
 
-    // Check if click is within layer bounds
-    if (
-      clickX < layer.x ||
-      clickX >= layer.x + layer.width ||
-      clickY < layer.y ||
-      clickY >= layer.y + layer.height
-    ) {
-      // If we clicked outside, we might still want to fill if we're creating a new layer or something,
-      // but usually Paint Bucket works on the existing content of a layer.
-      // Photoshop allows filling the empty space if it's within the canvas.
-      // For now, let's limit it to the layer bounds for simplicity.
+    if (settings.fillTarget === "raster") {
+      const activeLayerId = context.project.activeLayerId;
+      if (!activeLayerId) return;
+
+      if (context.isLayerLocked(activeLayerId) || !context.isLayerVisible(activeLayerId)) return;
+
+      const layer = context.project.layers.find((l) => l.id === activeLayerId);
+      if (!layer) return;
+
+      if (layer.type !== "raster") {
+        if (layer.type === "smart_object") {
+          useUIStore
+            .getState()
+            .showToast(
+              "Cannot fill on a smart object. Double-click to edit its content.",
+              "warning",
+            );
+        } else {
+          useUIStore.getState().showToast("Cannot fill on a non-raster layer", "warning");
+        }
+        return;
+      }
+
+      // Check if click is within layer bounds
+      if (
+        clickX < layer.x ||
+        clickX >= layer.x + layer.width ||
+        clickY < layer.y ||
+        clickY >= layer.y + layer.height
+      ) {
+        return;
+      }
+
+      this.historySnapshot = createHistoryState(context.project);
+      this.performFill(clickX, clickY, context, layer);
+    } else {
+      this.performColorFill(clickX, clickY, context);
+    }
+  }
+
+  private async performColorFill(clickX: number, clickY: number, context: ToolContext) {
+    const activeLayerId = context.project.activeLayerId;
+    let sampleCanvas: HTMLCanvasElement | null = null;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (activeLayerId) {
+      const layer = context.project.layers.find((l) => l.id === activeLayerId);
+      if (layer && layer.type === "raster") {
+        sampleCanvas = await context.ensureLayerCanvas(layer);
+        offsetX = layer.x;
+        offsetY = layer.y;
+      }
+    }
+
+    // If no raster layer is selected to sample from, we can't do a smart fill.
+    // However, we could sample from merged layers if the engine supported it.
+    // For now, let's require a raster layer or fill the whole selection/canvas.
+    if (!sampleCanvas) {
+      // If there's a selection, we can just fill that.
+      if (context.project.selection.hasSelection && context.project.selection.mask) {
+        this.createColorFillLayer(context, context.project.selection.mask);
+        return;
+      }
+
+      useUIStore.getState().showToast("Select a raster layer to sample from", "info");
       return;
     }
 
-    this.historySnapshot = createHistoryState(context.project);
-    this.performFill(clickX, clickY, context, layer);
+    const localX = clickX - offsetX;
+    const localY = clickY - offsetY;
+
+    // click must be within sample canvas
+    if (
+      localX < 0 ||
+      localX >= sampleCanvas.width ||
+      localY < 0 ||
+      localY >= sampleCanvas.height
+    ) {
+      if (context.project.selection.hasSelection && context.project.selection.mask) {
+        this.createColorFillLayer(context, context.project.selection.mask);
+        return;
+      }
+      return;
+    }
+
+    const ctx = sampleCanvas.getContext("2d", { willReadFrequently: true })!;
+    const imageData = ctx.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height);
+    const data = imageData.data;
+
+    const targetIdx = (localY * sampleCanvas.width + localX) * 4;
+    const targetR = data[targetIdx];
+    const targetG = data[targetIdx + 1];
+    const targetB = data[targetIdx + 2];
+    const targetA = data[targetIdx + 3];
+
+    const settings = context.settings.paintBucket || {
+      tolerance: 40,
+      antiAliasing: true,
+      contiguous: true,
+    };
+
+    // Create a new canvas for the mask
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = context.project.width;
+    maskCanvas.height = context.project.height;
+    const mctx = maskCanvas.getContext("2d")!;
+    mctx.fillStyle = "black";
+    mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+
+    const maskImageData = mctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+    const mData = maskImageData.data;
+
+    if (settings.contiguous) {
+      this.floodFillMask(
+        data,
+        sampleCanvas.width,
+        sampleCanvas.height,
+        offsetX,
+        offsetY,
+        localX,
+        localY,
+        targetR,
+        targetG,
+        targetB,
+        targetA,
+        mData,
+        maskCanvas.width,
+        maskCanvas.height,
+        settings.tolerance,
+      );
+    } else {
+      this.globalReplaceMask(
+        data,
+        sampleCanvas.width,
+        sampleCanvas.height,
+        offsetX,
+        offsetY,
+        targetR,
+        targetG,
+        targetB,
+        targetA,
+        mData,
+        maskCanvas.width,
+        maskCanvas.height,
+        settings.tolerance,
+      );
+    }
+
+    mctx.putImageData(maskImageData, 0, 0);
+
+    // If there is a selection, intersect with it
+    if (context.project.selection.hasSelection && context.project.selection.mask) {
+      const selImg = new Image();
+      await new Promise((resolve) => {
+        selImg.onload = resolve;
+        selImg.src = context.project.selection.mask!;
+      });
+      mctx.globalCompositeOperation = "destination-in";
+      mctx.drawImage(
+        selImg,
+        context.project.selection.bounds!.x,
+        context.project.selection.bounds!.y,
+      );
+    }
+
+    this.createColorFillLayer(context, maskCanvas.toDataURL());
   }
 
   private async performFill(clickX: number, clickY: number, context: ToolContext, layer: any) {
@@ -201,6 +345,125 @@ export class PaintBucketTool extends BaseTool {
         data[i + 1] = fill.g;
         data[i + 2] = fill.b;
         data[i + 3] = fill.a;
+      }
+    }
+  }
+
+  private createColorFillLayer(context: ToolContext, maskData: string) {
+    const layerCount = context.project.layers.filter((l) => l.type === "color_fill").length;
+    const newLayer: Partial<Layer> = {
+      name: `Color Fill ${layerCount + 1}`,
+      type: "color_fill",
+      colorFill: { color: context.foregroundColor },
+      mask: {
+        data: maskData,
+        x: 0,
+        y: 0,
+        width: context.project.width,
+        height: context.project.height,
+        enabled: true,
+        linked: true,
+      },
+    };
+
+    const addLayer = useProjectStore.getState().addLayer;
+    addLayer(context.project.id, newLayer);
+  }
+
+  private floodFillMask(
+    data: Uint8ClampedArray,
+    width: number,
+    height: number,
+    offsetX: number,
+    offsetY: number,
+    startX: number,
+    startY: number,
+    tr: number,
+    tg: number,
+    tb: number,
+    ta: number,
+    maskData: Uint8ClampedArray,
+    mWidth: number,
+    _mHeight: number,
+    tolerance: number,
+  ) {
+    const stack: [number, number][] = [[startX, startY]];
+    const visited = new Uint8Array(width * height);
+
+    while (stack.length > 0) {
+      const [x, y] = stack.pop()!;
+      if (x < 0 || x >= width || y < 0 || y >= height) continue;
+
+      const idx = y * width + x;
+      if (visited[idx]) continue;
+      visited[idx] = 1;
+
+      const pixelIdx = idx * 4;
+      if (
+        this.colorsMatch(
+          data[pixelIdx],
+          data[pixelIdx + 1],
+          data[pixelIdx + 2],
+          data[pixelIdx + 3],
+          tr,
+          tg,
+          tb,
+          ta,
+          tolerance,
+        )
+      ) {
+        // Mark in mask (project space)
+        const projX = x + offsetX;
+        const projY = y + offsetY;
+
+        if (projX >= 0 && projX < mWidth && projY >= 0 && projY < _mHeight) {
+          const mIdx = (projY * mWidth + projX) * 4;
+          maskData[mIdx] = 255;
+          maskData[mIdx + 1] = 255;
+          maskData[mIdx + 2] = 255;
+          maskData[mIdx + 3] = 255;
+        }
+
+        stack.push([x + 1, y]);
+        stack.push([x - 1, y]);
+        stack.push([x, y + 1]);
+        stack.push([x, y - 1]);
+      }
+    }
+  }
+
+  private globalReplaceMask(
+    data: Uint8ClampedArray,
+    width: number,
+    height: number,
+    offsetX: number,
+    offsetY: number,
+    tr: number,
+    tg: number,
+    tb: number,
+    ta: number,
+    maskData: Uint8ClampedArray,
+    mWidth: number,
+    _mHeight: number,
+    tolerance: number,
+  ) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        if (
+          this.colorsMatch(data[i], data[i + 1], data[i + 2], data[i + 3], tr, tg, tb, ta, tolerance)
+        ) {
+          const projX = x + offsetX;
+          const projY = y + offsetY;
+
+          if (projX >= 0 && projX < mWidth && projY >= 0 && projY < _mHeight) {
+            const mIdx = (projY * mWidth + projX) * 4;
+            maskData[mIdx] = 255;
+            maskData[mIdx + 1] = 255;
+            maskData[mIdx + 2] = 255;
+            maskData[mIdx + 3] = 255;
+          }
+        }
       }
     }
   }
