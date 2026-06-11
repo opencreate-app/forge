@@ -291,7 +291,9 @@ export class ForgeEngine {
 
     // 1. Wait for fonts to be ready
     try {
-      await (document as any).fonts.ready;
+      if ((document as any).fonts) {
+        await (document as any).fonts.ready;
+      }
     } catch (e) {
       console.warn("Font preloading failed", e);
     }

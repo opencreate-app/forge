@@ -12,8 +12,9 @@ describe("PaintBucketTool", () => {
       tolerance: 40,
       antiAliasing: true,
       contiguous: true,
+      fillTarget: "raster",
     };
-    context.foregroundColor = "#ff0000";
+    context.foregroundColor = "#FF0000";
 
     HTMLCanvasElement.prototype.toDataURL = vi.fn(() => "data:image/png;base64,mock");
 
@@ -23,7 +24,7 @@ describe("PaintBucketTool", () => {
       fillRect: vi.fn(),
       putImageData: vi.fn(),
       getImageData: vi.fn(() => ({
-        data: new Uint8ClampedArray(100 * 100 * 4), // 100x100 pixels
+        data: new Uint8ClampedArray(100 * 100 * 4).fill(0), // All black
         width: 100,
         height: 100,
       })),
@@ -40,6 +41,9 @@ describe("PaintBucketTool", () => {
       canvas.height = 100;
       return canvas;
     });
+
+    context.isLayerLocked = vi.fn(() => false);
+    context.isLayerVisible = vi.fn(() => true);
   });
 
   it("should initialize with correct ID", () => {

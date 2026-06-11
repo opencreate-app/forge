@@ -316,6 +316,7 @@ export class PaintBucketTool extends BaseTool {
         )
       ) {
         data[pixelIdx] = fill.r;
+        data[pixelIdx + 1] = fill.r;
         data[pixelIdx + 1] = fill.g;
         data[pixelIdx + 2] = fill.b;
         data[pixelIdx + 3] = fill.a;

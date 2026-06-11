@@ -146,4 +146,60 @@ describe("ForgeEngine - Layer Styles", () => {
     expect(layerCall).toBeDefined();
     expect(layerCall![3]).toEqual({ skipStyles: true });
   });
+
+  it("should apply LayerMask BEFORE rendering styles so styles adapt to the mask", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange);
+    const project = createMockProject();
+    
+    const layerWithMaskAndStroke = {
+      ...project.layers[0],
+      styles: {
+        stroke: {
+          enabled: true,
+          color: "#000000",
+          size: 5,
+          position: "outside",
+          opacity: 100,
+          rounded: true,
+          antiAlias: true
+        }
+      },
+      mask: {
+        enabled: true,
+        data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100
+      }
+    } as any;
+    
+    project.layers = [layerWithMaskAndStroke];
+    engine.setProject(project);
+
+    // Spy on the key methods
+    const applyLayerMaskSpy = vi.spyOn(engine as any, 'applyLayerMask');
+    const renderStrokeSpy = vi.spyOn(engine as any, 'renderStroke');
+    const renderLayerToContextSpy = vi.spyOn(engine as any, 'renderLayerToContext');
+    
+    (engine as any).render();
+
+    // Verify call order
+    const layerToContextCallIndex = renderLayerToContextSpy.mock.invocationCallOrder[0];
+    const applyMaskCallIndex = applyLayerMaskSpy.mock.invocationCallOrder[0];
+    const renderStrokeCallIndex = renderStrokeSpy.mock.invocationCallOrder[0];
+
+    expect(applyMaskCallIndex).toBeDefined();
+    expect(renderStrokeCallIndex).toBeDefined();
+
+    // 1. Content is rendered
+    // 2. Mask is applied
+    // 3. Style (Stroke) is rendered
+    expect(layerToContextCallIndex).toBeLessThan(applyMaskCallIndex);
+    expect(applyMaskCallIndex).toBeLessThan(renderStrokeCallIndex);
+    
+    // Also verify that applyLayerMask was NOT called on the final composition context
+    // In our implementation, the first call is the one we care about.
+    expect(applyLayerMaskSpy).toHaveBeenCalledTimes(1);
+  });
 });
