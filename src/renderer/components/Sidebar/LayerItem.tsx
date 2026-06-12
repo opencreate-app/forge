@@ -249,11 +249,11 @@ const LayerItem: React.FC<LayerItemProps> = ({
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (layer.type === "color_fill") {
-      setStylingLayerId(layer.id);
-      window.dispatchEvent(new CustomEvent("forge:open-color-fill-modal"));
-      return;
-    }
+    // if (layer.type === "color_fill") {
+    //   setStylingLayerId(layer.id);
+    //   window.dispatchEvent(new CustomEvent("forge:open-color-fill-modal"));
+    //   return;
+    // }
     setStylingLayerId(layer.id);
     window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
   };
@@ -331,7 +331,16 @@ const LayerItem: React.FC<LayerItemProps> = ({
       )} */}
 
       {/* Thumbnail or Icon */}
-      <div className="flex items-center gap-1 mr-2 shrink-0">
+      <div
+        className="flex items-center gap-1 mr-2 shrink-0"
+        onDoubleClick={(e) => {
+          if (layer.type === "color_fill") {
+            e.stopPropagation();
+            setStylingLayerId(layer.id);
+            window.dispatchEvent(new CustomEvent("forge:open-color-fill-modal"));
+          }
+        }}
+      >
         {layer.type === "group" ? (
           <button
             className="p-2 py-1 text-text"
@@ -384,7 +393,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
               isActive && activeMaskId !== layer.id
                 ? "border-accent ring-1 ring-accent/30"
                 : "border-white/10 hover:border-white/30"
-            } bg-[var(--thumbnail-color-fill)]`}
+            } ${layer.type === "color_fill" ? "bg-[var(--thumbnail-color-fill)]" : ""}`}
             onClick={(e) => {
               if (isActive) {
                 e.stopPropagation();
