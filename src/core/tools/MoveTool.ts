@@ -3,6 +3,7 @@
  */
 import { BaseTool, ToolContext, ToolId } from "./BaseTool";
 import { createHistoryState, HistoryState, Layer } from "@/renderer/store/projectStore";
+import { useUIStore } from "@/renderer/store/uiStore";
 
 export class MoveTool extends BaseTool {
   id: ToolId = "move";
@@ -15,6 +16,7 @@ export class MoveTool extends BaseTool {
   private movingLayerIds: string[] = [];
   private isFloating = false;
   private historySnapshot: HistoryState | null = null;
+  private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
   /**
    * Recursively finds all descendants of a group layer.
@@ -143,10 +145,85 @@ export class MoveTool extends BaseTool {
   onMouseMove(e: MouseEvent, context: ToolContext): void {
     if (!this.isDragging || this.movingLayerIds.length === 0) return;
 
+    const { project } = context;
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
     // Use Math.round to force movement to project pixels (no subpixels)
-    const dx = Math.round(x - this.startX);
-    const dy = Math.round(y - this.startY);
+    let dx = Math.round(x - this.startX);
+    let dy = Math.round(y - this.startY);
+
+    this.activeSnapLines = [];
+
+    // --- GUIDE SNAPPING LOGIC ---
+    const showGuides = useUIStore.getState().showGuides;
+    const movingLayers = this.isFloating
+      ? [project.selection.floatingLayer!]
+      : project.layers.filter((l) => this.movingLayerIds.includes(l.id));
+
+    if (showGuides && movingLayers.length > 0) {
+      // Calculate aggregate bounding box of all moving layers at their initial positions
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+
+      for (const id of this.movingLayerIds) {
+        const initial = this.initialPositions.get(id);
+        if (initial) {
+          const layer =
+            id === "floating-selection"
+              ? project.selection.floatingLayer!
+              : project.layers.find((l) => l.id === id);
+          if (layer) {
+            minX = Math.min(minX, initial.x);
+            minY = Math.min(minY, initial.y);
+            maxX = Math.max(maxX, initial.x + layer.width);
+            maxY = Math.max(maxY, initial.y + layer.height);
+          }
+        }
+      }
+
+      if (minX !== Infinity) {
+        const snapMargin = 4 / project.zoom;
+        const guides = project.guides || [];
+
+        // Vertical snapping
+        for (const guide of guides.filter((g) => g.type === "vertical")) {
+          const centerX = (minX + maxX) / 2;
+          const snapPoints = [
+            { pos: minX + dx, offset: -minX }, // Left
+            { pos: maxX + dx, offset: -maxX }, // Right
+            { pos: centerX + dx, offset: -centerX }, // Center
+          ];
+
+          for (const pt of snapPoints) {
+            if (Math.abs(pt.pos - guide.position) < snapMargin) {
+              dx = guide.position + pt.offset;
+              this.activeSnapLines.push({ type: "vertical", position: guide.position });
+              break;
+            }
+          }
+        }
+
+        // Horizontal snapping
+        for (const guide of guides.filter((g) => g.type === "horizontal")) {
+          const centerY = (minY + maxY) / 2;
+          const snapPoints = [
+            { pos: minY + dy, offset: -minY }, // Top
+            { pos: maxY + dy, offset: -maxY }, // Bottom
+            { pos: centerY + dy, offset: -centerY }, // Center
+          ];
+
+          for (const pt of snapPoints) {
+            if (Math.abs(pt.pos - guide.position) < snapMargin) {
+              dy = guide.position + pt.offset;
+              this.activeSnapLines.push({ type: "horizontal", position: guide.position });
+              break;
+            }
+          }
+        }
+      }
+    }
+    // --- END GUIDE SNAPPING LOGIC ---
 
     if (this.isFloating) {
       const floatingLayer = context.project.selection.floatingLayer;
@@ -199,6 +276,7 @@ export class MoveTool extends BaseTool {
   onMouseUp(e: MouseEvent, context: ToolContext): void {
     if (this.isDragging) {
       this.isDragging = false;
+      this.activeSnapLines = [];
 
       const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
       const dx = Math.round(x - this.startX);
@@ -262,5 +340,36 @@ export class MoveTool extends BaseTool {
 
     context.updateProject({ layers, isDirty: true });
     return true;
+  }
+
+  onRender(ctx: CanvasRenderingContext2D, context: ToolContext): void {
+    if (!this.isDragging || this.activeSnapLines.length === 0) return;
+
+    const { project } = context;
+    ctx.save();
+    ctx.setTransform(project.zoom, 0, 0, project.zoom, project.panX, project.panY);
+
+    ctx.lineWidth = 1 / project.zoom;
+    ctx.strokeStyle = "red";
+
+    // Viewport bounds in project space
+    const viewportWidth = context.canvas.width / project.zoom;
+    const viewportHeight = context.canvas.height / project.zoom;
+    const startX = -project.panX / project.zoom;
+    const startY = -project.panY / project.zoom;
+
+    for (const line of this.activeSnapLines) {
+      ctx.beginPath();
+      if (line.type === "horizontal") {
+        ctx.moveTo(startX, line.position);
+        ctx.lineTo(startX + viewportWidth, line.position);
+      } else {
+        ctx.moveTo(line.position, startY);
+        ctx.lineTo(line.position, startY + viewportHeight);
+      }
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 }
