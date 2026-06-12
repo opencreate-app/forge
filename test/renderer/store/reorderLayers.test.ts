@@ -81,6 +81,7 @@ describe("projectStore reorderLayers", () => {
       panX: 0,
       panY: 0,
       isDirty: false,
+      guides: [],
       undoStack: [],
       redoStack: [],
     };

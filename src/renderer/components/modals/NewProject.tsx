@@ -100,6 +100,7 @@ const NewProject: React.FC<NewProjectProps> = ({ isOpen, onClose, initialDimensi
             blendMode: "source-over",
           },
         ],
+        guides: [],
         activeLayerId: "bg-" + id,
         selectedLayerIds: ["bg-" + id],
         selection: { hasSelection: false, bounds: null },

@@ -148,12 +148,25 @@ export interface Selection {
 }
 
 /**
+ * Represents a guide line in the project.
+ */
+export interface Guide {
+  /** Unique identifier for the guide. */
+  id: string;
+  /** Whether the guide is horizontal or vertical. */
+  type: "horizontal" | "vertical";
+  /** Position in project space. */
+  position: number;
+}
+
+/**
  * A snapshot of the project state for history management.
  */
 export interface HistoryState {
   width: number;
   height: number;
   layers: Layer[];
+  guides: Guide[];
   activeLayerId: string | null;
   activeMaskId?: string | null;
   selectedLayerIds: string[];
@@ -184,6 +197,8 @@ export interface Project {
   height: number;
   /** List of layers in the project. */
   layers: Layer[];
+  /** List of guides in the project. */
+  guides: Guide[];
   /** ID of the currently selected layer. */
   activeLayerId: string | null;
   /** ID of the layer whose mask is currently being edited. */
@@ -252,6 +267,12 @@ interface ProjectState {
   removeLayers: (projectId: string, layerIds: string[], skipHistory?: boolean) => void;
   /** Adds a manual entry to the project's history stack. */
   addHistoryEntry: (projectId: string, entry: HistoryEntry) => void;
+  /** Adds a new guide to a specific project. */
+  addGuide: (projectId: string, guide: Guide, skipHistory?: boolean) => void;
+  /** Removes a guide from a specific project. */
+  removeGuide: (projectId: string, guideId: string, skipHistory?: boolean) => void;
+  /** Updates a specific guide. */
+  updateGuide: (projectId: string, guideId: string, updates: Partial<Guide>) => void;
   /** Reorders layers in the project stack. */
   reorderLayers: (
     projectId: string,
@@ -327,6 +348,7 @@ const getMaxHistory = () => usePreferencesStore.getState().historyLimit;
  */
 export const normalizeHistoryState = (state: any): HistoryState => ({
   ...state,
+  guides: state.guides || [],
   selectedLayerIds: state.selectedLayerIds || (state.activeLayerId ? [state.activeLayerId] : []),
   selection: state.selection || { hasSelection: false, bounds: null },
 });
@@ -342,6 +364,7 @@ export const normalizeProject = (project: any): Project => {
   const normalized = {
     ...project,
     layers: normalizedLayers,
+    guides: project.guides || [],
     activeLayerId: project.activeLayerId || project.layers?.[0]?.id || null,
     selectedLayerIds:
       project.selectedLayerIds ||
@@ -371,6 +394,7 @@ export const createHistoryState = (project: Project): HistoryState => ({
   width: project.width,
   height: project.height,
   layers: JSON.parse(JSON.stringify(project.layers)),
+  guides: JSON.parse(JSON.stringify(project.guides || [])),
   activeLayerId: project.activeLayerId,
   activeMaskId: project.activeMaskId,
   selectedLayerIds: [
@@ -667,6 +691,79 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ),
       };
     }),
+
+  addGuide: (projectId, guide, skipHistory = false) =>
+    set((state) => {
+      const project = state.projects.find((p) => p.id === projectId);
+      if (!project) return state;
+
+      let newUndoStack = project.undoStack;
+      if (!skipHistory) {
+        const historyState = createHistoryState(project);
+        newUndoStack = [
+          ...project.undoStack,
+          { description: "Add Guide", state: historyState },
+        ];
+        if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+      }
+
+      return {
+        projects: state.projects.map((p) =>
+          p.id === projectId
+            ? {
+                ...p,
+                guides: [...p.guides, guide],
+                isDirty: true,
+                undoStack: newUndoStack,
+                redoStack: !skipHistory ? [] : p.redoStack,
+              }
+            : p,
+        ),
+      };
+    }),
+
+  removeGuide: (projectId, guideId, skipHistory = false) =>
+    set((state) => {
+      const project = state.projects.find((p) => p.id === projectId);
+      if (!project) return state;
+
+      let newUndoStack = project.undoStack;
+      if (!skipHistory) {
+        const historyState = createHistoryState(project);
+        newUndoStack = [
+          ...project.undoStack,
+          { description: "Remove Guide", state: historyState },
+        ];
+        if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+      }
+
+      return {
+        projects: state.projects.map((p) =>
+          p.id === projectId
+            ? {
+                ...p,
+                guides: p.guides.filter((g) => g.id !== guideId),
+                isDirty: true,
+                undoStack: newUndoStack,
+                redoStack: !skipHistory ? [] : p.redoStack,
+              }
+            : p,
+        ),
+      };
+    }),
+
+  updateGuide: (projectId, guideId, updates) =>
+    set((state) => ({
+      projects: state.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              guides: p.guides.map((g) => (g.id === guideId ? { ...g, ...updates } : g)),
+              isDirty: true,
+            }
+          : p,
+      ),
+    })),
 
   duplicateLayer: (projectId: string, layerId: string) => {
     get().duplicateLayers(projectId, [layerId]);
@@ -1214,6 +1311,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       width,
       height,
       layers: nestedLayers,
+      guides: [],
       activeLayerId: nestedLayers[0].id,
       selectedLayerIds: [nestedLayers[0].id],
       selection: { hasSelection: false, bounds: null },

@@ -23,6 +23,7 @@ export const createMockProject = (overrides: Partial<Project> = {}): Project => 
       blendMode: "source-over",
     },
   ],
+  guides: [],
   activeLayerId: "layer-1",
   activeMaskId: null,
   selectedLayerIds: ["layer-1"],

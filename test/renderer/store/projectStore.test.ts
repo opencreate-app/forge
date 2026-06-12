@@ -22,6 +22,7 @@ describe("projectStore", () => {
       panX: 0,
       panY: 0,
       isDirty: false,
+      guides: [],
       undoStack: [],
       redoStack: [],
     };
@@ -74,6 +75,7 @@ describe("projectStore", () => {
       panX: 0,
       panY: 0,
       isDirty: false,
+      guides: [],
       undoStack: [],
       redoStack: [],
     });
@@ -149,6 +151,7 @@ describe("projectStore", () => {
       panX: 0,
       panY: 0,
       isDirty: false,
+      guides: [],
       undoStack: [],
       redoStack: [],
     });
@@ -227,6 +230,7 @@ describe("projectStore", () => {
       panX: 0,
       panY: 0,
       isDirty: false,
+      guides: [],
       undoStack: [],
       redoStack: [],
     });
@@ -293,6 +297,7 @@ describe("projectStore", () => {
       panX: 0,
       panY: 0,
       isDirty: false,
+      guides: [],
       undoStack: [],
       redoStack: [],
     });
@@ -394,6 +399,7 @@ describe("projectStore", () => {
       panX: 0,
       panY: 0,
       isDirty: false,
+      guides: [],
       undoStack: [],
       redoStack: [],
     });
@@ -467,6 +473,7 @@ describe("projectStore", () => {
       panX: 0,
       panY: 0,
       isDirty: false,
+      guides: [],
       undoStack: [],
       redoStack: [],
     });

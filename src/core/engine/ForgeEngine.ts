@@ -85,6 +85,14 @@ export class ForgeEngine {
   private currentToolId: string | null = null;
   private onViewportChange?: (zoom: number, x: number, y: number) => void;
 
+  private draggingGuide: {
+    id?: string;
+    type: "horizontal" | "vertical";
+    position: number;
+    isNew: boolean;
+  } | null = null;
+  private hoveredGuide: { id: string; type: "horizontal" | "vertical" } | null = null;
+
   // private lastMouseEvent: MouseEvent | null = null;
 
   /**
@@ -280,7 +288,29 @@ export class ForgeEngine {
     window.addEventListener("forge:request-thumbnail", this.handleRequestThumbnail as any);
     window.addEventListener("forge:zoom-to", this.handleZoomTo as any);
     window.addEventListener("forge:export-to-clipboard", this.handleExportToClipboard as any);
+    window.addEventListener("forge:guide-drag-new", this.handleGuideDragNew as any);
   }
+
+  /**
+   * Handles starting a new guide drag initiated from a ruler.
+   */
+  private handleGuideDragNew = (e: CustomEvent) => {
+    if (!this.project) return;
+    const { type, originalEvent } = e.detail;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const projPos = this.screenToProject(
+      originalEvent.clientX - rect.left,
+      originalEvent.clientY - rect.top,
+    );
+    const position = type === "horizontal" ? projPos.y : projPos.x;
+
+    this.draggingGuide = {
+      type,
+      position: Math.round(position),
+      isNew: true,
+    };
+  };
 
   /**
    * Preloads all images and fonts for the project layers.
@@ -811,6 +841,36 @@ export class ForgeEngine {
       return;
     }
 
+    if (this.draggingGuide && this.project) {
+      const rect = this.canvas.getBoundingClientRect();
+      // We consider it "deleted" if dragged back to the ruler area (outside the canvas in its orientation)
+      const isOutside =
+        this.draggingGuide.type === "horizontal"
+          ? e.clientY < rect.top || e.clientY > rect.bottom
+          : e.clientX < rect.left || e.clientX > rect.right;
+
+      if (isOutside) {
+        if (!this.draggingGuide.isNew && this.draggingGuide.id) {
+          useProjectStore.getState().removeGuide(this.project.id, this.draggingGuide.id);
+        }
+      } else {
+        if (this.draggingGuide.isNew) {
+          useProjectStore.getState().addGuide(this.project.id, {
+            id: Math.random().toString(36).substr(2, 9),
+            type: this.draggingGuide.type,
+            position: this.draggingGuide.position,
+          });
+        } else if (this.draggingGuide.id) {
+          useProjectStore.getState().updateGuide(this.project.id, this.draggingGuide.id, {
+            position: this.draggingGuide.position,
+          });
+        }
+      }
+
+      this.draggingGuide = null;
+      return;
+    }
+
     const tool = this.getActiveTool();
     const context = this.getToolContext();
     if (tool && context) {
@@ -1021,6 +1081,17 @@ export class ForgeEngine {
       return;
     }
 
+    if (this.hoveredGuide && e.button === 0) {
+      const guide = this.project.guides.find((g) => g.id === this.hoveredGuide!.id);
+      if (guide) {
+        this.draggingGuide = {
+          ...guide,
+          isNew: false,
+        };
+        return;
+      }
+    }
+
     const tool = this.getActiveTool();
     const context = this.getToolContext();
     if (tool && context) {
@@ -1075,6 +1146,46 @@ export class ForgeEngine {
 
       this.onViewportChange?.(this.project.zoom, newPanX, newPanY);
       return;
+    }
+
+    if (this.draggingGuide) {
+      const projPos = this.screenToProject(offsetX, offsetY);
+      let position = this.draggingGuide.type === "horizontal" ? projPos.y : projPos.x;
+
+      // Snapping to integer pixels
+      position = Math.round(position);
+
+      this.draggingGuide.position = position;
+      this.canvas.style.cursor =
+        this.draggingGuide.type === "horizontal" ? "ns-resize" : "ew-resize";
+      return;
+    }
+
+    // Guide Hover Detection
+    const projPos = this.screenToProject(offsetX, offsetY);
+    const threshold = 5 / this.project.zoom; // 5 screen pixels tolerance
+    let foundHover: { id: string; type: "horizontal" | "vertical" } | null = null;
+
+    for (const guide of this.project.guides) {
+      if (guide.type === "horizontal") {
+        if (Math.abs(projPos.y - guide.position) < threshold) {
+          foundHover = { id: guide.id, type: "horizontal" };
+          break;
+        }
+      } else {
+        if (Math.abs(projPos.x - guide.position) < threshold) {
+          foundHover = { id: guide.id, type: "vertical" };
+          break;
+        }
+      }
+    }
+
+    this.hoveredGuide = foundHover;
+    if (this.hoveredGuide) {
+      this.canvas.style.cursor = foundHover?.type === "horizontal" ? "ns-resize" : "ew-resize";
+    } else {
+      // Default tool cursor will be handled later if not hovered
+      this.canvas.style.cursor = "default";
     }
 
     const tool = this.getActiveTool();
@@ -1135,6 +1246,8 @@ export class ForgeEngine {
       this.handleRequestExportPreview as any,
     );
     window.removeEventListener("forge:zoom-to", this.handleZoomTo as any);
+    window.removeEventListener("forge:export-to-clipboard", this.handleExportToClipboard as any);
+    window.removeEventListener("forge:guide-drag-new", this.handleGuideDragNew as any);
 
     // if (this.unsubscribeToolStore) {
     //   this.unsubscribeToolStore();
@@ -1176,6 +1289,8 @@ export class ForgeEngine {
       this.layerCanvasCache.clear();
       this.layerReadyCache.clear();
       this.imageCache.clear();
+      this.draggingGuide = null;
+      this.hoveredGuide = null;
     } else if (prevLayers !== project.layers) {
       // Invalidate specific layer caches only if data/size changed
       for (const layer of project.layers) {
@@ -1364,6 +1479,62 @@ export class ForgeEngine {
       this.ctx.lineDashOffset = -(this.marchingAntsOffset + 4) / zoom;
       this.ctx.moveTo(bx + seg.x, by + seg.y);
       this.ctx.lineTo(bx + seg.x, by + seg.y + seg.length);
+      this.ctx.stroke();
+    }
+
+    this.ctx.restore();
+  }
+
+  /**
+   * Renders the project's guides and any currently being dragged.
+   */
+  private renderGuides() {
+    if (!this.project) return;
+
+    this.ctx.save();
+    this.ctx.setTransform(
+      this.project.zoom,
+      0,
+      0,
+      this.project.zoom,
+      this.project.panX,
+      this.project.panY,
+    );
+
+    this.ctx.lineWidth = 1 / this.project.zoom;
+    this.ctx.strokeStyle = "#00ffff"; // Cyan guides
+
+    const guides = [...(this.project.guides || [])];
+    if (this.draggingGuide) {
+      if (!this.draggingGuide.isNew) {
+        const index = guides.findIndex((g) => g.id === this.draggingGuide!.id);
+        if (index !== -1) {
+          guides[index] = { ...guides[index], position: this.draggingGuide.position };
+        }
+      } else {
+        guides.push({
+          id: "ghost",
+          type: this.draggingGuide.type,
+          position: this.draggingGuide.position,
+        });
+      }
+    }
+
+    // Viewport bounds in project space
+    const viewportWidth = this.canvas.width / this.project.zoom;
+    const viewportHeight = this.canvas.height / this.project.zoom;
+    const startX = -this.project.panX / this.project.zoom;
+    const startY = -this.project.panY / this.project.zoom;
+
+    for (const guide of guides) {
+      this.ctx.beginPath();
+      if (guide.type === "horizontal") {
+        this.ctx.moveTo(startX, guide.position);
+        this.ctx.lineTo(startX + viewportWidth, guide.position);
+      } else {
+        this.ctx.moveTo(guide.position, startY);
+        this.ctx.lineTo(guide.position, startY + viewportHeight);
+      }
       this.ctx.stroke();
     }
 
@@ -1604,6 +1775,8 @@ export class ForgeEngine {
     if (this.project.zoom >= 10) {
       this.renderPixelGrid();
     }
+
+    this.renderGuides();
 
     // --- STEP 3: RENDER TOOLS AND UI ---
     const tool = this.getActiveTool();
