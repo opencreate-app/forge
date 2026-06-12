@@ -91,6 +91,10 @@ export class ForgeEngine {
     position: number;
     isNew: boolean;
   } | null = null;
+  private snappedLayerGuide: {
+    type: "horizontal" | "vertical";
+    position: number;
+  } | null = null;
   private hoveredGuide: { id: string; type: "horizontal" | "vertical" } | null = null;
 
   // private lastMouseEvent: MouseEvent | null = null;
@@ -868,6 +872,7 @@ export class ForgeEngine {
       }
 
       this.draggingGuide = null;
+      this.snappedLayerGuide = null;
       return;
     }
 
@@ -1152,8 +1157,42 @@ export class ForgeEngine {
       const projPos = this.screenToProject(offsetX, offsetY);
       let position = this.draggingGuide.type === "horizontal" ? projPos.y : projPos.x;
 
-      // Snapping to integer pixels
-      position = Math.round(position);
+      // --- SNAP GUIDE TO LAYERS ---
+      const snapMargin = 4 / this.project.zoom;
+      let snapped = false;
+      this.snappedLayerGuide = null;
+
+      for (const layer of this.project.layers) {
+        if (!this.isAncestorVisible(layer)) continue;
+
+        if (this.draggingGuide.type === "vertical") {
+          const points = [layer.x, layer.x + layer.width, layer.x + layer.width / 2];
+          for (const pt of points) {
+            if (Math.abs(position - pt) < snapMargin) {
+              position = pt;
+              snapped = true;
+              this.snappedLayerGuide = { type: "vertical", position: pt };
+              break;
+            }
+          }
+        } else {
+          const points = [layer.y, layer.y + layer.height, layer.y + layer.height / 2];
+          for (const pt of points) {
+            if (Math.abs(position - pt) < snapMargin) {
+              position = pt;
+              snapped = true;
+              this.snappedLayerGuide = { type: "horizontal", position: pt };
+              break;
+            }
+          }
+        }
+        if (snapped) break;
+      }
+
+      if (!snapped) {
+        position = Math.round(position);
+      }
+      // --- END SNAP GUIDE TO LAYERS ---
 
       this.draggingGuide.position = position;
       this.canvas.style.cursor =
@@ -1293,6 +1332,7 @@ export class ForgeEngine {
       this.layerReadyCache.clear();
       this.imageCache.clear();
       this.draggingGuide = null;
+      this.snappedLayerGuide = null;
       this.hoveredGuide = null;
     } else if (prevLayers !== project.layers) {
       // Invalidate specific layer caches only if data/size changed
@@ -1552,6 +1592,20 @@ export class ForgeEngine {
       } else {
         this.ctx.moveTo(guide.position, startY);
         this.ctx.lineTo(guide.position, startY + viewportHeight);
+      }
+      this.ctx.stroke();
+    }
+
+    // Render red snap line if guide is snapped to a layer
+    if (this.snappedLayerGuide) {
+      this.ctx.beginPath();
+      this.ctx.strokeStyle = "red";
+      if (this.snappedLayerGuide.type === "horizontal") {
+        this.ctx.moveTo(startX, this.snappedLayerGuide.position);
+        this.ctx.lineTo(startX + viewportWidth, this.snappedLayerGuide.position);
+      } else {
+        this.ctx.moveTo(this.snappedLayerGuide.position, startY);
+        this.ctx.lineTo(this.snappedLayerGuide.position, startY + viewportHeight);
       }
       this.ctx.stroke();
     }
