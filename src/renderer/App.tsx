@@ -77,11 +77,14 @@ function App() {
     // return () => clearTimeout(updateTimeout);
   }, []);
 
+  const showRulers = useUIStore((state) => state.showRulers);
+  const showGuides = useUIStore((state) => state.showGuides);
+
   React.useEffect(() => {
     if (!(window as any).electronAPI) return;
     const hasProject = projects.length > 0 && activeProjectId !== null && activeTab !== "home";
-    (window as any).electronAPI.updateMenu({ hasProject });
-  }, [projects.length, activeProjectId, activeTab]);
+    (window as any).electronAPI.updateMenu({ hasProject, showRulers, showGuides });
+  }, [projects.length, activeProjectId, activeTab, showRulers, showGuides]);
   const setActiveTool = useToolStore((state) => state.setActiveTool);
   const activeToolId = useToolStore((state) => state.activeToolId);
   const toolSettings = useToolStore((state) => state.toolSettings);
@@ -90,7 +93,6 @@ function App() {
   const showToast = useUIStore((state) => state.showToast);
   const isInteracting = useToolStore((state) => state.isInteracting);
   const setShowRulers = useUIStore((state) => state.setShowRulers);
-  const showRulers = useUIStore((state) => state.showRulers);
   const swapColors = useToolStore((state) => state.swapColors);
   const resetColors = useToolStore((state) => state.resetColors);
 

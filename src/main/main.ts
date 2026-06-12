@@ -57,7 +57,7 @@ function createSplashWindow() {
   splash.loadFile(splashPath);
 }
 
-function createMenu(hasProject = false) {
+function createMenu(hasProject = false, showRulers = true, showGuides = true) {
   const isDev = !!VITE_DEV_SERVER_URL;
 
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -194,8 +194,18 @@ function createMenu(hasProject = false) {
         {
           label: "Rulers",
           accelerator: "CmdOrCtrl+R",
+          type: "checkbox",
+          checked: showRulers,
           enabled: hasProject,
           click: () => win?.webContents.send("menu:action", "toggle-rulers"),
+        },
+        {
+          label: "Guides",
+          accelerator: "CmdOrCtrl+;",
+          type: "checkbox",
+          checked: showGuides,
+          enabled: hasProject,
+          click: () => win?.webContents.send("menu:action", "toggle-guides"),
         },
         { type: "separator" },
         {
@@ -319,8 +329,8 @@ app.whenReady().then(() => {
     return filePaths[0];
   });
 
-  ipcMain.handle("app:updateMenu", (_event, { hasProject }) => {
-    createMenu(hasProject);
+  ipcMain.handle("app:updateMenu", (_event, { hasProject, showRulers, showGuides }) => {
+    createMenu(hasProject, showRulers, showGuides);
   });
 
   ipcMain.handle("dialog:saveFile", async (_event, { dataURL, defaultName, filters }) => {

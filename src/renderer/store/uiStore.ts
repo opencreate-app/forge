@@ -17,6 +17,7 @@ interface UIState {
   sidebarWidth: number;
   isSidebarExpanded: boolean;
   showRulers: boolean;
+  showGuides: boolean;
   lastExportFormat: string;
   lastExportQuality: number;
   lastLockAspectRatio: boolean;
@@ -32,6 +33,7 @@ interface UIState {
   setSidebarWidth: (width: number) => void;
   setIsSidebarExpanded: (expanded: boolean) => void;
   setShowRulers: (show: boolean) => void;
+  setShowGuides: (show: boolean) => void;
   setExportSettings: (format: string, quality: number, lockAspectRatio: boolean) => void;
   setModalOpen: (modalId: string, isOpen: boolean) => void;
   isAnyModalOpen: () => boolean;
@@ -53,6 +55,7 @@ export const useUIStore = create<UIState>()(
       sidebarWidth: 280,
       isSidebarExpanded: true,
       showRulers: true,
+      showGuides: true,
       lastExportFormat: "image/png",
       lastExportQuality: 100,
       lastLockAspectRatio: true,
@@ -86,6 +89,7 @@ export const useUIStore = create<UIState>()(
       setSidebarWidth: (width) => set({ sidebarWidth: Math.max(200, Math.min(width, 600)) }),
       setIsSidebarExpanded: (expanded) => set({ isSidebarExpanded: expanded }),
       setShowRulers: (show) => set({ showRulers: show }),
+      setShowGuides: (show) => set({ showGuides: show }),
       setExportSettings: (format, quality, lockAspectRatio) =>
         set({
           lastExportFormat: format,
@@ -121,6 +125,7 @@ export const useUIStore = create<UIState>()(
         sidebarWidth: state.sidebarWidth,
         isSidebarExpanded: state.isSidebarExpanded,
         showRulers: state.showRulers,
+        showGuides: state.showGuides,
         lastExportFormat: state.lastExportFormat,
         lastExportQuality: state.lastExportQuality,
         lastLockAspectRatio: state.lastLockAspectRatio,

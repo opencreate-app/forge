@@ -1,7 +1,7 @@
 /**
  * Purpose: Core engine class responsible for project rendering, viewport management (zoom/pan), tool orchestration, and selection handling.
  */
-import { Layer, Project, useProjectStore } from "@/renderer/store/projectStore";
+import { Layer, Project, useProjectStore, Guide } from "@/renderer/store/projectStore";
 import { StrokeStyle, DropShadowStyle, InnerShadowStyle } from "@/renderer/store/layerStylesStore";
 import { BaseTool, ToolContext } from "../tools/BaseTool";
 import { MoveTool } from "../tools/MoveTool";
@@ -1162,20 +1162,23 @@ export class ForgeEngine {
     }
 
     // Guide Hover Detection
+    const showGuides = useUIStore.getState().showGuides;
     const projPos = this.screenToProject(offsetX, offsetY);
     const threshold = 5 / this.project.zoom; // 5 screen pixels tolerance
     let foundHover: { id: string; type: "horizontal" | "vertical" } | null = null;
 
-    for (const guide of this.project.guides) {
-      if (guide.type === "horizontal") {
-        if (Math.abs(projPos.y - guide.position) < threshold) {
-          foundHover = { id: guide.id, type: "horizontal" };
-          break;
-        }
-      } else {
-        if (Math.abs(projPos.x - guide.position) < threshold) {
-          foundHover = { id: guide.id, type: "vertical" };
-          break;
+    if (showGuides) {
+      for (const guide of this.project.guides) {
+        if (guide.type === "horizontal") {
+          if (Math.abs(projPos.y - guide.position) < threshold) {
+            foundHover = { id: guide.id, type: "horizontal" };
+            break;
+          }
+        } else {
+          if (Math.abs(projPos.x - guide.position) < threshold) {
+            foundHover = { id: guide.id, type: "vertical" };
+            break;
+          }
         }
       }
     }
@@ -1491,6 +1494,9 @@ export class ForgeEngine {
   private renderGuides() {
     if (!this.project) return;
 
+    const showGuides = useUIStore.getState().showGuides;
+    if (!showGuides && !this.draggingGuide) return;
+
     this.ctx.save();
     this.ctx.setTransform(
       this.project.zoom,
@@ -1504,12 +1510,24 @@ export class ForgeEngine {
     this.ctx.lineWidth = 1 / this.project.zoom;
     this.ctx.strokeStyle = "#00ffff"; // Cyan guides
 
-    const guides = [...(this.project.guides || [])];
+    const guides: Guide[] = [];
+
+    if (showGuides) {
+      guides.push(...(this.project.guides || []));
+    }
+
     if (this.draggingGuide) {
       if (!this.draggingGuide.isNew) {
         const index = guides.findIndex((g) => g.id === this.draggingGuide!.id);
         if (index !== -1) {
           guides[index] = { ...guides[index], position: this.draggingGuide.position };
+        } else {
+          // If hidden but dragging existing, add it back to render
+          guides.push({
+            id: this.draggingGuide.id!,
+            type: this.draggingGuide.type,
+            position: this.draggingGuide.position,
+          });
         }
       } else {
         guides.push({

@@ -17,7 +17,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   renameFile: (data: { oldPath: string; newPath: string }) =>
     ipcRenderer.invoke("fs:renameFile", data),
   getAppVersion: () => ipcRenderer.invoke("app:getVersion"),
-  updateMenu: (data: { hasProject: boolean }) => ipcRenderer.invoke("app:updateMenu", data),
+  updateMenu: (data: { hasProject: boolean; showRulers?: boolean; showGuides?: boolean }) =>
+    ipcRenderer.invoke("app:updateMenu", data),
   onProjectDropped: (callback: any) => {
     window.addEventListener("project-dropped", (event: any) => callback(event.detail));
   },
