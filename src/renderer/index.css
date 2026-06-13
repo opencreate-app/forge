@@ -11,6 +11,12 @@
   --color-border: #444444;
 }
 
+@layer utilities {
+  .rendering-pixelated {
+    image-rendering: pixelated;
+  }
+}
+
 :root {
   font-family:
     system-ui,

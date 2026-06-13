@@ -378,7 +378,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
             <img
               src={layer.data}
               alt=""
-              className="max-w-full max-h-full object-contain pointer-events-none"
+              className="max-w-full max-h-full w-full rendering-pixelated object-contain pointer-events-none"
             />
 
             {layer.type === "smart_object" && (
