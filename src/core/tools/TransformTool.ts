@@ -36,6 +36,7 @@ export class TransformTool extends BaseTool {
   private TRANSFORM_HANDLE_SIZE = 8;
   private context: ToolContext | null = null;
   private unsubscribeStore: (() => void) | null = null;
+  private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
   private isFloating = false;
 
@@ -126,6 +127,7 @@ export class TransformTool extends BaseTool {
     this.originalLayer = null;
     this.currentTransform = null;
     this.activeHandle = null;
+    this.activeSnapLines = [];
     window.removeEventListener("forge:transform-apply", this.handleApplyEvent);
     window.removeEventListener("forge:transform-cancel", this.handleCancelEvent);
     window.removeEventListener("keydown", this.handleKeyDown);
@@ -144,6 +146,26 @@ export class TransformTool extends BaseTool {
       context.updateToolSettings("transform", {
         ...this.currentTransform,
       });
+    }
+  }
+
+  private snapTransformToGrid(t: TransformState) {
+    if (Math.abs(t.rotation % 360) < 0.01) {
+      const w = Math.round(t.width * t.scaleX);
+      const h = Math.round(t.height * t.scaleY);
+
+      // Only apply if we have a valid size
+      if (Math.abs(w) >= 1 && Math.abs(h) >= 1) {
+        t.scaleX = w / t.width;
+        t.scaleY = h / t.height;
+
+        // Calculate the top-left edge, round it, and reset center
+        const left = t.x - Math.abs(w) / 2;
+        const top = t.y - Math.abs(h) / 2;
+
+        t.x = Math.round(left) + Math.abs(w) / 2;
+        t.y = Math.round(top) + Math.abs(h) / 2;
+      }
     }
   }
 
@@ -352,6 +374,11 @@ export class TransformTool extends BaseTool {
       return;
     }
 
+    this.activeSnapLines = [];
+    const showGuides = useUIStore.getState().showGuides;
+    const snapMargin = 4 / context.project.zoom;
+    const guides = context.project.guides || [];
+
     // Keep cursor correct during drag
     context.canvas.style.cursor = this.getRotatedCursor(
       this.activeHandle.name,
@@ -372,7 +399,53 @@ export class TransformTool extends BaseTool {
       case "move": {
         t.x = startT.x + dx;
         t.y = startT.y + dy;
-        changed = dx !== 0 || dy !== 0;
+
+        if (showGuides) {
+          const rot = (t.rotation * Math.PI) / 180;
+          const cos = Math.cos(rot);
+          const sin = Math.sin(rot);
+
+          const points = [
+            { x: -t.width * t.anchor.x * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TL
+            { x: t.width * (1 - t.anchor.x) * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TR
+            { x: t.width * (1 - t.anchor.x) * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BR
+            { x: -t.width * t.anchor.x * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BL
+            { x: 0, y: 0 }, // Center
+          ];
+
+          const transformed = points.map((p) => ({
+            x: t.x + (p.x * cos - p.y * sin),
+            y: t.y + (p.x * sin + p.y * cos),
+          }));
+
+          // Vertical snap
+          for (const guide of guides.filter((g) => g.type === "vertical")) {
+            for (const p of transformed) {
+              if (Math.abs(p.x - guide.position) < snapMargin) {
+                t.x += guide.position - p.x;
+                this.activeSnapLines.push({ type: "vertical", position: guide.position });
+                // Re-transform points if we shifted X
+                transformed.forEach((pt) => (pt.x += guide.position - p.x));
+                break;
+              }
+            }
+            if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
+          }
+
+          // Horizontal snap
+          for (const guide of guides.filter((g) => g.type === "horizontal")) {
+            for (const p of transformed) {
+              if (Math.abs(p.y - guide.position) < snapMargin) {
+                t.y += guide.position - p.y;
+                this.activeSnapLines.push({ type: "horizontal", position: guide.position });
+                break;
+              }
+            }
+            if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
+          }
+        }
+
+        changed = t.x !== startT.x || t.y !== startT.y;
         break;
       }
       case "rotate": {
@@ -401,11 +474,30 @@ export class TransformTool extends BaseTool {
         const world_axis_x = { x: cos, y: sin };
         const world_axis_y = { x: -sin, y: cos };
 
+        let target_px = px;
+        let target_py = py;
+
+        if (showGuides) {
+          // Snap mouse position to guides during scaling
+          for (const guide of guides) {
+            if (guide.type === "vertical" && Math.abs(target_px - guide.position) < snapMargin) {
+              target_px = guide.position;
+              this.activeSnapLines.push({ type: "vertical", position: guide.position });
+            } else if (
+              guide.type === "horizontal" &&
+              Math.abs(target_py - guide.position) < snapMargin
+            ) {
+              target_py = guide.position;
+              this.activeSnapLines.push({ type: "horizontal", position: guide.position });
+            }
+          }
+        }
+
         const vec_start = {
           x: this.dragStartCoords.x - scaleAnchor.x,
           y: this.dragStartCoords.y - scaleAnchor.y,
         };
-        const vec_current = { x: px - scaleAnchor.x, y: py - scaleAnchor.y };
+        const vec_current = { x: target_px - scaleAnchor.x, y: target_py - scaleAnchor.y };
 
         const start_proj_x = vec_start.x * world_axis_x.x + vec_start.y * world_axis_x.y;
         const start_proj_y = vec_start.x * world_axis_y.x + vec_start.y * world_axis_y.y;
@@ -463,12 +555,17 @@ export class TransformTool extends BaseTool {
     if (changed) {
       t.isDirty = true;
     }
+
+    // --- GRID SNAPPING (PIXEL PERFECT) ---
+    this.snapTransformToGrid(t);
+
     this.syncStore(context);
   }
 
   onMouseUp(): void {
     this.activeHandle = null;
     this.dragStartTransform = null;
+    this.activeSnapLines = [];
   }
 
   onRender(ctx: CanvasRenderingContext2D, context: ToolContext): void {
@@ -507,6 +604,29 @@ export class TransformTool extends BaseTool {
       ctx.stroke();
     }
 
+    // Draw snap lines
+    if (this.activeSnapLines.length > 0) {
+      ctx.strokeStyle = "red";
+      ctx.lineWidth = 1 / scale;
+
+      const viewportWidth = context.canvas.width / scale;
+      const viewportHeight = context.canvas.height / scale;
+      const startX = -context.project.panX / scale;
+      const startY = -context.project.panY / scale;
+
+      for (const line of this.activeSnapLines) {
+        ctx.beginPath();
+        if (line.type === "horizontal") {
+          ctx.moveTo(startX, line.position);
+          ctx.lineTo(startX + viewportWidth, line.position);
+        } else {
+          ctx.moveTo(line.position, startY);
+          ctx.lineTo(line.position, startY + viewportHeight);
+        }
+        ctx.stroke();
+      }
+    }
+
     // Draw the handles
     const handleSize = this.TRANSFORM_HANDLE_SIZE / scale;
     handles.forEach((h) => {
@@ -532,6 +652,8 @@ export class TransformTool extends BaseTool {
     context.pushHistory("Transform");
 
     const t = this.currentTransform;
+    this.snapTransformToGrid(t);
+
     const layer = this.isFloating
       ? context.project.selection.floatingLayer
       : context.project.layers.find((l) => l.id === this.originalLayer?.id);
@@ -571,35 +693,48 @@ export class TransformTool extends BaseTool {
     const maxX = Math.max(...transformedCorners.map((c) => c.x));
     const maxY = Math.max(...transformedCorners.map((c) => c.y));
 
-    const newWidth = Math.ceil(maxX - minX);
-    const newHeight = Math.ceil(maxY - minY);
-    const newX = Math.round(minX);
-    const newY = Math.round(minY);
+    // Ensure dimensions are strictly integer if rotation is zero
+    let newWidth = Math.ceil(maxX - minX);
+    let newHeight = Math.ceil(maxY - minY);
+    let newX = Math.round(minX);
+    let newY = Math.round(minY);
+
+    if (Math.abs(t.rotation % 360) < 0.01) {
+      newWidth = Math.round(Math.abs(t.width * t.scaleX));
+      newHeight = Math.round(Math.abs(t.height * t.scaleY));
+      newX = Math.round(t.x - newWidth / 2);
+      newY = Math.round(t.y - newHeight / 2);
+    }
 
     if (layer.type === "smart_object") {
       // Non-destructive update for smart objects
-      const finalWidth = t.width * t.scaleX;
-      const finalHeight = t.height * t.scaleY;
-      const newX = t.x - finalWidth * t.anchor.x;
-      const newY = t.y - finalHeight * t.anchor.y;
+      let finalWidth = t.width * t.scaleX;
+      let finalHeight = t.height * t.scaleY;
+      let finalX = t.x - finalWidth * t.anchor.x;
+      let finalY = t.y - finalHeight * t.anchor.y;
+
+      if (Math.abs(t.rotation % 360) < 0.01) {
+        finalWidth = Math.round(finalWidth);
+        finalHeight = Math.round(finalHeight);
+        finalX = Math.round(finalX);
+        finalY = Math.round(finalY);
+      }
 
       context.updateProject({
         layers: context.project.layers.map((l) =>
           l.id === layer.id
             ? {
                 ...l,
-                x: newX,
-                y: newY,
+                x: finalX,
+                y: finalY,
                 width: finalWidth,
                 height: finalHeight,
                 rotation: t.rotation,
                 mask: l.mask?.linked
                   ? {
                       ...l.mask,
-                      x: newX,
-                      y: newY,
-                      // Note: For now, scaling/rotating raster masks on smart objects is limited
-                      // since we don't bake them here. But movement will work.
+                      x: finalX,
+                      y: finalY,
                     }
                   : l.mask,
               }

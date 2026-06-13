@@ -1919,45 +1919,67 @@ export class ForgeEngine {
 
     if (isEditing && tool?.id === "transform") {
       const transform = useToolStore.getState().toolSettings.transform;
-      ctx.translate(transform.x, transform.y);
-      ctx.rotate((transform.rotation * Math.PI) / 180);
+      const isRotated = Math.abs(transform.rotation % 360) >= 0.01;
 
-      if (layer.type === "smart_object") {
-        // High-quality preview for Smart Objects: render at transformed size from original data
+      if (!isRotated) {
+        // Pixel-perfect rendering when not rotated
         const targetWidth = Math.round(transform.width * Math.abs(transform.scaleX));
         const targetHeight = Math.round(transform.height * Math.abs(transform.scaleY));
+        const finalX = Math.round(transform.x - targetWidth * transform.anchor.x);
+        const finalY = Math.round(transform.y - targetHeight * transform.anchor.y);
 
-        // Flip context if scale is negative, but SmartObjectLayer will render at targetWidth/Height
-        ctx.scale(transform.scaleX < 0 ? -1 : 1, transform.scaleY < 0 ? -1 : 1);
+        if (layer.type === "smart_object") {
+          renderLayerTarget = {
+            ...layer,
+            width: targetWidth,
+            height: targetHeight,
+            data: layer.dataOriginal || layer.data,
+            x: finalX,
+            y: finalY,
+            rotation: 0,
+          };
+        } else {
+          const canvas = this.layerCanvasCache.get(layer.id);
+          const ready = this.layerReadyCache.get(layer.id);
+          if (canvas && ready) {
+            ctx.save();
+            ctx.scale(transform.scaleX < 0 ? -1 : 1, transform.scaleY < 0 ? -1 : 1);
+            const drawX = transform.scaleX < 0 ? -(finalX + targetWidth) : finalX;
+            const drawY = transform.scaleY < 0 ? -(finalY + targetHeight) : finalY;
 
-        renderLayerTarget = {
-          ...layer,
-          width: targetWidth,
-          height: targetHeight,
-          data: layer.dataOriginal || layer.data,
-          x: -targetWidth * transform.anchor.x,
-          y: -targetHeight * transform.anchor.y,
-          rotation: 0,
-        };
+            ctx.drawImage(canvas, drawX, drawY, targetWidth, targetHeight);
+            ctx.restore();
+            ctx.restore(); // Restore layer global state
+            return;
+          }
+        }
       } else {
-        ctx.scale(transform.scaleX, transform.scaleY);
-        const lx = -transform.width * transform.anchor.x;
-        const ly = -transform.height * transform.anchor.y;
+        // Rotated preview
+        ctx.translate(transform.x, transform.y);
+        ctx.rotate((transform.rotation * Math.PI) / 180);
 
-        renderLayerTarget = {
-          ...layer,
-          x: lx,
-          y: ly,
-          rotation: 0,
-        };
-
-        if (layer.mask?.linked) {
-          const relX = layer.mask.x - layer.x;
-          const relY = layer.mask.y - layer.y;
-          renderLayerTarget.mask = {
-            ...layer.mask,
-            x: lx + relX,
-            y: ly + relY,
+        if (layer.type === "smart_object") {
+          const targetWidth = Math.round(transform.width * Math.abs(transform.scaleX));
+          const targetHeight = Math.round(transform.height * Math.abs(transform.scaleY));
+          ctx.scale(transform.scaleX < 0 ? -1 : 1, transform.scaleY < 0 ? -1 : 1);
+          renderLayerTarget = {
+            ...layer,
+            width: targetWidth,
+            height: targetHeight,
+            data: layer.dataOriginal || layer.data,
+            x: -targetWidth * transform.anchor.x,
+            y: -targetHeight * transform.anchor.y,
+            rotation: 0,
+          };
+        } else {
+          ctx.scale(transform.scaleX, transform.scaleY);
+          const lx = -transform.width * transform.anchor.x;
+          const ly = -transform.height * transform.anchor.y;
+          renderLayerTarget = {
+            ...layer,
+            x: lx,
+            y: ly,
+            rotation: 0,
           };
         }
       }
