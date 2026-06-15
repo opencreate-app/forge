@@ -31,6 +31,7 @@ export class CropTool extends BaseTool {
   private dragStartCoords = { x: 0, y: 0 };
   private dragStartCrop: CropState | null = null;
   private scaleAnchor = { x: 0, y: 0 };
+  private handleStartOffset = { x: 0, y: 0 };
   private isCropping = false;
   private context: ToolContext | null = null;
   private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
@@ -274,6 +275,7 @@ export class CropTool extends BaseTool {
 
     this.activeHandle = handle;
     this.dragStartCrop = { ...this.cropState };
+    this.handleStartOffset = { x: 0, y: 0 };
 
     if (handle.name !== "move" && handle.name !== "rotate") {
       let oppositeName = handle.name;
@@ -284,6 +286,11 @@ export class CropTool extends BaseTool {
       else if (oppositeName.includes("right")) oppositeName = oppositeName.replace("right", "left");
 
       const handles = this.getHandles(context);
+      const currentHandle = handles.find((h) => h.name === handle.name);
+      if (currentHandle) {
+        this.handleStartOffset = { x: x - currentHandle.x, y: y - currentHandle.y };
+      }
+
       const opp = handles.find((h) => h.name === oppositeName);
       if (opp) {
         this.scaleAnchor = { x: opp.x, y: opp.y };
@@ -448,57 +455,61 @@ export class CropTool extends BaseTool {
 
       const scaleAnchor = e.altKey ? { x: startT.x, y: startT.y } : this.scaleAnchor;
 
-    let targetMouseX = rawX;
-    let targetMouseY = rawY;
+      // Adjust mouse to handle center
+      let targetMouseX = rawX - this.handleStartOffset.x;
+      let targetMouseY = rawY - this.handleStartOffset.y;
 
-    const snapMargin = 4 / context.project.zoom;
-    const projectW = context.project.width;
-    const projectH = context.project.height;
+      const snapMargin = 4 / context.project.zoom;
+      const projectW = context.project.width;
+      const projectH = context.project.height;
 
-    if (showGuides) {
-      // 1. Snap to Canvas Edges
-      if (Math.abs(targetMouseX - 0) < snapMargin) {
-        targetMouseX = 0;
-        this.activeSnapLines.push({ type: "vertical", position: 0 });
-      } else if (Math.abs(targetMouseX - projectW) < snapMargin) {
-        targetMouseX = projectW;
-        this.activeSnapLines.push({ type: "vertical", position: projectW });
-      }
+      const potentialSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
-      if (Math.abs(targetMouseY - 0) < snapMargin) {
-        targetMouseY = 0;
-        this.activeSnapLines.push({ type: "horizontal", position: 0 });
-      } else if (Math.abs(targetMouseY - projectH) < snapMargin) {
-        targetMouseY = projectH;
-        this.activeSnapLines.push({ type: "horizontal", position: projectH });
-      }
+      if (showGuides) {
+        // 1. Snap to Canvas Edges
+        if (Math.abs(targetMouseX - 0) < snapMargin) {
+          targetMouseX = 0;
+          potentialSnapLines.push({ type: "vertical", position: 0 });
+        } else if (Math.abs(targetMouseX - projectW) < snapMargin) {
+          targetMouseX = projectW;
+          potentialSnapLines.push({ type: "vertical", position: projectW });
+        }
 
-      // 2. Snap to Guides (only if not already snapped to canvas edge in that axis)
-      for (const guide of guides) {
-        if (guide.type === "vertical" && !this.activeSnapLines.some(l => l.type === "vertical" && l.position === targetMouseX)) {
-          if (Math.abs(targetMouseX - guide.position) < snapMargin) {
-            targetMouseX = guide.position;
-            this.activeSnapLines.push({ type: "vertical", position: guide.position });
-          }
-        } else if (guide.type === "horizontal" && !this.activeSnapLines.some(l => l.type === "horizontal" && l.position === targetMouseY)) {
-          if (Math.abs(targetMouseY - guide.position) < snapMargin) {
-            targetMouseY = guide.position;
-            this.activeSnapLines.push({ type: "horizontal", position: guide.position });
+        if (Math.abs(targetMouseY - 0) < snapMargin) {
+          targetMouseY = 0;
+          potentialSnapLines.push({ type: "horizontal", position: 0 });
+        } else if (Math.abs(targetMouseY - projectH) < snapMargin) {
+          targetMouseY = projectH;
+          potentialSnapLines.push({ type: "horizontal", position: projectH });
+        }
+
+        // 2. Snap to Guides
+        for (const guide of guides) {
+          if (
+            guide.type === "vertical" &&
+            !potentialSnapLines.some((l) => l.type === "vertical" && l.position === targetMouseX)
+          ) {
+            if (Math.abs(targetMouseX - guide.position) < snapMargin) {
+              targetMouseX = guide.position;
+              potentialSnapLines.push({ type: "vertical", position: guide.position });
+            }
+          } else if (
+            guide.type === "horizontal" &&
+            !potentialSnapLines.some((l) => l.type === "horizontal" && l.position === targetMouseY)
+          ) {
+            if (Math.abs(targetMouseY - guide.position) < snapMargin) {
+              targetMouseY = guide.position;
+              potentialSnapLines.push({ type: "horizontal", position: guide.position });
+            }
           }
         }
       }
-    }
 
-    // 3. Grid Snapping (Pixel Perfect)
-    // We skip early rounding here and let the final snapping block at the end of the function
-    // handle it. This ensures that small drags (e.g. 0.2px) can still be rounded up to 1px
-    // instead of being rounded down to 0 early on.
-
-    const vecStart = {
-      x: this.dragStartCoords.x - scaleAnchor.x,
-      y: this.dragStartCoords.y - scaleAnchor.y,
-    };
-    const vecCurrent = { x: targetMouseX - scaleAnchor.x, y: targetMouseY - scaleAnchor.y };
+      const vecStart = {
+        x: this.dragStartCoords.x - this.handleStartOffset.x - scaleAnchor.x,
+        y: this.dragStartCoords.y - this.handleStartOffset.y - scaleAnchor.y,
+      };
+      const vecCurrent = { x: targetMouseX - scaleAnchor.x, y: targetMouseY - scaleAnchor.y };
 
       const startProjX = vecStart.x * axisX.x + vecStart.y * axisX.y;
       const startProjY = vecStart.x * axisY.x + vecStart.y * axisY.y;
@@ -522,7 +533,8 @@ export class CropTool extends BaseTool {
           } else {
             const mag = Math.hypot(startProjX, startProjY);
             if (mag > 0) {
-              const globalSf = (currentProjX * (startProjX / mag) + currentProjY * (startProjY / mag)) / mag;
+              const globalSf =
+                (currentProjX * (startProjX / mag) + currentProjY * (startProjY / mag)) / mag;
               sfx = sfy = globalSf;
             }
           }
@@ -553,8 +565,10 @@ export class CropTool extends BaseTool {
         t.scaleX = startT.scaleX * finalSfx;
         t.scaleY = startT.scaleY * finalSfy;
 
-        const centerProjX = (startT.x - scaleAnchor.x) * axisX.x + (startT.y - scaleAnchor.y) * axisX.y;
-        const centerProjY = (startT.x - scaleAnchor.x) * axisY.x + (startT.y - scaleAnchor.y) * axisY.y;
+        const centerProjX =
+          (startT.x - scaleAnchor.x) * axisX.x + (startT.y - scaleAnchor.y) * axisX.y;
+        const centerProjY =
+          (startT.x - scaleAnchor.x) * axisY.x + (startT.y - scaleAnchor.y) * axisY.y;
 
         const newWorldVec = {
           x: centerProjX * finalSfx * axisX.x + centerProjY * finalSfy * axisY.x,
@@ -563,6 +577,24 @@ export class CropTool extends BaseTool {
 
         t.x = scaleAnchor.x + newWorldVec.x;
         t.y = scaleAnchor.y + newWorldVec.y;
+      }
+
+      // Verify which snap lines are still valid after all constraints
+      if (showGuides) {
+        const handles = this.getHandles(context);
+        const currentHandle = handles.find((h) => h.name === this.activeHandle?.name);
+        if (currentHandle) {
+          for (const line of potentialSnapLines) {
+            if (line.type === "vertical" && Math.abs(currentHandle.x - line.position) < 0.01) {
+              this.activeSnapLines.push(line);
+            } else if (
+              line.type === "horizontal" &&
+              Math.abs(currentHandle.y - line.position) < 0.01
+            ) {
+              this.activeSnapLines.push(line);
+            }
+          }
+        }
       }
     }
 
@@ -589,8 +621,32 @@ export class CropTool extends BaseTool {
         const left = t.x - Math.abs(w) / 2;
         const top = t.y - Math.abs(h) / 2;
 
-        t.x = Math.round(left) + Math.abs(w) / 2;
-        t.y = Math.round(top) + Math.abs(h) / 2;
+        const snapX = this.activeSnapLines.find((l) => l.type === "vertical");
+        const snapY = this.activeSnapLines.find((l) => l.type === "horizontal");
+
+        // If snapped to a guide, respect its exact position. Otherwise round.
+        const finalLeft = Math.round(left);
+        const finalTop = Math.round(top);
+
+        // If we are dragging a left/top handle and it's snapped, we adjust the corner.
+        // If we are dragging a right/bottom handle and it's snapped, we adjust the width/height (already done by scale).
+        // Actually, if we are snapped to a vertical guide, one of the vertical edges (left or right) should be at that position.
+        const handles = this.getHandles(context);
+        const currentHandle = handles.find((h) => h.name === this.activeHandle?.name);
+
+        if (snapX && currentHandle) {
+          const diff = snapX.position - currentHandle.x;
+          t.x += diff;
+        } else {
+          t.x = finalLeft + Math.abs(w) / 2;
+        }
+
+        if (snapY && currentHandle) {
+          const diff = snapY.position - currentHandle.y;
+          t.y += diff;
+        } else {
+          t.y = finalTop + Math.abs(h) / 2;
+        }
       }
     }
   }
