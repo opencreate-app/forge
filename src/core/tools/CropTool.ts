@@ -325,13 +325,18 @@ export class CropTool extends BaseTool {
           y: t.y + (p.x * sin + p.y * cos),
         }));
 
-        // Vertical snap
-        for (const guide of guides.filter((g) => g.type === "vertical")) {
+        // Canvas Edge Snapping (Move)
+        const projectW = context.project.width;
+        const projectH = context.project.height;
+
+        // Vertical snap (Canvas Edges)
+        const vEdges = [0, projectW];
+        for (const edge of vEdges) {
           for (const p of transformed) {
-            if (Math.abs(p.x - guide.position) < snapMargin) {
-              const diff = guide.position - p.x;
+            if (Math.abs(p.x - edge) < snapMargin) {
+              const diff = edge - p.x;
               t.x += diff;
-              this.activeSnapLines.push({ type: "vertical", position: guide.position });
+              this.activeSnapLines.push({ type: "vertical", position: edge });
               transformed.forEach((pt) => (pt.x += diff));
               break;
             }
@@ -339,17 +344,65 @@ export class CropTool extends BaseTool {
           if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
         }
 
-        // Horizontal snap
-        for (const guide of guides.filter((g) => g.type === "horizontal")) {
+        // Horizontal snap (Canvas Edges)
+        const hEdges = [0, projectH];
+        for (const edge of hEdges) {
           for (const p of transformed) {
-            if (Math.abs(p.y - guide.position) < snapMargin) {
-              const diff = guide.position - p.y;
+            if (Math.abs(p.y - edge) < snapMargin) {
+              const diff = edge - p.y;
               t.y += diff;
-              this.activeSnapLines.push({ type: "horizontal", position: guide.position });
+              this.activeSnapLines.push({ type: "horizontal", position: edge });
+              transformed.forEach((pt) => (pt.y += diff));
               break;
             }
           }
           if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
+        }
+
+        // Vertical snap (Guides)
+        if (!this.activeSnapLines.some(l => l.type === "vertical")) {
+          for (const guide of guides.filter((g) => g.type === "vertical")) {
+            for (const p of transformed) {
+              if (Math.abs(p.x - guide.position) < snapMargin) {
+                const diff = guide.position - p.x;
+                t.x += diff;
+                this.activeSnapLines.push({ type: "vertical", position: guide.position });
+                transformed.forEach((pt) => (pt.x += diff));
+                break;
+              }
+            }
+            if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
+          }
+        }
+
+        // Horizontal snap (Guides)
+        if (!this.activeSnapLines.some(l => l.type === "horizontal")) {
+          for (const guide of guides.filter((g) => g.type === "horizontal")) {
+            for (const p of transformed) {
+              if (Math.abs(p.y - guide.position) < snapMargin) {
+                const diff = guide.position - p.y;
+                t.y += diff;
+                this.activeSnapLines.push({ type: "horizontal", position: guide.position });
+                break;
+              }
+            }
+            if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
+          }
+        }
+      }
+
+      // Grid snapping for Move
+      if (Math.abs(t.rotation % 360) < 0.01) {
+        const w = Math.round(t.width * t.scaleX);
+        const h = Math.round(t.height * t.scaleY);
+        const left = t.x - w / 2;
+        const top = t.y - h / 2;
+        
+        if (!this.activeSnapLines.some(l => l.type === "vertical")) {
+          t.x = Math.round(left) + w / 2;
+        }
+        if (!this.activeSnapLines.some(l => l.type === "horizontal")) {
+          t.y = Math.round(top) + h / 2;
         }
       }
     } else if (this.activeHandle.name === "rotate") {
@@ -381,30 +434,63 @@ export class CropTool extends BaseTool {
 
       const scaleAnchor = e.altKey ? { x: startT.x, y: startT.y } : this.scaleAnchor;
 
-      let targetMouseX = rawX;
-      let targetMouseY = rawY;
+    let targetMouseX = rawX;
+    let targetMouseY = rawY;
 
-      if (showGuides) {
-        // Snap the MOUSE position to guides first
-        for (const guide of guides) {
-          if (guide.type === "vertical" && Math.abs(targetMouseX - guide.position) < snapMargin) {
+    const snapMargin = 4 / context.project.zoom;
+    const projectW = context.project.width;
+    const projectH = context.project.height;
+
+    if (showGuides) {
+      // 1. Snap to Canvas Edges
+      if (Math.abs(targetMouseX - 0) < snapMargin) {
+        targetMouseX = 0;
+        this.activeSnapLines.push({ type: "vertical", position: 0 });
+      } else if (Math.abs(targetMouseX - projectW) < snapMargin) {
+        targetMouseX = projectW;
+        this.activeSnapLines.push({ type: "vertical", position: projectW });
+      }
+
+      if (Math.abs(targetMouseY - 0) < snapMargin) {
+        targetMouseY = 0;
+        this.activeSnapLines.push({ type: "horizontal", position: 0 });
+      } else if (Math.abs(targetMouseY - projectH) < snapMargin) {
+        targetMouseY = projectH;
+        this.activeSnapLines.push({ type: "horizontal", position: projectH });
+      }
+
+      // 2. Snap to Guides (only if not already snapped to canvas edge in that axis)
+      for (const guide of guides) {
+        if (guide.type === "vertical" && !this.activeSnapLines.some(l => l.type === "vertical" && l.position === targetMouseX)) {
+          if (Math.abs(targetMouseX - guide.position) < snapMargin) {
             targetMouseX = guide.position;
             this.activeSnapLines.push({ type: "vertical", position: guide.position });
-          } else if (
-            guide.type === "horizontal" &&
-            Math.abs(targetMouseY - guide.position) < snapMargin
-          ) {
+          }
+        } else if (guide.type === "horizontal" && !this.activeSnapLines.some(l => l.type === "horizontal" && l.position === targetMouseY)) {
+          if (Math.abs(targetMouseY - guide.position) < snapMargin) {
             targetMouseY = guide.position;
             this.activeSnapLines.push({ type: "horizontal", position: guide.position });
           }
         }
       }
+    }
 
-      const vecStart = {
-        x: this.dragStartCoords.x - scaleAnchor.x,
-        y: this.dragStartCoords.y - scaleAnchor.y,
-      };
-      const vecCurrent = { x: targetMouseX - scaleAnchor.x, y: targetMouseY - scaleAnchor.y };
+    // 3. Grid Snapping (Pixel Perfect)
+    // If no guides/canvas snapped on an axis and not rotated, force pixel alignment
+    if (Math.abs(t.rotation % 360) < 0.01) {
+      if (!this.activeSnapLines.some(l => l.type === "vertical")) {
+        targetMouseX = Math.round(targetMouseX);
+      }
+      if (!this.activeSnapLines.some(l => l.type === "horizontal")) {
+        targetMouseY = Math.round(targetMouseY);
+      }
+    }
+
+    const vecStart = {
+      x: this.dragStartCoords.x - scaleAnchor.x,
+      y: this.dragStartCoords.y - scaleAnchor.y,
+    };
+    const vecCurrent = { x: targetMouseX - scaleAnchor.x, y: targetMouseY - scaleAnchor.y };
 
       const startProjX = vecStart.x * axisX.x + vecStart.y * axisX.y;
       const startProjY = vecStart.x * axisY.x + vecStart.y * axisY.y;
@@ -473,6 +559,25 @@ export class CropTool extends BaseTool {
     }
 
     this.syncStore(context);
+
+    // --- GRID SNAPPING (PIXEL PERFECT) ---
+    // If not rotated, ensure width, height and edges are aligned to the pixel grid.
+    if (Math.abs(t.rotation % 360) < 0.01) {
+      const w = Math.round(t.width * t.scaleX);
+      const h = Math.round(t.height * t.scaleY);
+
+      if (Math.abs(w) >= 1 && Math.abs(h) >= 1) {
+        t.scaleX = w / t.width;
+        t.scaleY = h / t.height;
+
+        // Calculate the top-left edge, round it, and reset center
+        const left = t.x - Math.abs(w) / 2;
+        const top = t.y - Math.abs(h) / 2;
+
+        t.x = Math.round(left) + Math.abs(w) / 2;
+        t.y = Math.round(top) + Math.abs(h) / 2;
+      }
+    }
   }
 
   onMouseUp(_e: MouseEvent, context: ToolContext): void {
@@ -582,7 +687,20 @@ export class CropTool extends BaseTool {
 
     context.pushHistory("Crop");
 
-    const t = this.cropState;
+    const t = JSON.parse(JSON.stringify(this.cropState));
+    if (Math.abs(t.rotation % 360) < 0.01) {
+      const w = Math.round(t.width * t.scaleX);
+      const h = Math.round(t.height * t.scaleY);
+      const left = Math.round(t.x - Math.abs(w) / 2);
+      const top = Math.round(t.y - Math.abs(h) / 2);
+      t.width = Math.abs(w);
+      t.height = Math.abs(h);
+      t.scaleX = 1;
+      t.scaleY = 1;
+      t.x = left + t.width / 2;
+      t.y = top + t.height / 2;
+    }
+
     const settings = context.settings.crop;
 
     const localLeft = -t.width * t.anchor.x * t.scaleX;
