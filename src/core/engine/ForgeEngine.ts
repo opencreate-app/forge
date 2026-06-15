@@ -1206,7 +1206,9 @@ export class ForgeEngine {
     const threshold = 5 / this.project.zoom; // 5 screen pixels tolerance
     let foundHover: { id: string; type: "horizontal" | "vertical" } | null = null;
 
-    if (showGuides) {
+    // Only check for hover if we're not dragging a guide and guides are enabled
+    // And only if MoveTool is active to prevent interference with other tools that require precise mouse movement
+    if (showGuides && this.project.guides.length > 0 && this.getActiveTool()?.id === "move") {
       for (const guide of this.project.guides) {
         if (guide.type === "horizontal") {
           if (Math.abs(projPos.y - guide.position) < threshold) {
@@ -2006,7 +2008,12 @@ export class ForgeEngine {
       ctx.restore();
     } else if (hasStyles || hasMask) {
       // Generic styles and mask implementation for all layer types (Raster, Text, Group, Smart Object)
-      this.renderLayerWithStyles(ctx, renderLayerTarget, editingState, isEditingMask ? drawingCanvas : undefined);
+      this.renderLayerWithStyles(
+        ctx,
+        renderLayerTarget,
+        editingState,
+        isEditingMask ? drawingCanvas : undefined,
+      );
     } else {
       ctx.globalAlpha *= (layer.fill ?? 100) / 100;
       this.renderLayerToContext(ctx, renderLayerTarget, editingState);
@@ -2127,7 +2134,16 @@ export class ForgeEngine {
 
     // --- LAYER MASK (Applied to content before styles so styles adapt) ---
     if (layer.mask?.enabled || maskPreview) {
-      this.applyLayerMask(bctx, layer.mask, buffer.width, buffer.height, padding, x, y, maskPreview);
+      this.applyLayerMask(
+        bctx,
+        layer.mask,
+        buffer.width,
+        buffer.height,
+        padding,
+        x,
+        y,
+        maskPreview,
+      );
     }
 
     // 2. Prepare Composition Buffer
@@ -2409,7 +2425,7 @@ export class ForgeEngine {
     const rad = (angle * Math.PI) / 180;
     const rawOffsetX = Math.cos(rad) * distance;
     const rawOffsetY = Math.sin(rad) * distance;
-    
+
     // We MUST round these to integers if noise is enabled (or always for parity)
     // to prevent "sub-pixel swimming" and blurring of the 1px noise pattern.
     const offsetX = Math.round(rawOffsetX);
@@ -2483,7 +2499,7 @@ export class ForgeEngine {
           const px = pixelIndex % width;
           const py = Math.floor(pixelIndex / width);
 
-          // FIX: To keep noise fixed relative to the layer, we anchor the 
+          // FIX: To keep noise fixed relative to the layer, we anchor the
           // seeding coordinates to the layer's origin by:
           // 1. Adding the shadow offset (since px/py are in shadow-space and will be shifted by offsetX/Y later)
           // 2. Subtracting the buffer padding (layerBufferX/Y)
@@ -2499,7 +2515,7 @@ export class ForgeEngine {
           // expands beyond its original footprint (no halos/contours).
           // 100% noise allows a swing from 0 to 2x the original alpha.
           const variation = (rand * 2 - 1) * noiseFactor;
-          
+
           // Clamp the result to [0, 255]
           data[i + 3] = Math.max(0, Math.min(255, originalAlpha * (1 + variation)));
         }
@@ -2535,7 +2551,7 @@ export class ForgeEngine {
 
     // Calculate offsets based on angle and distance
     // NOTE: For Inner Shadow, positive distance moves the shadow INSIDE the shape.
-    // Photoshop behavior: distance 10 at 90 deg moves shadow 10px DOWN, 
+    // Photoshop behavior: distance 10 at 90 deg moves shadow 10px DOWN,
     // effectively showing the TOP inner edge.
     const rad = (angle * Math.PI) / 180;
     const rawOffsetX = Math.cos(rad) * distance;
@@ -2617,8 +2633,8 @@ export class ForgeEngine {
           // For Inner Shadow, the holeCanvas is shifted by 'margin'.
           // So (px, py) in blurCanvas corresponds to (px-margin, py-margin) in contentBuffer space.
           // We anchor to layer origin by adding offset and subtracting padding and margin.
-          const anchoredX = (px - margin) + offsetX - layerBufferX;
-          const anchoredY = (py - margin) + offsetY - layerBufferY;
+          const anchoredX = px - margin + offsetX - layerBufferX;
+          const anchoredY = py - margin + offsetY - layerBufferY;
 
           const rand = this.seededRandom(seedBase + anchoredX * 31337 + anchoredY * 13331);
           const variation = (rand * 2 - 1) * noiseFactor;
@@ -2632,18 +2648,18 @@ export class ForgeEngine {
     // We only want the shadow parts that overlap with the original layer
     ctx.save();
     ctx.globalAlpha = opacity / 100;
-    
+
     // Use the original content as a mask
     const finalCanvas = document.createElement("canvas");
     finalCanvas.width = contentBuffer.width;
     finalCanvas.height = contentBuffer.height;
     const fctx = finalCanvas.getContext("2d")!;
-    
+
     fctx.drawImage(contentBuffer, 0, 0);
     fctx.globalCompositeOperation = "source-in";
     // Draw the shadow with offset
     fctx.drawImage(blurCanvas, -margin + offsetX, -margin + offsetY);
-    
+
     ctx.drawImage(finalCanvas, x, y);
     ctx.restore();
   }
