@@ -50,12 +50,17 @@ export class CropTool extends BaseTool {
 
     // Use selection bounds if available
     if (project.selection.hasSelection && project.selection.bounds) {
-      const { bounds } = project.selection;
+      const b = project.selection.bounds;
+      const left = Math.round(b.x);
+      const top = Math.round(b.y);
+      const width = Math.round(b.width);
+      const height = Math.round(b.height);
+
       this.cropState = {
-        x: bounds.x + bounds.width / 2,
-        y: bounds.y + bounds.height / 2,
-        width: bounds.width,
-        height: bounds.height,
+        x: left + width / 2,
+        y: top + height / 2,
+        width: width,
+        height: height,
         scaleX: 1,
         scaleY: 1,
         rotation: 0,
@@ -242,10 +247,15 @@ export class CropTool extends BaseTool {
     if (!this.cropState) return;
 
     if (!handle) {
+      // Snap start coordinates for pixel-perfect new selection if not rotated
+      const isRotated = Math.abs(this.cropState?.rotation || 0) > 0.01;
+      const snappedX = isRotated ? x : Math.round(x);
+      const snappedY = isRotated ? y : Math.round(y);
+
       // Start creating a new crop area
       this.cropState = {
-        x: x,
-        y: y,
+        x: snappedX,
+        y: snappedY,
         width: 0,
         height: 0,
         scaleX: 1,
@@ -255,10 +265,14 @@ export class CropTool extends BaseTool {
       };
       handle = { name: "bottom-right", cursor: "nwse-resize" };
       this.syncStore(context);
+      
+      // Update drag start coords to snapped values too
+      this.dragStartCoords = { x: snappedX, y: snappedY };
+    } else {
+      this.dragStartCoords = { x, y };
     }
 
     this.activeHandle = handle;
-    this.dragStartCoords = { x, y };
     this.dragStartCrop = { ...this.cropState };
 
     if (handle.name !== "move" && handle.name !== "rotate") {
@@ -476,15 +490,9 @@ export class CropTool extends BaseTool {
     }
 
     // 3. Grid Snapping (Pixel Perfect)
-    // If no guides/canvas snapped on an axis and not rotated, force pixel alignment
-    if (Math.abs(t.rotation % 360) < 0.01) {
-      if (!this.activeSnapLines.some(l => l.type === "vertical")) {
-        targetMouseX = Math.round(targetMouseX);
-      }
-      if (!this.activeSnapLines.some(l => l.type === "horizontal")) {
-        targetMouseY = Math.round(targetMouseY);
-      }
-    }
+    // We skip early rounding here and let the final snapping block at the end of the function
+    // handle it. This ensures that small drags (e.g. 0.2px) can still be rounded up to 1px
+    // instead of being rounded down to 0 early on.
 
     const vecStart = {
       x: this.dragStartCoords.x - scaleAnchor.x,
@@ -563,10 +571,17 @@ export class CropTool extends BaseTool {
     // --- GRID SNAPPING (PIXEL PERFECT) ---
     // If not rotated, ensure width, height and edges are aligned to the pixel grid.
     if (Math.abs(t.rotation % 360) < 0.01) {
-      const w = Math.round(t.width * t.scaleX);
-      const h = Math.round(t.height * t.scaleY);
+      let w = Math.round(t.width * t.scaleX);
+      let h = Math.round(t.height * t.scaleY);
 
-      if (Math.abs(w) >= 1 && Math.abs(h) >= 1) {
+      // Enforce minimum size of 1px if movement was intended
+      const minW = Math.abs(t.width * t.scaleX) > 0.001 ? 1 : 0;
+      const minH = Math.abs(t.height * t.scaleY) > 0.001 ? 1 : 0;
+
+      if (Math.abs(w) < minW) w = (Math.sign(t.width * t.scaleX) || 1) * minW;
+      if (Math.abs(h) < minH) h = (Math.sign(t.height * t.scaleY) || 1) * minH;
+
+      if (t.width !== 0 && t.height !== 0) {
         t.scaleX = w / t.width;
         t.scaleY = h / t.height;
 
@@ -581,6 +596,15 @@ export class CropTool extends BaseTool {
   }
 
   onMouseUp(_e: MouseEvent, context: ToolContext): void {
+    if (this.cropState) {
+      const w = Math.round(this.cropState.width * this.cropState.scaleX);
+      const h = Math.round(this.cropState.height * this.cropState.scaleY);
+      // If it's a zero-sized crop (like from a simple click), reset it to project bounds
+      if (w === 0 || h === 0) {
+        this.resetCrop(context);
+      }
+    }
+
     this.activeHandle = null;
     this.dragStartCrop = null;
     this.activeSnapLines = [];
@@ -705,8 +729,8 @@ export class CropTool extends BaseTool {
 
     const localLeft = -t.width * t.anchor.x * t.scaleX;
     const localTop = -t.height * t.anchor.y * t.scaleY;
-    const newW = Math.round(Math.abs(t.width * t.scaleX));
-    const newH = Math.round(Math.abs(t.height * t.scaleY));
+    const newW = Math.max(1, Math.round(Math.abs(t.width * t.scaleX)));
+    const newH = Math.max(1, Math.round(Math.abs(t.height * t.scaleY)));
 
     const invRot = (-t.rotation * Math.PI) / 180;
     const cos = Math.cos(invRot);
