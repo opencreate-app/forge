@@ -157,6 +157,7 @@ export class MoveTool extends BaseTool {
     const uiState = useUIStore.getState();
     const showGuides = uiState.showGuides;
     const snapToGuides = uiState.snapToGuides;
+    const snapToLayers = uiState.snapToLayers;
     const movingLayers = this.isFloating
       ? [project.selection.floatingLayer!]
       : project.layers.filter((l) => this.movingLayerIds.includes(l.id));
@@ -197,7 +198,21 @@ export class MoveTool extends BaseTool {
           hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
         }
 
+        if (snapToLayers) {
+          const otherLayers = project.layers.filter(
+            (l) => !this.movingLayerIds.includes(l.id) && context.isLayerVisible(l.id),
+          );
+          for (const layer of otherLayers) {
+            vSnaps.push(layer.x, layer.x + layer.width / 2, layer.x + layer.width);
+            hSnaps.push(layer.y, layer.y + layer.height / 2, layer.y + layer.height);
+          }
+        }
+
         // Vertical snapping
+        let bestVPos = null;
+        let bestVDist = snapMargin;
+        let bestVOffset = 0;
+
         for (const snapPos of vSnaps) {
           const centerX = (minX + maxX) / 2;
           const snapPoints = [
@@ -207,16 +222,25 @@ export class MoveTool extends BaseTool {
           ];
 
           for (const pt of snapPoints) {
-            if (Math.abs(pt.pos - snapPos) < snapMargin) {
-              dx = snapPos + pt.offset;
-              this.activeSnapLines.push({ type: "vertical", position: snapPos });
-              break;
+            const dist = Math.abs(pt.pos - snapPos);
+            if (dist < bestVDist) {
+              bestVDist = dist;
+              bestVPos = snapPos;
+              bestVOffset = pt.offset;
             }
           }
-          if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
+        }
+
+        if (bestVPos !== null) {
+          dx = bestVPos + bestVOffset;
+          this.activeSnapLines.push({ type: "vertical", position: bestVPos });
         }
 
         // Horizontal snapping
+        let bestHPos = null;
+        let bestHDist = snapMargin;
+        let bestHOffset = 0;
+
         for (const snapPos of hSnaps) {
           const centerY = (minY + maxY) / 2;
           const snapPoints = [
@@ -226,13 +250,18 @@ export class MoveTool extends BaseTool {
           ];
 
           for (const pt of snapPoints) {
-            if (Math.abs(pt.pos - snapPos) < snapMargin) {
-              dy = snapPos + pt.offset;
-              this.activeSnapLines.push({ type: "horizontal", position: snapPos });
-              break;
+            const dist = Math.abs(pt.pos - snapPos);
+            if (dist < bestHDist) {
+              bestHDist = dist;
+              bestHPos = snapPos;
+              bestHOffset = pt.offset;
             }
           }
-          if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
+        }
+
+        if (bestHPos !== null) {
+          dy = bestHPos + bestHOffset;
+          this.activeSnapLines.push({ type: "horizontal", position: bestHPos });
         }
       }
     }

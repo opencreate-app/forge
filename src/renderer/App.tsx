@@ -80,12 +80,27 @@ function App() {
   const showRulers = useUIStore((state) => state.showRulers);
   const showGuides = useUIStore((state) => state.showGuides);
   const snapToGuides = useUIStore((state) => state.snapToGuides);
+  const snapToLayers = useUIStore((state) => state.snapToLayers);
 
   React.useEffect(() => {
     if (!(window as any).electronAPI) return;
     const hasProject = projects.length > 0 && activeProjectId !== null && activeTab !== "home";
-    (window as any).electronAPI.updateMenu({ hasProject, showRulers, showGuides, snapToGuides });
-  }, [projects.length, activeProjectId, activeTab, showRulers, showGuides, snapToGuides]);
+    (window as any).electronAPI.updateMenu({
+      hasProject,
+      showRulers,
+      showGuides,
+      snapToGuides,
+      snapToLayers,
+    });
+  }, [
+    projects.length,
+    activeProjectId,
+    activeTab,
+    showRulers,
+    showGuides,
+    snapToGuides,
+    snapToLayers,
+  ]);
   const setActiveTool = useToolStore((state) => state.setActiveTool);
   const activeToolId = useToolStore((state) => state.activeToolId);
   const toolSettings = useToolStore((state) => state.toolSettings);

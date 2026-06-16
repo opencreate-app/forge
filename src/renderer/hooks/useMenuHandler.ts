@@ -26,6 +26,8 @@ export const useMenuHandler = () => {
   const setShowGuides = useUIStore((state) => state.setShowGuides);
   const snapToGuides = useUIStore((state) => state.snapToGuides);
   const setSnapToGuides = useUIStore((state) => state.setSnapToGuides);
+  const snapToLayers = useUIStore((state) => state.snapToLayers);
+  const setSnapToLayers = useUIStore((state) => state.setSnapToLayers);
   const addRecentProject = useRecentProjectsStore((state) => state.addRecentProject);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
@@ -314,6 +316,10 @@ export const useMenuHandler = () => {
           setSnapToGuides(!snapToGuides);
           break;
 
+        case "toggle-snap-layers":
+          setSnapToLayers(!snapToLayers);
+          break;
+
         case "deselect":
           if (!isInputFocused) {
             window.dispatchEvent(new CustomEvent("forge:select-clear"));
@@ -383,6 +389,8 @@ export const useMenuHandler = () => {
     setShowGuides,
     snapToGuides,
     setSnapToGuides,
+    snapToLayers,
+    setSnapToLayers,
     addRecentProject,
     syncSmartObject,
   ]);

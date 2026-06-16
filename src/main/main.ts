@@ -62,6 +62,7 @@ function createMenu(
   showRulers = true,
   showGuides = true,
   snapToGuides = true,
+  snapToLayers = true,
 ) {
   const isDev = !!VITE_DEV_SERVER_URL;
 
@@ -222,6 +223,12 @@ function createMenu(
               checked: snapToGuides,
               click: () => win?.webContents.send("menu:action", "toggle-snap-guides"),
             },
+            {
+              label: "Layers",
+              type: "checkbox",
+              checked: snapToLayers,
+              click: () => win?.webContents.send("menu:action", "toggle-snap-layers"),
+            },
           ],
         },
         { type: "separator" },
@@ -348,8 +355,8 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     "app:updateMenu",
-    (_event, { hasProject, showRulers, showGuides, snapToGuides }) => {
-      createMenu(hasProject, showRulers, showGuides, snapToGuides);
+    (_event, { hasProject, showRulers, showGuides, snapToGuides, snapToLayers }) => {
+      createMenu(hasProject, showRulers, showGuides, snapToGuides, snapToLayers);
     },
   );
 

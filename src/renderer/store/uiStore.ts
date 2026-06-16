@@ -19,6 +19,7 @@ interface UIState {
   showRulers: boolean;
   showGuides: boolean;
   snapToGuides: boolean;
+  snapToLayers: boolean;
   lastExportFormat: string;
   lastExportQuality: number;
   lastLockAspectRatio: boolean;
@@ -36,6 +37,7 @@ interface UIState {
   setShowRulers: (show: boolean) => void;
   setShowGuides: (show: boolean) => void;
   setSnapToGuides: (snap: boolean) => void;
+  setSnapToLayers: (snap: boolean) => void;
   setExportSettings: (format: string, quality: number, lockAspectRatio: boolean) => void;
   setModalOpen: (modalId: string, isOpen: boolean) => void;
   isAnyModalOpen: () => boolean;
@@ -59,6 +61,7 @@ export const useUIStore = create<UIState>()(
       showRulers: true,
       showGuides: true,
       snapToGuides: true,
+      snapToLayers: true,
       lastExportFormat: "image/png",
       lastExportQuality: 100,
       lastLockAspectRatio: true,
@@ -94,6 +97,7 @@ export const useUIStore = create<UIState>()(
       setShowRulers: (show) => set({ showRulers: show }),
       setShowGuides: (show) => set({ showGuides: show }),
       setSnapToGuides: (snap) => set({ snapToGuides: snap }),
+      setSnapToLayers: (snap) => set({ snapToLayers: snap }),
       setExportSettings: (format, quality, lockAspectRatio) =>
         set({
           lastExportFormat: format,
@@ -131,6 +135,7 @@ export const useUIStore = create<UIState>()(
         showRulers: state.showRulers,
         showGuides: state.showGuides,
         snapToGuides: state.snapToGuides,
+        snapToLayers: state.snapToLayers,
         lastExportFormat: state.lastExportFormat,
         lastExportQuality: state.lastExportQuality,
         lastLockAspectRatio: state.lastLockAspectRatio,
