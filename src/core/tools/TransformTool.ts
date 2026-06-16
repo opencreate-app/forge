@@ -33,6 +33,7 @@ export class TransformTool extends BaseTool {
   private dragStartCoords = { x: 0, y: 0 };
   private dragStartTransform: TransformState | null = null;
   private scaleAnchor = { x: 0, y: 0 };
+  private handleOffset = { x: 0, y: 0 };
   private TRANSFORM_HANDLE_SIZE = 8;
   private context: ToolContext | null = null;
   private unsubscribeStore: (() => void) | null = null;
@@ -338,8 +339,15 @@ export class TransformTool extends BaseTool {
     this.activeHandle = handle as Handle;
     this.dragStartCoords = { x: px, y: py };
     this.dragStartTransform = JSON.parse(JSON.stringify(this.currentTransform));
+    this.handleOffset = { x: 0, y: 0 };
 
     if (handle.name !== "move" && handle.name !== "rotate") {
+      const handles = this.getTransformHandles(context, false);
+      const currentHandle = handles.find((h) => h.name === handle.name);
+      if (currentHandle) {
+        this.handleOffset = { x: px - currentHandle.x, y: py - currentHandle.y };
+      }
+
       let oppositeHandleName = handle.name;
       // Find opposite handle for scaling
       if (oppositeHandleName.includes("top"))
@@ -389,11 +397,10 @@ export class TransformTool extends BaseTool {
 
     const t = this.currentTransform!;
     const startT = this.dragStartTransform!;
-    const px = this.activeHandle.name === "rotate" ? raw_px : Math.round(raw_px);
-    const py = this.activeHandle.name === "rotate" ? raw_py : Math.round(raw_py);
-
-    const dx = px - this.dragStartCoords.x;
-    const dy = py - this.dragStartCoords.y;
+    
+    // Use raw coordinates for snapping logic to avoid premature rounding
+    const dx = raw_px - this.dragStartCoords.x;
+    const dy = raw_py - this.dragStartCoords.y;
 
     let changed = false;
 
@@ -420,8 +427,8 @@ export class TransformTool extends BaseTool {
         }));
 
         // 1. Collect potential snap positions
-        const vSnaps = [0, context.project.width];
-        const hSnaps = [0, context.project.height];
+        const vSnaps = [0, context.project.width / 2, context.project.width];
+        const hSnaps = [0, context.project.height / 2, context.project.height];
 
         if (showGuides && snapToGuides) {
           vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
@@ -464,7 +471,7 @@ export class TransformTool extends BaseTool {
           this.dragStartCoords.y - startT.y,
           this.dragStartCoords.x - startT.x,
         );
-        const currentAngle = Math.atan2(py - startT.y, px - startT.x);
+        const currentAngle = Math.atan2(raw_py - startT.y, raw_px - startT.x);
         let newRotation = startT.rotation + ((currentAngle - startAngle) * 180) / Math.PI;
         if (e.shiftKey) {
           newRotation = Math.round(newRotation / 15) * 15;
@@ -485,12 +492,13 @@ export class TransformTool extends BaseTool {
         const world_axis_x = { x: cos, y: sin };
         const world_axis_y = { x: -sin, y: cos };
 
-        let target_px = px;
-        let target_py = py;
+        // Calculate the "intended" handle position by subtracting the initial mouse offset
+        let target_px = raw_px - this.handleOffset.x;
+        let target_py = raw_py - this.handleOffset.y;
 
         // 1. Collect potential snap positions
-        const vSnaps = [0, context.project.width];
-        const hSnaps = [0, context.project.height];
+        const vSnaps = [0, context.project.width / 2, context.project.width];
+        const hSnaps = [0, context.project.height / 2, context.project.height];
 
         if (showGuides && snapToGuides) {
           vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
@@ -516,8 +524,8 @@ export class TransformTool extends BaseTool {
         }
 
         const vec_start = {
-          x: this.dragStartCoords.x - scaleAnchor.x,
-          y: this.dragStartCoords.y - scaleAnchor.y,
+          x: (this.dragStartCoords.x - this.handleOffset.x) - scaleAnchor.x,
+          y: (this.dragStartCoords.y - this.handleOffset.y) - scaleAnchor.y,
         };
         const vec_current = { x: target_px - scaleAnchor.x, y: target_py - scaleAnchor.y };
 
