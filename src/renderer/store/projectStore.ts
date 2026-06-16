@@ -302,6 +302,8 @@ interface ProjectState {
   removeProject: (id: string) => void;
   /** Sets the active project. */
   setActiveProject: (id: string | null) => void;
+  /** Reorders the projects list. */
+  reorderProjects: (projects: Project[]) => void;
   /** Updates project-level properties. */
   updateProject: (id: string, updates: Partial<Project>) => void;
   /** Adds a new layer to a specific project. */
@@ -579,6 +581,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }),
 
   setActiveProject: (id) => set({ activeProjectId: id }),
+
+  reorderProjects: (projects) => set({ projects }),
 
   updateProject: (id, updates) =>
     set((state) => ({
