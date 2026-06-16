@@ -6,6 +6,7 @@ import { useProjectStore, getSerializableProject } from "@store/projectStore";
 import { useRecentProjectsStore } from "@store/recentProjectsStore";
 import { useUIStore } from "@store/uiStore";
 import { createProjectFromImage, loadImage } from "@utils/projectUtils";
+import { forgeEvents, FORGE_EVENTS } from "@utils/events";
 
 export const useMenuHandler = () => {
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
@@ -29,6 +30,8 @@ export const useMenuHandler = () => {
   const snapToLayers = useUIStore((state) => state.snapToLayers);
   const setSnapToLayers = useUIStore((state) => state.setSnapToLayers);
   const addRecentProject = useRecentProjectsStore((state) => state.addRecentProject);
+  const rotateProject = useProjectStore((state) => state.rotateProject);
+  const flipProject = useProjectStore((state) => state.flipProject);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
@@ -250,6 +253,61 @@ export const useMenuHandler = () => {
           window.dispatchEvent(new CustomEvent("forge:open-image-size-modal"));
           break;
 
+        case "rotate-90-cw":
+          if (!activeProject) return;
+          try {
+            await rotateProject(activeProject.id, 90);
+            showToast("Image rotated 90° CW", "info");
+            forgeEvents.emit(FORGE_EVENTS.FIT_TO_SCREEN);
+          } catch (err: any) {
+            showToast(`Failed to rotate: ${err.message}`, "error");
+          }
+          break;
+
+        case "rotate-90-ccw":
+          if (!activeProject) return;
+          try {
+            await rotateProject(activeProject.id, 270);
+            showToast("Image rotated 90° CCW", "info");
+            forgeEvents.emit(FORGE_EVENTS.FIT_TO_SCREEN);
+          } catch (err: any) {
+            showToast(`Failed to rotate: ${err.message}`, "error");
+          }
+          break;
+
+        case "rotate-180":
+          if (!activeProject) return;
+          try {
+            await rotateProject(activeProject.id, 180);
+            showToast("Image rotated 180°", "info");
+            forgeEvents.emit(FORGE_EVENTS.FIT_TO_SCREEN);
+          } catch (err: any) {
+            showToast(`Failed to rotate: ${err.message}`, "error");
+          }
+          break;
+
+        case "flip-horizontal":
+          if (!activeProject) return;
+          try {
+            await flipProject(activeProject.id, "horizontal");
+            showToast("Image flipped horizontally", "info");
+            forgeEvents.emit(FORGE_EVENTS.FIT_TO_SCREEN);
+          } catch (err: any) {
+            showToast(`Failed to flip: ${err.message}`, "error");
+          }
+          break;
+
+        case "flip-vertical":
+          if (!activeProject) return;
+          try {
+            await flipProject(activeProject.id, "vertical");
+            showToast("Image flipped vertically", "info");
+            forgeEvents.emit(FORGE_EVENTS.FIT_TO_SCREEN);
+          } catch (err: any) {
+            showToast(`Failed to flip: ${err.message}`, "error");
+          }
+          break;
+
         case "export-to-clipboard":
           if (!activeProject) return;
           window.dispatchEvent(new CustomEvent("forge:export-to-clipboard"));
@@ -398,5 +456,7 @@ export const useMenuHandler = () => {
     setSnapToLayers,
     addRecentProject,
     syncSmartObject,
+    rotateProject,
+    flipProject,
   ]);
 };

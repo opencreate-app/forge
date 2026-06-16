@@ -10,6 +10,56 @@ import { ForgeEngine } from "@core/engine/ForgeEngine";
 
 export * from "./layerStylesStore";
 
+const transformDataUrl = async (
+  dataUrl: string,
+  op: "rotate90cw" | "rotate90ccw" | "rotate180" | "flipH" | "flipV"
+): Promise<string> => {
+  if (!dataUrl) return dataUrl;
+  try {
+    const img = await loadImage(dataUrl);
+    if (img.naturalWidth === 0 || img.naturalHeight === 0) return dataUrl;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+
+    if (op === "rotate90cw" || op === "rotate90ccw") {
+      canvas.width = h;
+      canvas.height = w;
+    } else {
+      canvas.width = w;
+      canvas.height = h;
+    }
+
+    ctx.save();
+    if (op === "rotate90cw") {
+      ctx.translate(h, 0);
+      ctx.rotate(Math.PI / 2);
+    } else if (op === "rotate90ccw") {
+      ctx.translate(0, w);
+      ctx.rotate(-Math.PI / 2);
+    } else if (op === "rotate180") {
+      ctx.translate(w, h);
+      ctx.rotate(Math.PI);
+    } else if (op === "flipH") {
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+    } else if (op === "flipV") {
+      ctx.translate(0, h);
+      ctx.scale(1, -1);
+    }
+
+    ctx.drawImage(img, 0, 0);
+    ctx.restore();
+    return canvas.toDataURL("image/png");
+  } catch (e) {
+    console.error("Failed to transform image data:", e);
+    return dataUrl;
+  }
+};
+
 /**
  * Represents a formatted segment of text with specific styling.
  */
@@ -346,6 +396,10 @@ interface ProjectState {
     newHeight: number,
     resample: "nearest" | "bilinear",
   ) => Promise<void>;
+  /** Rotates the project (90 CW, 90 CCW, or 180) and all its elements. */
+  rotateProject: (projectId: string, angle: 90 | 180 | 270) => Promise<void>;
+  /** Flips the project horizontally or vertically. */
+  flipProject: (projectId: string, direction: "horizontal" | "vertical") => Promise<void>;
 }
 
 const getMaxHistory = () => usePreferencesStore.getState().historyLimit;
@@ -1899,7 +1953,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ),
       };
     }),
-
   resizeProject: async (projectId, newWidth, newHeight, resample) => {
     const project = get().projects.find((p) => p.id === projectId);
     if (!project) return;
@@ -2103,6 +2156,574 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             layers: scaledLayers,
             guides: scaledGuides,
             selection: scaledSelection,
+            undoStack: newUndoStack,
+            redoStack: [],
+            isDirty: true,
+          };
+        }
+        return p;
+      });
+
+      return { projects: updatedProjects };
+    });
+  },
+
+  rotateProject: async (projectId, angle) => {
+    const project = get().projects.find((p) => p.id === projectId);
+    if (!project) return;
+
+    const oldWidth = project.width;
+    const oldHeight = project.height;
+
+    let newWidth = oldWidth;
+    let newHeight = oldHeight;
+    let op: "rotate90cw" | "rotate90ccw" | "rotate180" = "rotate180";
+
+    if (angle === 90) {
+      newWidth = oldHeight;
+      newHeight = oldWidth;
+      op = "rotate90cw";
+    } else if (angle === 270) {
+      newWidth = oldHeight;
+      newHeight = oldWidth;
+      op = "rotate90ccw";
+    } else if (angle === 180) {
+      op = "rotate180";
+    }
+
+    // 1. Snapshot for history
+    const historyState = createHistoryState(project);
+    const historyEntry: HistoryEntry = {
+      description: `Rotate Image ${angle}°`,
+      state: historyState,
+    };
+
+    // 2. Map and transform layers
+    const rotatedLayers = await Promise.all(
+      project.layers.map(async (layer) => {
+        let nx = layer.x;
+        let ny = layer.y;
+        let nw = layer.width;
+        let nh = layer.height;
+        let nRot = layer.rotation || 0;
+
+        if (layer.type === "raster" || layer.type === "smart_object") {
+          if (angle === 90) {
+            nw = layer.height;
+            nh = layer.width;
+            nx = oldHeight - layer.y - layer.height;
+            ny = layer.x;
+          } else if (angle === 270) {
+            nw = layer.height;
+            nh = layer.width;
+            nx = layer.y;
+            ny = oldWidth - layer.x - layer.width;
+          } else if (angle === 180) {
+            nx = oldWidth - layer.x - layer.width;
+            ny = oldHeight - layer.y - layer.height;
+          }
+        } else {
+          const lcx = layer.x + layer.width / 2;
+          const lcy = layer.y + layer.height / 2;
+          let nlcx = lcx;
+          let nlcy = lcy;
+
+          if (angle === 90) {
+            nlcx = oldHeight - lcy;
+            nlcy = lcx;
+            nRot = (nRot + 90) % 360;
+          } else if (angle === 270) {
+            nlcx = lcy;
+            nlcy = oldWidth - lcx;
+            nRot = (nRot + 270) % 360;
+          } else if (angle === 180) {
+            nlcx = oldWidth - lcx;
+            nlcy = oldHeight - lcy;
+            nRot = (nRot + 180) % 360;
+          }
+          nx = nlcx - layer.width / 2;
+          ny = nlcy - layer.height / 2;
+        }
+
+        let updatedData = layer.data;
+        if (updatedData && (layer.type === "raster" || layer.type === "smart_object")) {
+          updatedData = await transformDataUrl(updatedData, op);
+        }
+
+        let updatedDataOriginal = layer.dataOriginal;
+        if (updatedDataOriginal) {
+          updatedDataOriginal = await transformDataUrl(updatedDataOriginal, op);
+        }
+
+        let updatedOriginalTransform = layer.originalTransform;
+        if (layer.originalTransform) {
+          let otData = layer.originalTransform.data;
+          if (otData) {
+            otData = await transformDataUrl(otData, op);
+          }
+          let otx = layer.originalTransform.x;
+          let oty = layer.originalTransform.y;
+          let otw = layer.originalTransform.width;
+          let oth = layer.originalTransform.height;
+          let otRot = layer.originalTransform.rotation || 0;
+
+          if (angle === 90) {
+            otw = layer.originalTransform.height;
+            oth = layer.originalTransform.width;
+            otx = oldHeight - layer.originalTransform.y - layer.originalTransform.height;
+            oty = layer.originalTransform.x;
+            otRot = (otRot + 90) % 360;
+          } else if (angle === 270) {
+            otw = layer.originalTransform.height;
+            oth = layer.originalTransform.width;
+            otx = layer.originalTransform.y;
+            oty = oldWidth - layer.originalTransform.x - layer.originalTransform.width;
+            otRot = (otRot + 270) % 360;
+          } else if (angle === 180) {
+            otx = oldWidth - layer.originalTransform.x - layer.originalTransform.width;
+            oty = oldHeight - layer.originalTransform.y - layer.originalTransform.height;
+            otRot = (otRot + 180) % 360;
+          }
+
+          updatedOriginalTransform = {
+            ...layer.originalTransform,
+            x: otx,
+            y: oty,
+            width: otw,
+            height: oth,
+            rotation: otRot,
+            data: otData,
+          };
+        }
+
+        let updatedMask = layer.mask;
+        if (layer.mask) {
+          let maskData = layer.mask.data;
+          if (maskData) {
+            maskData = await transformDataUrl(maskData, op);
+          }
+          let mx = layer.mask.x;
+          let my = layer.mask.y;
+          let mw = layer.mask.width;
+          let mh = layer.mask.height;
+
+          if (angle === 90) {
+            mw = layer.mask.height;
+            mh = layer.mask.width;
+            mx = oldHeight - layer.mask.y - layer.mask.height;
+            my = layer.mask.x;
+          } else if (angle === 270) {
+            mw = layer.mask.height;
+            mh = layer.mask.width;
+            mx = layer.mask.y;
+            my = oldWidth - layer.mask.x - layer.mask.width;
+          } else if (angle === 180) {
+            mx = oldWidth - layer.mask.x - layer.mask.width;
+            my = oldHeight - layer.mask.y - layer.mask.height;
+          }
+
+          updatedMask = {
+            ...layer.mask,
+            x: mx,
+            y: my,
+            width: mw,
+            height: mh,
+            data: maskData,
+          };
+        }
+
+        return {
+          ...layer,
+          x: nx,
+          y: ny,
+          width: nw,
+          height: nh,
+          rotation: nRot,
+          data: updatedData,
+          dataOriginal: updatedDataOriginal,
+          originalTransform: updatedOriginalTransform,
+          mask: updatedMask,
+        };
+      })
+    );
+
+    // 3. Map and transform guides
+    const rotatedGuides = (project.guides || []).map((guide) => {
+      let type = guide.type;
+      let pos = guide.position;
+
+      if (angle === 90) {
+        type = guide.type === "horizontal" ? "vertical" : "horizontal";
+        pos = guide.type === "horizontal" ? oldHeight - guide.position : guide.position;
+      } else if (angle === 270) {
+        type = guide.type === "horizontal" ? "vertical" : "horizontal";
+        pos = guide.type === "horizontal" ? guide.position : oldWidth - guide.position;
+      } else if (angle === 180) {
+        pos = guide.type === "horizontal" ? oldHeight - guide.position : oldWidth - guide.position;
+      }
+
+      return {
+        ...guide,
+        type,
+        position: pos,
+      };
+    });
+
+    // 4. Map and transform selection
+    let rotatedSelection = { ...project.selection };
+    if (project.selection.hasSelection) {
+      let sbounds = null;
+      if (project.selection.bounds) {
+        let sx = project.selection.bounds.x;
+        let sy = project.selection.bounds.y;
+        let sw = project.selection.bounds.width;
+        let sh = project.selection.bounds.height;
+
+        if (angle === 90) {
+          sw = project.selection.bounds.height;
+          sh = project.selection.bounds.width;
+          sx = oldHeight - project.selection.bounds.y - project.selection.bounds.height;
+          sy = project.selection.bounds.x;
+        } else if (angle === 270) {
+          sw = project.selection.bounds.height;
+          sh = project.selection.bounds.width;
+          sx = project.selection.bounds.y;
+          sy = oldWidth - project.selection.bounds.x - project.selection.bounds.width;
+        } else if (angle === 180) {
+          sx = oldWidth - project.selection.bounds.x - project.selection.bounds.width;
+          sy = oldHeight - project.selection.bounds.y - project.selection.bounds.height;
+        }
+
+        sbounds = { x: sx, y: sy, width: sw, height: sh };
+      }
+
+      let smask = project.selection.mask;
+      if (smask) {
+        smask = await transformDataUrl(smask, op);
+      }
+
+      let sfloating = project.selection.floatingLayer;
+      if (sfloating) {
+        let fx = sfloating.x;
+        let fy = sfloating.y;
+        let fw = sfloating.width;
+        let fh = sfloating.height;
+        let fRot = sfloating.rotation || 0;
+
+        if (sfloating.type === "raster" || sfloating.type === "smart_object") {
+          if (angle === 90) {
+            fw = sfloating.height;
+            fh = sfloating.width;
+            fx = oldHeight - sfloating.y - sfloating.height;
+            fy = sfloating.x;
+          } else if (angle === 270) {
+            fw = sfloating.height;
+            fh = sfloating.width;
+            fx = sfloating.y;
+            fy = oldWidth - sfloating.x - sfloating.width;
+          } else if (angle === 180) {
+            fx = oldWidth - sfloating.x - sfloating.width;
+            fy = oldHeight - sfloating.y - sfloating.height;
+          }
+        } else {
+          const lcx = sfloating.x + sfloating.width / 2;
+          const lcy = sfloating.y + sfloating.height / 2;
+          let nlcx = lcx;
+          let nlcy = lcy;
+
+          if (angle === 90) {
+            nlcx = oldHeight - lcy;
+            nlcy = lcx;
+            fRot = (fRot + 90) % 360;
+          } else if (angle === 270) {
+            nlcx = lcy;
+            nlcy = oldWidth - lcx;
+            fRot = (fRot + 270) % 360;
+          } else if (angle === 180) {
+            nlcx = oldWidth - lcx;
+            nlcy = oldHeight - lcy;
+            fRot = (fRot + 180) % 360;
+          }
+          fx = nlcx - sfloating.width / 2;
+          fy = nlcy - sfloating.height / 2;
+        }
+
+        let fdata = sfloating.data;
+        if (fdata) {
+          fdata = await transformDataUrl(fdata, op);
+        }
+
+        sfloating = {
+          ...sfloating,
+          x: fx,
+          y: fy,
+          width: fw,
+          height: fh,
+          rotation: fRot,
+          data: fdata,
+        };
+      }
+
+      rotatedSelection = {
+        ...project.selection,
+        bounds: sbounds,
+        mask: smask,
+        floatingLayer: sfloating,
+      };
+    }
+
+    set((state) => {
+      const updatedProjects = state.projects.map((p) => {
+        if (p.id === projectId) {
+          const newUndoStack = [...p.undoStack, historyEntry];
+          if (newUndoStack.length > getMaxHistory()) {
+            newUndoStack.shift();
+          }
+
+          return {
+            ...p,
+            width: newWidth,
+            height: newHeight,
+            layers: rotatedLayers,
+            guides: rotatedGuides,
+            selection: rotatedSelection,
+            undoStack: newUndoStack,
+            redoStack: [],
+            isDirty: true,
+          };
+        }
+        return p;
+      });
+
+      return { projects: updatedProjects };
+    });
+  },
+
+  flipProject: async (projectId, direction) => {
+    const project = get().projects.find((p) => p.id === projectId);
+    if (!project) return;
+
+    const oldWidth = project.width;
+    const oldHeight = project.height;
+
+    const op: "flipH" | "flipV" = direction === "horizontal" ? "flipH" : "flipV";
+
+    // 1. Snapshot for history
+    const historyState = createHistoryState(project);
+    const historyEntry: HistoryEntry = {
+      description: `Flip Image ${direction === "horizontal" ? "Horizontal" : "Vertical"}`,
+      state: historyState,
+    };
+
+    // 2. Map and transform layers
+    const flippedLayers = await Promise.all(
+      project.layers.map(async (layer) => {
+        let nx = layer.x;
+        let ny = layer.y;
+        let nRot = layer.rotation || 0;
+
+        if (layer.type === "raster" || layer.type === "smart_object") {
+          if (direction === "horizontal") {
+            nx = oldWidth - layer.x - layer.width;
+          } else {
+            ny = oldHeight - layer.y - layer.height;
+          }
+        } else {
+          const lcx = layer.x + layer.width / 2;
+          const lcy = layer.y + layer.height / 2;
+          let nlcx = lcx;
+          let nlcy = lcy;
+
+          if (direction === "horizontal") {
+            nlcx = oldWidth - lcx;
+            nRot = (180 - nRot + 360) % 360;
+          } else {
+            nlcy = oldHeight - lcy;
+            nRot = (360 - nRot) % 360;
+          }
+          nx = nlcx - layer.width / 2;
+          ny = nlcy - layer.height / 2;
+        }
+
+        let updatedData = layer.data;
+        if (updatedData && (layer.type === "raster" || layer.type === "smart_object")) {
+          updatedData = await transformDataUrl(updatedData, op);
+        }
+
+        let updatedDataOriginal = layer.dataOriginal;
+        if (updatedDataOriginal) {
+          updatedDataOriginal = await transformDataUrl(updatedDataOriginal, op);
+        }
+
+        let updatedOriginalTransform = layer.originalTransform;
+        if (layer.originalTransform) {
+          let otData = layer.originalTransform.data;
+          if (otData) {
+            otData = await transformDataUrl(otData, op);
+          }
+          let otx = layer.originalTransform.x;
+          let oty = layer.originalTransform.y;
+          let otRot = layer.originalTransform.rotation || 0;
+
+          if (direction === "horizontal") {
+            otx = oldWidth - layer.originalTransform.x - layer.originalTransform.width;
+            otRot = (180 - otRot + 360) % 360;
+          } else {
+            oty = oldHeight - layer.originalTransform.y - layer.originalTransform.height;
+            otRot = (360 - otRot) % 360;
+          }
+
+          updatedOriginalTransform = {
+            ...layer.originalTransform,
+            x: otx,
+            y: oty,
+            rotation: otRot,
+            data: otData,
+          };
+        }
+
+        let updatedMask = layer.mask;
+        if (layer.mask) {
+          let maskData = layer.mask.data;
+          if (maskData) {
+            maskData = await transformDataUrl(maskData, op);
+          }
+          let mx = layer.mask.x;
+          let my = layer.mask.y;
+
+          if (direction === "horizontal") {
+            mx = oldWidth - layer.mask.x - layer.mask.width;
+          } else {
+            my = oldHeight - layer.mask.y - layer.mask.height;
+          }
+
+          updatedMask = {
+            ...layer.mask,
+            x: mx,
+            y: my,
+            data: maskData,
+          };
+        }
+
+        return {
+          ...layer,
+          x: nx,
+          y: ny,
+          rotation: nRot,
+          data: updatedData,
+          dataOriginal: updatedDataOriginal,
+          originalTransform: updatedOriginalTransform,
+          mask: updatedMask,
+        };
+      })
+    );
+
+    // 3. Map and transform guides
+    const flippedGuides = (project.guides || []).map((guide) => {
+      let pos = guide.position;
+
+      if (direction === "horizontal" && guide.type === "vertical") {
+        pos = oldWidth - guide.position;
+      } else if (direction === "vertical" && guide.type === "horizontal") {
+        pos = oldHeight - guide.position;
+      }
+
+      return {
+        ...guide,
+        position: pos,
+      };
+    });
+
+    // 4. Map and transform selection
+    let flippedSelection = { ...project.selection };
+    if (project.selection.hasSelection) {
+      let sbounds = null;
+      if (project.selection.bounds) {
+        let sx = project.selection.bounds.x;
+        let sy = project.selection.bounds.y;
+
+        if (direction === "horizontal") {
+          sx = oldWidth - project.selection.bounds.x - project.selection.bounds.width;
+        } else {
+          sy = oldHeight - project.selection.bounds.y - project.selection.bounds.height;
+        }
+
+        sbounds = {
+          ...project.selection.bounds,
+          x: sx,
+          y: sy,
+        };
+      }
+
+      let smask = project.selection.mask;
+      if (smask) {
+        smask = await transformDataUrl(smask, op);
+      }
+
+      let sfloating = project.selection.floatingLayer;
+      if (sfloating) {
+        let fx = sfloating.x;
+        let fy = sfloating.y;
+        let fRot = sfloating.rotation || 0;
+
+        if (sfloating.type === "raster" || sfloating.type === "smart_object") {
+          if (direction === "horizontal") {
+            fx = oldWidth - sfloating.x - sfloating.width;
+          } else {
+            fy = oldHeight - sfloating.y - sfloating.height;
+          }
+        } else {
+          const lcx = sfloating.x + sfloating.width / 2;
+          const lcy = sfloating.y + sfloating.height / 2;
+          let nlcx = lcx;
+          let nlcy = lcy;
+
+          if (direction === "horizontal") {
+            nlcx = oldWidth - lcx;
+            fRot = (180 - fRot + 360) % 360;
+          } else {
+            nlcy = oldHeight - lcy;
+            fRot = (360 - fRot) % 360;
+          }
+          fx = nlcx - sfloating.width / 2;
+          fy = nlcy - sfloating.height / 2;
+        }
+
+        let fdata = sfloating.data;
+        if (fdata) {
+          fdata = await transformDataUrl(fdata, op);
+        }
+
+        sfloating = {
+          ...sfloating,
+          x: fx,
+          y: fy,
+          rotation: fRot,
+          data: fdata,
+        };
+      }
+
+      flippedSelection = {
+        ...project.selection,
+        bounds: sbounds,
+        mask: smask,
+        floatingLayer: sfloating,
+      };
+    }
+
+    set((state) => {
+      const updatedProjects = state.projects.map((p) => {
+        if (p.id === projectId) {
+          const newUndoStack = [...p.undoStack, historyEntry];
+          if (newUndoStack.length > getMaxHistory()) {
+            newUndoStack.shift();
+          }
+
+          return {
+            ...p,
+            layers: flippedLayers,
+            guides: flippedGuides,
+            selection: flippedSelection,
             undoStack: newUndoStack,
             redoStack: [],
             isDirty: true,

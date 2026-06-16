@@ -154,7 +154,39 @@ function createMenu(
           enabled: hasProject,
           click: () => win?.webContents.send("menu:action", "open-image-size-modal"),
         },
-        // { label: "Canvas Size...", enabled: false },
+        { type: "separator" },
+        {
+          label: "Rotate Image",
+          enabled: hasProject,
+          submenu: [
+            {
+              label: "90° Clockwise",
+              click: () => win?.webContents.send("menu:action", "rotate-90-cw"),
+            },
+            {
+              label: "90° Counter-Clockwise",
+              click: () => win?.webContents.send("menu:action", "rotate-90-ccw"),
+            },
+            {
+              label: "180°",
+              click: () => win?.webContents.send("menu:action", "rotate-180"),
+            },
+          ],
+        },
+        {
+          label: "Flip Image",
+          enabled: hasProject,
+          submenu: [
+            {
+              label: "Horizontal",
+              click: () => win?.webContents.send("menu:action", "flip-horizontal"),
+            },
+            {
+              label: "Vertical",
+              click: () => win?.webContents.send("menu:action", "flip-vertical"),
+            },
+          ],
+        },
       ],
     },
     {
