@@ -320,8 +320,8 @@ export class TextTool extends BaseTool {
     const showGuides = uiState.showGuides;
     const snapToGuides = uiState.snapToGuides;
 
-    const vSnaps = [0, context.project.width];
-    const hSnaps = [0, context.project.height];
+    const vSnaps = [0, context.project.width / 2, context.project.width];
+    const hSnaps = [0, context.project.height / 2, context.project.height];
 
     if (showGuides && snapToGuides) {
       const guides = context.project.guides || [];
@@ -425,8 +425,8 @@ export class TextTool extends BaseTool {
       let bestDiffY = Infinity;
       let bestGuideY = null;
 
-      const vSnaps = [0, context.project.width];
-      const hSnaps = [0, context.project.height];
+      const vSnaps = [0, context.project.width / 2, context.project.width];
+      const hSnaps = [0, context.project.height / 2, context.project.height];
 
       if (showGuides && snapToGuides) {
         vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
@@ -558,7 +558,7 @@ export class TextTool extends BaseTool {
       let bestDiffX = Infinity;
       let bestGuideX = null;
 
-      const vSnapsCurrent = [0, context.project.width];
+      const vSnapsCurrent = [0, context.project.width / 2, context.project.width];
       if (showGuides && snapToGuides) {
         vSnapsCurrent.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
       }
@@ -587,7 +587,7 @@ export class TextTool extends BaseTool {
       let bestDiffY = Infinity;
       let bestGuideY = null;
 
-      const hSnapsCurrent = [0, context.project.height];
+      const hSnapsCurrent = [0, context.project.height / 2, context.project.height];
       if (showGuides && snapToGuides) {
         hSnapsCurrent.push(
           ...guides.filter((g) => g.type === "horizontal").map((g) => g.position),
@@ -625,8 +625,8 @@ export class TextTool extends BaseTool {
       let bestDiffY = Infinity;
       let bestGuideY = null;
 
-      const vSnapsCreate = [0, context.project.width];
-      const hSnapsCreate = [0, context.project.height];
+      const vSnapsCreate = [0, context.project.width / 2, context.project.width];
+      const hSnapsCreate = [0, context.project.height / 2, context.project.height];
 
       if (showGuides && snapToGuides) {
         vSnapsCreate.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));

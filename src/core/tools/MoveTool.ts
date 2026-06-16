@@ -189,8 +189,8 @@ export class MoveTool extends BaseTool {
         const guides = project.guides || [];
 
         // 1. Collect potential snap positions
-        const vSnaps = [0, project.width];
-        const hSnaps = [0, project.height];
+        const vSnaps = [0, project.width / 2, project.width];
+        const hSnaps = [0, project.height / 2, project.height];
 
         if (showGuides && snapToGuides) {
           vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));

@@ -351,8 +351,8 @@ export class CropTool extends BaseTool {
       const projectW = context.project.width;
       const projectH = context.project.height;
 
-      // Vertical snap (Canvas Edges)
-      const vEdges = [0, projectW];
+      // Vertical snap (Canvas Edges & Center)
+      const vEdges = [0, projectW / 2, projectW];
       for (const edge of vEdges) {
         for (const p of transformed) {
           if (Math.abs(p.x - edge) < snapMargin) {
@@ -366,8 +366,8 @@ export class CropTool extends BaseTool {
         if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
       }
 
-      // Horizontal snap (Canvas Edges)
-      const hEdges = [0, projectH];
+      // Horizontal snap (Canvas Edges & Center)
+      const hEdges = [0, projectH / 2, projectH];
       for (const edge of hEdges) {
         for (const p of transformed) {
           if (Math.abs(p.y - edge) < snapMargin) {
@@ -470,10 +470,13 @@ export class CropTool extends BaseTool {
 
       const potentialSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
-      // 1. Snap to Canvas Edges
+      // 1. Snap to Canvas Edges & Center
       if (Math.abs(targetMouseX - 0) < snapMargin) {
         targetMouseX = 0;
         potentialSnapLines.push({ type: "vertical", position: 0 });
+      } else if (Math.abs(targetMouseX - projectW / 2) < snapMargin) {
+        targetMouseX = projectW / 2;
+        potentialSnapLines.push({ type: "vertical", position: projectW / 2 });
       } else if (Math.abs(targetMouseX - projectW) < snapMargin) {
         targetMouseX = projectW;
         potentialSnapLines.push({ type: "vertical", position: projectW });
@@ -482,6 +485,9 @@ export class CropTool extends BaseTool {
       if (Math.abs(targetMouseY - 0) < snapMargin) {
         targetMouseY = 0;
         potentialSnapLines.push({ type: "horizontal", position: 0 });
+      } else if (Math.abs(targetMouseY - projectH / 2) < snapMargin) {
+        targetMouseY = projectH / 2;
+        potentialSnapLines.push({ type: "horizontal", position: projectH / 2 });
       } else if (Math.abs(targetMouseY - projectH) < snapMargin) {
         targetMouseY = projectH;
         potentialSnapLines.push({ type: "horizontal", position: projectH });

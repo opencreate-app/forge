@@ -60,8 +60,8 @@ export class SelectTool extends BaseTool {
     const showGuides = uiState.showGuides;
     const snapToGuides = uiState.snapToGuides;
 
-    const vSnaps = [0, context.project.width];
-    const hSnaps = [0, context.project.height];
+    const vSnaps = [0, context.project.width / 2, context.project.width];
+    const hSnaps = [0, context.project.height / 2, context.project.height];
 
     if (showGuides && snapToGuides) {
       const guides = context.project.guides || [];
@@ -130,7 +130,7 @@ export class SelectTool extends BaseTool {
       let bestDiffX = Infinity;
       let bestGuideX = null;
 
-      const vSnaps = [0, context.project.width];
+      const vSnaps = [0, context.project.width / 2, context.project.width];
       if (showGuides && snapToGuides) {
         vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
       }
@@ -154,7 +154,7 @@ export class SelectTool extends BaseTool {
       let bestDiffY = Infinity;
       let bestGuideY = null;
 
-      const hSnaps = [0, context.project.height];
+      const hSnaps = [0, context.project.height / 2, context.project.height];
       if (showGuides && snapToGuides) {
         hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
       }
@@ -199,8 +199,8 @@ export class SelectTool extends BaseTool {
       let bestDiffY = Infinity;
       let bestGuideY = null;
 
-      const vSnaps = [0, context.project.width];
-      const hSnaps = [0, context.project.height];
+      const vSnaps = [0, context.project.width / 2, context.project.width];
+      const hSnaps = [0, context.project.height / 2, context.project.height];
 
       if (showGuides && snapToGuides) {
         vSnaps.push(...guides.filter(g => g.type === "vertical").map(g => g.position));
