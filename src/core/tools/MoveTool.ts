@@ -154,12 +154,14 @@ export class MoveTool extends BaseTool {
     this.activeSnapLines = [];
 
     // --- GUIDE SNAPPING LOGIC ---
-    const showGuides = useUIStore.getState().showGuides;
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
     const movingLayers = this.isFloating
       ? [project.selection.floatingLayer!]
       : project.layers.filter((l) => this.movingLayerIds.includes(l.id));
 
-    if (showGuides && movingLayers.length > 0) {
+    if (showGuides && snapToGuides && movingLayers.length > 0) {
       // Calculate aggregate bounding box of all moving layers at their initial positions
       let minX = Infinity,
         minY = Infinity,

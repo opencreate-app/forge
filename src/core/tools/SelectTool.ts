@@ -56,8 +56,11 @@ export class SelectTool extends BaseTool {
     let startX = x;
     let startY = y;
 
-    const showGuides = useUIStore.getState().showGuides;
-    if (showGuides) {
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
+
+    if (showGuides && snapToGuides) {
       const snapMargin = 5 / context.project.zoom;
       const guides = context.project.guides || [];
       const vSnaps = [0, context.project.width, ...guides.filter(g => g.type === "vertical").map(g => g.position)];
@@ -105,7 +108,9 @@ export class SelectTool extends BaseTool {
   onMouseMove(e: MouseEvent, context: ToolContext): void {
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
     this.activeSnapLines = [];
-    const showGuides = useUIStore.getState().showGuides;
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
     const snapMargin = 5 / context.project.zoom;
     const guides = context.project.guides || [];
 
@@ -114,7 +119,7 @@ export class SelectTool extends BaseTool {
       let dx = x - this.selectionMoveStart.x;
       let dy = y - this.selectionMoveStart.y;
 
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         const b = this.selectionMoveStartBounds;
         const potentialX = b.x + dx;
         const potentialY = b.y + dy;
@@ -181,7 +186,7 @@ export class SelectTool extends BaseTool {
       let curX = x;
       let curY = y;
 
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         let bestDiffX = Infinity;
         let bestGuideX = null;
         let bestDiffY = Infinity;

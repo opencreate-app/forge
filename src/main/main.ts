@@ -57,7 +57,12 @@ function createSplashWindow() {
   splash.loadFile(splashPath);
 }
 
-function createMenu(hasProject = false, showRulers = true, showGuides = true) {
+function createMenu(
+  hasProject = false,
+  showRulers = true,
+  showGuides = true,
+  snapToGuides = true,
+) {
   const isDev = !!VITE_DEV_SERVER_URL;
 
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -207,6 +212,18 @@ function createMenu(hasProject = false, showRulers = true, showGuides = true) {
           enabled: hasProject,
           click: () => win?.webContents.send("menu:action", "toggle-guides"),
         },
+        {
+          label: "Snap to",
+          enabled: hasProject,
+          submenu: [
+            {
+              label: "Guides",
+              type: "checkbox",
+              checked: snapToGuides,
+              click: () => win?.webContents.send("menu:action", "toggle-snap-guides"),
+            },
+          ],
+        },
         { type: "separator" },
         {
           label: "Zoom In",
@@ -329,9 +346,12 @@ app.whenReady().then(() => {
     return filePaths[0];
   });
 
-  ipcMain.handle("app:updateMenu", (_event, { hasProject, showRulers, showGuides }) => {
-    createMenu(hasProject, showRulers, showGuides);
-  });
+  ipcMain.handle(
+    "app:updateMenu",
+    (_event, { hasProject, showRulers, showGuides, snapToGuides }) => {
+      createMenu(hasProject, showRulers, showGuides, snapToGuides);
+    },
+  );
 
   ipcMain.handle("dialog:saveFile", async (_event, { dataURL, defaultName, filters }) => {
     const { canceled, filePath } = await dialog.showSaveDialog({

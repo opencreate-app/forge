@@ -313,7 +313,9 @@ export class CropTool extends BaseTool {
     }
 
     this.activeSnapLines = [];
-    const showGuides = useUIStore.getState().showGuides;
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
     const snapMargin = 4 / context.project.zoom;
     const guides = context.project.guides || [];
 
@@ -328,7 +330,7 @@ export class CropTool extends BaseTool {
       t.x = startT.x + dx;
       t.y = startT.y + dy;
 
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         const rot = (t.rotation * Math.PI) / 180;
         const cos = Math.cos(rot);
         const sin = Math.sin(rot);
@@ -465,7 +467,7 @@ export class CropTool extends BaseTool {
 
       const potentialSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         // 1. Snap to Canvas Edges
         if (Math.abs(targetMouseX - 0) < snapMargin) {
           targetMouseX = 0;
@@ -580,7 +582,7 @@ export class CropTool extends BaseTool {
       }
 
       // Verify which snap lines are still valid after all constraints
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         const handles = this.getHandles(context);
         const currentHandle = handles.find((h) => h.name === this.activeHandle?.name);
         if (currentHandle) {

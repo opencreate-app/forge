@@ -4,7 +4,7 @@ import { createMockToolContext } from "../../mocks";
 
 vi.mock("@/renderer/store/uiStore", () => ({
   useUIStore: {
-    getState: vi.fn(() => ({ showGuides: true })),
+    getState: vi.fn(() => ({ showGuides: true, snapToGuides: true })),
     setState: vi.fn(),
   },
 }));

@@ -316,8 +316,10 @@ export class TextTool extends BaseTool {
     let startY = y;
     this.activeSnapLines = [];
 
-    const showGuides = useUIStore.getState().showGuides;
-    if (showGuides) {
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
+    if (showGuides && snapToGuides) {
       const snapMargin = 5 / context.project.zoom;
       const guides = context.project.guides || [];
       const vSnaps = [0, context.project.width, ...guides.filter(g => g.type === "vertical").map(g => g.position)];
@@ -361,7 +363,9 @@ export class TextTool extends BaseTool {
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
     this.activeSnapLines = [];
 
-    const showGuides = useUIStore.getState().showGuides;
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
     const snapMargin = 5 / context.project.zoom;
     const guides = context.project.guides || [];
     const vSnaps = [0, context.project.width, ...guides.filter(g => g.type === "vertical").map(g => g.position)];
@@ -413,7 +417,7 @@ export class TextTool extends BaseTool {
 
       const potentialSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         let bestDiffX = Infinity;
         let bestGuideX = null;
         let bestDiffY = Infinity;
@@ -508,7 +512,7 @@ export class TextTool extends BaseTool {
       });
 
       // Verify snap lines
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         const updatedLayer = { ...layer, x: newX, y: newY, width: newW, height: newH };
         const handles = this.getTransformHandles(updatedLayer, context.project.zoom);
         const currentHandle = handles.find((h) => h.name === this.resizeHandle);
@@ -535,7 +539,7 @@ export class TextTool extends BaseTool {
       let dx = x - this.startPos.x;
       let dy = y - this.startPos.y;
 
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         const potentialX = this.layerStartPos.x + dx;
         const potentialY = this.layerStartPos.y + dy;
 
@@ -599,7 +603,7 @@ export class TextTool extends BaseTool {
       let curX = x;
       let curY = y;
 
-      if (showGuides) {
+      if (showGuides && snapToGuides) {
         let bestDiffX = Infinity;
         let bestGuideX = null;
         let bestDiffY = Infinity;

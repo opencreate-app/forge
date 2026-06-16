@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SelectTool } from "@/core/tools/SelectTool";
 import { createMockToolContext } from "../../mocks";
+import { useUIStore } from "@/renderer/store/uiStore";
 
 vi.mock("@/renderer/store/uiStore", () => ({
   useUIStore: {
-    getState: vi.fn(() => ({ showGuides: true })),
+    getState: vi.fn(() => ({ showGuides: true, snapToGuides: true })),
     setState: vi.fn(),
   },
 }));
@@ -165,5 +166,20 @@ describe("SelectTool Snapping", () => {
     const lastCall = context.updateProject.mock.calls[context.updateProject.mock.calls.length - 1][0];
     expect(lastCall.selection.bounds.x + 10).toBe(1000);
     expect((tool as any).activeSnapLines).toContainEqual({ type: "vertical", position: 1000 });
+  });
+
+  it("should NOT snap if snapToGuides is false, even if guides are present", () => {
+    const tool = new SelectTool();
+    // Override mock to return snapToGuides: false
+    (useUIStore.getState as any).mockReturnValue({ showGuides: true, snapToGuides: false });
+    
+    context.screenToProject = vi.fn(() => ({ x: 102, y: 50 }));
+    tool.onMouseDown({ button: 0, offsetX: 0, offsetY: 0 } as any, context);
+    
+    expect((tool as any).startX).toBe(102); // Should NOT snap to 100
+    expect((tool as any).activeSnapLines).toHaveLength(0);
+    
+    // Restore mock for other tests if they share state (though describe block should be safe)
+    (useUIStore.getState as any).mockReturnValue({ showGuides: true, snapToGuides: true });
   });
 });

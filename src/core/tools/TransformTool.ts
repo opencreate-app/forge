@@ -375,7 +375,9 @@ export class TransformTool extends BaseTool {
     }
 
     this.activeSnapLines = [];
-    const showGuides = useUIStore.getState().showGuides;
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
     const snapMargin = 4 / context.project.zoom;
     const guides = context.project.guides || [];
 
@@ -400,7 +402,7 @@ export class TransformTool extends BaseTool {
         t.x = startT.x + dx;
         t.y = startT.y + dy;
 
-        if (showGuides) {
+        if (showGuides && snapToGuides) {
           const rot = (t.rotation * Math.PI) / 180;
           const cos = Math.cos(rot);
           const sin = Math.sin(rot);
@@ -477,7 +479,7 @@ export class TransformTool extends BaseTool {
         let target_px = px;
         let target_py = py;
 
-        if (showGuides) {
+        if (showGuides && snapToGuides) {
           // Snap mouse position to guides during scaling
           for (const guide of guides) {
             if (guide.type === "vertical" && Math.abs(target_px - guide.position) < snapMargin) {
