@@ -43,7 +43,9 @@ export class PencilTool extends BaseTool {
     const layer = context.project.layers.find((l) => l.id === activeLayerId);
     if (!layer) return;
 
-    if (layer.type !== "raster") {
+    const isEditingMask = context.project.activeMaskId === layer.id;
+
+    if (layer.type !== "raster" && !isEditingMask) {
       if (layer.type === "smart_object") {
         useUIStore
           .getState()
@@ -56,6 +58,8 @@ export class PencilTool extends BaseTool {
       }
       return;
     }
+
+    if (isEditingMask && !layer.mask) return;
 
     this.historySnapshot = createHistoryState(context.project);
 
