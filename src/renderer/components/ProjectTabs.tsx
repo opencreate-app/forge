@@ -8,7 +8,7 @@ import { Home, X, Box } from "lucide-react";
 
 const ProjectTabs: React.FC = () => {
   const { projects, removeProject, setActiveProject, reorderProjects } = useProjectStore();
-  const { activeTab, setActiveTab, tabHistory, removeFromHistory } = useUIStore();
+  const { activeTab, setActiveTab, removeFromHistory } = useUIStore();
 
   const tabElementsRef = React.useRef<Map<string, HTMLButtonElement>>(new Map());
 
@@ -76,12 +76,20 @@ const ProjectTabs: React.FC = () => {
       removeProject(id);
 
       if (activeTab === id) {
-        // Get the next best tab from history
-        const newHistory = tabHistory.filter((tid) => tid !== id);
-        const lastTab = newHistory[newHistory.length - 1] || "home";
-        setActiveTab(lastTab);
-        if (lastTab !== "home") {
-          setActiveProject(lastTab);
+        const idx = projects.findIndex((p) => p.id === id);
+        let nextTabId = "home";
+
+        if (idx !== -1) {
+          if (idx > 0) {
+            nextTabId = projects[idx - 1].id;
+          } else if (projects.length > 1) {
+            nextTabId = projects[1].id;
+          }
+        }
+
+        setActiveTab(nextTabId);
+        if (nextTabId !== "home") {
+          setActiveProject(nextTabId);
         }
       }
     },
@@ -90,7 +98,6 @@ const ProjectTabs: React.FC = () => {
       removeFromHistory,
       removeProject,
       activeTab,
-      tabHistory,
       setActiveTab,
       setActiveProject,
     ],
