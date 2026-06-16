@@ -145,7 +145,18 @@ function createMenu(
         },
       ],
     },
-    { label: "Image", submenu: [{ label: "Canvas Size...", enabled: false }] },
+    {
+      label: "Image",
+      submenu: [
+        {
+          label: "Image Size...",
+          accelerator: "CmdOrCtrl+Alt+I",
+          enabled: hasProject,
+          click: () => win?.webContents.send("menu:action", "open-image-size-modal"),
+        },
+        // { label: "Canvas Size...", enabled: false },
+      ],
+    },
     {
       label: "Layer",
       submenu: [
@@ -193,7 +204,7 @@ function createMenu(
       submenu: [
         ...(isDev
           ? ([
-              { role: "toggleDevTools" },
+              { role: "toggleDevTools", accelerator: "CmdOrCtrl+Alt+Shift+I" },
               { type: "separator" },
             ] as Electron.MenuItemConstructorOptions[])
           : []),

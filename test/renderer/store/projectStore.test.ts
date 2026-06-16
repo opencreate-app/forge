@@ -498,4 +498,105 @@ describe("projectStore", () => {
 
     expect(project.selectedLayerIds).toEqual([g1Copy?.id, l2Copy?.id]);
   });
+
+  it("should resize project, scale layer coordinates and dimensions, scale guides, and keep history", async () => {
+    const store = useProjectStore.getState();
+    const projectId = "p-resize";
+    store.addProject({
+      id: projectId,
+      name: "Test Resize Project",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "raster-layer",
+          name: "Raster Layer",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 10,
+          y: 20,
+          width: 50,
+          height: 60,
+          blendMode: "source-over",
+        },
+        {
+          id: "text-layer",
+          name: "Text Layer",
+          type: "text",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 5,
+          y: 5,
+          width: 40,
+          height: 20,
+          fontSize: 12,
+          tracking: 2,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "raster-layer",
+      selectedLayerIds: ["raster-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [
+        { id: "g-h", type: "horizontal", position: 30 },
+        { id: "g-v", type: "vertical", position: 40 },
+      ],
+      undoStack: [{ description: "Initial State", state: {} as any }],
+      redoStack: [],
+    });
+
+    // Resize from 100x100 to 200x300 (scaleX = 2, scaleY = 3)
+    await store.resizeProject(projectId, 200, 300, "nearest");
+
+    const project = useProjectStore.getState().projects.find((p) => p.id === projectId)!;
+    expect(project.width).toBe(200);
+    expect(project.height).toBe(300);
+
+    // Raster layer: original x: 10 -> 20, y: 20 -> 60, width: 50 -> 100, height: 60 -> 180
+    const raster = project.layers.find((l) => l.id === "raster-layer")!;
+    expect(raster.x).toBe(20);
+    expect(raster.y).toBe(60);
+    expect(raster.width).toBe(100);
+    expect(raster.height).toBe(180);
+
+    // Text layer: original x: 5 -> 10, y: 5 -> 15, width: 40 -> 80, height: 20 -> 60, fontSize: 12 -> 36, tracking: 2 -> 4
+    const text = project.layers.find((l) => l.id === "text-layer")!;
+    expect(text.x).toBe(10);
+    expect(text.y).toBe(15);
+    expect(text.width).toBe(80);
+    expect(text.height).toBe(60);
+    expect(text.fontSize).toBe(36);
+    expect(text.tracking).toBe(4);
+
+    // Guides: original horizontal position: 30 * 3 = 90, vertical position: 40 * 2 = 80
+    const gh = project.guides.find((g) => g.id === "g-h")!;
+    const gv = project.guides.find((g) => g.id === "g-v")!;
+    expect(gh.position).toBe(90);
+    expect(gv.position).toBe(80);
+
+    // History: should have pushed history entry
+    expect(project.undoStack).toHaveLength(2);
+    expect(project.undoStack[1].description).toBe("Image Size");
+
+    // Revert using undo
+    store.undo(projectId);
+    const revertedProject = useProjectStore.getState().projects.find((p) => p.id === projectId)!;
+    expect(revertedProject.width).toBe(100);
+    expect(revertedProject.height).toBe(100);
+
+    const revertedRaster = revertedProject.layers.find((l) => l.id === "raster-layer")!;
+    expect(revertedRaster.x).toBe(10);
+    expect(revertedRaster.y).toBe(20);
+    expect(revertedRaster.width).toBe(50);
+    expect(revertedRaster.height).toBe(60);
+  });
 });

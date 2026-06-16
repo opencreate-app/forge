@@ -5,7 +5,7 @@ import { create } from "zustand";
 import { usePreferencesStore } from "./preferencesStore";
 import { useUIStore } from "./uiStore";
 import { LayerStyles } from "./layerStylesStore";
-import { getCombinedStyledBounds } from "@utils/projectUtils";
+import { getCombinedStyledBounds, loadImage } from "@utils/projectUtils";
 import { ForgeEngine } from "@core/engine/ForgeEngine";
 
 export * from "./layerStylesStore";
@@ -339,6 +339,13 @@ interface ProjectState {
   undo: (projectId: string) => void;
   /** Advances to the next project state in the redo stack. */
   redo: (projectId: string) => void;
+  /** Resizes the project and all layers, guides, selection using the selected resampling method. */
+  resizeProject: (
+    projectId: string,
+    newWidth: number,
+    newHeight: number,
+    resample: "nearest" | "bilinear",
+  ) => Promise<void>;
 }
 
 const getMaxHistory = () => usePreferencesStore.getState().historyLimit;
@@ -1892,4 +1899,219 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ),
       };
     }),
+
+  resizeProject: async (projectId, newWidth, newHeight, resample) => {
+    const project = get().projects.find((p) => p.id === projectId);
+    if (!project) return;
+
+    const oldWidth = project.width;
+    const oldHeight = project.height;
+    if (oldWidth === newWidth && oldHeight === newHeight) return;
+
+    const scaleX = newWidth / oldWidth;
+    const scaleY = newHeight / oldHeight;
+
+    const resampleDataUrl = async (dataUrl: string, targetW: number, targetH: number): Promise<string> => {
+      if (!dataUrl) return dataUrl;
+      try {
+        const img = await loadImage(dataUrl);
+        if (img.naturalWidth === 0 || img.naturalHeight === 0) return dataUrl;
+        const canvas = document.createElement("canvas");
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.imageSmoothingEnabled = resample === "bilinear";
+          if (resample === "bilinear") {
+            ctx.imageSmoothingQuality = "high";
+          }
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+        }
+        return canvas.toDataURL("image/png");
+      } catch (e) {
+        console.error("Failed to resample image:", e);
+        return dataUrl;
+      }
+    };
+
+    // 1. Snapshot the state for history
+    const historyState = createHistoryState(project);
+    const historyEntry: HistoryEntry = {
+      description: "Image Size",
+      state: historyState,
+    };
+
+    // 2. Map layers and scale them
+    const scaledLayers = await Promise.all(
+      project.layers.map(async (layer) => {
+        const newLayerWidth = Math.max(1, Math.round(layer.width * scaleX));
+        const newLayerHeight = Math.max(1, Math.round(layer.height * scaleY));
+
+        let updatedData = layer.data;
+        if (layer.type === "raster" || layer.type === "smart_object") {
+          if (layer.data) {
+            updatedData = await resampleDataUrl(layer.data, newLayerWidth, newLayerHeight);
+          }
+        }
+
+        let updatedDataOriginal = layer.dataOriginal;
+        if (layer.dataOriginal) {
+          try {
+            const imgOriginal = await loadImage(layer.dataOriginal);
+            const newOrigW = Math.max(1, Math.round(imgOriginal.naturalWidth * scaleX));
+            const newOrigH = Math.max(1, Math.round(imgOriginal.naturalHeight * scaleY));
+            updatedDataOriginal = await resampleDataUrl(layer.dataOriginal, newOrigW, newOrigH);
+          } catch (err) {
+            console.error("Failed to scale dataOriginal:", err);
+          }
+        }
+
+        let updatedOriginalTransform = layer.originalTransform;
+        if (layer.originalTransform) {
+          const otW = Math.max(1, Math.round(layer.originalTransform.width * scaleX));
+          const otH = Math.max(1, Math.round(layer.originalTransform.height * scaleY));
+          let otData = layer.originalTransform.data;
+          if (otData) {
+            otData = await resampleDataUrl(otData, otW, otH);
+          }
+          updatedOriginalTransform = {
+            ...layer.originalTransform,
+            x: layer.originalTransform.x * scaleX,
+            y: layer.originalTransform.y * scaleY,
+            width: otW,
+            height: otH,
+            data: otData,
+          };
+        }
+
+        let updatedMask = layer.mask;
+        if (layer.mask) {
+          const maskW = Math.max(1, Math.round(layer.mask.width * scaleX));
+          const maskH = Math.max(1, Math.round(layer.mask.height * scaleY));
+          let maskData = layer.mask.data;
+          if (maskData) {
+            maskData = await resampleDataUrl(maskData, maskW, maskH);
+          }
+          updatedMask = {
+            ...layer.mask,
+            x: layer.mask.x * scaleX,
+            y: layer.mask.y * scaleY,
+            width: maskW,
+            height: maskH,
+            data: maskData,
+          };
+        }
+
+        let scaledFontSize = layer.fontSize;
+        if (scaledFontSize) {
+          scaledFontSize = Math.round(scaledFontSize * scaleY * 100) / 100;
+        }
+
+        let scaledTracking = layer.tracking;
+        if (scaledTracking) {
+          scaledTracking = Math.round(scaledTracking * scaleX * 100) / 100;
+        }
+
+        let scaledTextSpans = layer.textSpans;
+        if (scaledTextSpans) {
+          scaledTextSpans = scaledTextSpans.map((span) => ({
+            ...span,
+            fontSize: span.fontSize ? Math.round(span.fontSize * scaleY * 100) / 100 : undefined,
+          }));
+        }
+
+        return {
+          ...layer,
+          x: layer.x * scaleX,
+          y: layer.y * scaleY,
+          width: newLayerWidth,
+          height: newLayerHeight,
+          data: updatedData,
+          dataOriginal: updatedDataOriginal,
+          originalTransform: updatedOriginalTransform,
+          mask: updatedMask,
+          fontSize: scaledFontSize,
+          tracking: scaledTracking,
+          textSpans: scaledTextSpans,
+        };
+      })
+    );
+
+    // 3. Scale guides
+    const scaledGuides = (project.guides || []).map((guide) => ({
+      ...guide,
+      position: guide.type === "horizontal" ? guide.position * scaleY : guide.position * scaleX,
+    }));
+
+    // 4. Scale selection
+    let scaledSelection = { ...project.selection };
+    if (project.selection.hasSelection) {
+      let scaledBounds = null;
+      if (project.selection.bounds) {
+        scaledBounds = {
+          x: project.selection.bounds.x * scaleX,
+          y: project.selection.bounds.y * scaleY,
+          width: project.selection.bounds.width * scaleX,
+          height: project.selection.bounds.height * scaleY,
+        };
+      }
+
+      let scaledSelectionMask = project.selection.mask;
+      if (scaledSelectionMask) {
+        scaledSelectionMask = await resampleDataUrl(scaledSelectionMask, newWidth, newHeight);
+      }
+
+      let scaledFloatingLayer = project.selection.floatingLayer;
+      if (scaledFloatingLayer) {
+        const flW = Math.max(1, Math.round(scaledFloatingLayer.width * scaleX));
+        const flH = Math.max(1, Math.round(scaledFloatingLayer.height * scaleY));
+        let flData = scaledFloatingLayer.data;
+        if (flData) {
+          flData = await resampleDataUrl(flData, flW, flH);
+        }
+        scaledFloatingLayer = {
+          ...scaledFloatingLayer,
+          x: scaledFloatingLayer.x * scaleX,
+          y: scaledFloatingLayer.y * scaleY,
+          width: flW,
+          height: flH,
+          data: flData,
+        };
+      }
+
+      scaledSelection = {
+        ...project.selection,
+        bounds: scaledBounds,
+        mask: scaledSelectionMask,
+        floatingLayer: scaledFloatingLayer,
+      };
+    }
+
+    // 5. Update state
+    set((state) => {
+      const updatedProjects = state.projects.map((p) => {
+        if (p.id === projectId) {
+          const newUndoStack = [...p.undoStack, historyEntry];
+          if (newUndoStack.length > getMaxHistory()) {
+            newUndoStack.shift();
+          }
+
+          return {
+            ...p,
+            width: newWidth,
+            height: newHeight,
+            layers: scaledLayers,
+            guides: scaledGuides,
+            selection: scaledSelection,
+            undoStack: newUndoStack,
+            redoStack: [],
+            isDirty: true,
+          };
+        }
+        return p;
+      });
+
+      return { projects: updatedProjects };
+    });
+  },
 }));

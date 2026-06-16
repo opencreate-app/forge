@@ -245,6 +245,11 @@ export const useMenuHandler = () => {
           window.dispatchEvent(new CustomEvent("forge:open-export-modal"));
           break;
 
+        case "open-image-size-modal":
+          if (!activeProject) return;
+          window.dispatchEvent(new CustomEvent("forge:open-image-size-modal"));
+          break;
+
         case "export-to-clipboard":
           if (!activeProject) return;
           window.dispatchEvent(new CustomEvent("forge:export-to-clipboard"));
