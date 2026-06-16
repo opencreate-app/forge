@@ -585,19 +585,17 @@ export class CropTool extends BaseTool {
       }
 
       // Verify which snap lines are still valid after all constraints
-      if (showGuides && snapToGuides) {
-        const handles = this.getHandles(context);
-        const currentHandle = handles.find((h) => h.name === this.activeHandle?.name);
-        if (currentHandle) {
-          for (const line of potentialSnapLines) {
-            if (line.type === "vertical" && Math.abs(currentHandle.x - line.position) < 0.01) {
-              this.activeSnapLines.push(line);
-            } else if (
-              line.type === "horizontal" &&
-              Math.abs(currentHandle.y - line.position) < 0.01
-            ) {
-              this.activeSnapLines.push(line);
-            }
+      const handles = this.getHandles(context);
+      const currentHandle = handles.find((h) => h.name === this.activeHandle?.name);
+      if (currentHandle) {
+        for (const line of potentialSnapLines) {
+          if (line.type === "vertical" && Math.abs(currentHandle.x - line.position) < 0.01) {
+            this.activeSnapLines.push(line);
+          } else if (
+            line.type === "horizontal" &&
+            Math.abs(currentHandle.y - line.position) < 0.01
+          ) {
+            this.activeSnapLines.push(line);
           }
         }
       }

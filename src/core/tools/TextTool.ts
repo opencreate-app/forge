@@ -521,20 +521,18 @@ export class TextTool extends BaseTool {
       });
 
       // Verify snap lines
-      if (showGuides && snapToGuides) {
-        const updatedLayer = { ...layer, x: newX, y: newY, width: newW, height: newH };
-        const handles = this.getTransformHandles(updatedLayer, context.project.zoom);
-        const currentHandle = handles.find((h) => h.name === this.resizeHandle);
-        if (currentHandle) {
-          for (const line of potentialSnapLines) {
-            if (line.type === "vertical" && Math.abs(currentHandle.x - line.position) < 0.1) {
-              this.activeSnapLines.push(line);
-            } else if (
-              line.type === "horizontal" &&
-              Math.abs(currentHandle.y - line.position) < 0.1
-            ) {
-              this.activeSnapLines.push(line);
-            }
+      const updatedLayer = { ...layer, x: newX, y: newY, width: newW, height: newH };
+      const handles = this.getTransformHandles(updatedLayer, context.project.zoom);
+      const currentHandle = handles.find((h) => h.name === this.resizeHandle);
+      if (currentHandle) {
+        for (const line of potentialSnapLines) {
+          if (line.type === "vertical" && Math.abs(currentHandle.x - line.position) < 0.1) {
+            this.activeSnapLines.push(line);
+          } else if (
+            line.type === "horizontal" &&
+            Math.abs(currentHandle.y - line.position) < 0.1
+          ) {
+            this.activeSnapLines.push(line);
           }
         }
       }

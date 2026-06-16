@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CropTool } from "@/core/tools/CropTool";
 import { createMockToolContext } from "../../mocks";
+import { useUIStore } from "@/renderer/store/uiStore";
 
 vi.mock("@/renderer/store/uiStore", () => ({
   useUIStore: {
@@ -98,5 +99,28 @@ describe("CropTool Snapping Fix", () => {
     expect(br2.y).toBe(100);
     expect((tool as any).activeSnapLines).toContainEqual({ type: "vertical", position: 100 });
     expect((tool as any).activeSnapLines).toContainEqual({ type: "horizontal", position: 100 });
+  });
+
+  it("should show canvas snap feedback even if snapToGuides is false", () => {
+    const tool = new CropTool();
+    tool.onActivate(context);
+    
+    // Toggle snapToGuides OFF
+    (useUIStore.getState as any).mockReturnValue({ showGuides: true, snapToGuides: false });
+
+    // Drag top-left handle near project edge (0, 0)
+    // Click handle at 0, 0
+    context.screenToProject = vi.fn(() => ({ x: 0, y: 0 }));
+    tool.onMouseDown({ button: 0, offsetX: 0, offsetY: 0 } as any, context);
+    
+    // Move near 0, 0
+    context.screenToProject = vi.fn(() => ({ x: 2, y: 2 }));
+    tool.onMouseMove({ offsetX: 0, offsetY: 0 } as any, context);
+    
+    expect((tool as any).activeSnapLines).toContainEqual({ type: "vertical", position: 0 });
+    expect((tool as any).activeSnapLines).toContainEqual({ type: "horizontal", position: 0 });
+
+    // Restore mock
+    (useUIStore.getState as any).mockReturnValue({ showGuides: true, snapToGuides: true });
   });
 });
