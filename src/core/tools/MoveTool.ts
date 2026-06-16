@@ -161,7 +161,7 @@ export class MoveTool extends BaseTool {
       ? [project.selection.floatingLayer!]
       : project.layers.filter((l) => this.movingLayerIds.includes(l.id));
 
-    if (showGuides && snapToGuides && movingLayers.length > 0) {
+    if (movingLayers.length > 0) {
       // Calculate aggregate bounding box of all moving layers at their initial positions
       let minX = Infinity,
         minY = Infinity,
@@ -188,8 +188,17 @@ export class MoveTool extends BaseTool {
         const snapMargin = 4 / project.zoom;
         const guides = project.guides || [];
 
+        // 1. Collect potential snap positions
+        const vSnaps = [0, project.width];
+        const hSnaps = [0, project.height];
+
+        if (showGuides && snapToGuides) {
+          vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+          hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+        }
+
         // Vertical snapping
-        for (const guide of guides.filter((g) => g.type === "vertical")) {
+        for (const snapPos of vSnaps) {
           const centerX = (minX + maxX) / 2;
           const snapPoints = [
             { pos: minX + dx, offset: -minX }, // Left
@@ -198,16 +207,17 @@ export class MoveTool extends BaseTool {
           ];
 
           for (const pt of snapPoints) {
-            if (Math.abs(pt.pos - guide.position) < snapMargin) {
-              dx = guide.position + pt.offset;
-              this.activeSnapLines.push({ type: "vertical", position: guide.position });
+            if (Math.abs(pt.pos - snapPos) < snapMargin) {
+              dx = snapPos + pt.offset;
+              this.activeSnapLines.push({ type: "vertical", position: snapPos });
               break;
             }
           }
+          if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
         }
 
         // Horizontal snapping
-        for (const guide of guides.filter((g) => g.type === "horizontal")) {
+        for (const snapPos of hSnaps) {
           const centerY = (minY + maxY) / 2;
           const snapPoints = [
             { pos: minY + dy, offset: -minY }, // Top
@@ -216,12 +226,13 @@ export class MoveTool extends BaseTool {
           ];
 
           for (const pt of snapPoints) {
-            if (Math.abs(pt.pos - guide.position) < snapMargin) {
-              dy = guide.position + pt.offset;
-              this.activeSnapLines.push({ type: "horizontal", position: guide.position });
+            if (Math.abs(pt.pos - snapPos) < snapMargin) {
+              dy = snapPos + pt.offset;
+              this.activeSnapLines.push({ type: "horizontal", position: snapPos });
               break;
             }
           }
+          if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
         }
       }
     }

@@ -330,87 +330,90 @@ export class CropTool extends BaseTool {
       t.x = startT.x + dx;
       t.y = startT.y + dy;
 
-      if (showGuides && snapToGuides) {
-        const rot = (t.rotation * Math.PI) / 180;
-        const cos = Math.cos(rot);
-        const sin = Math.sin(rot);
+      const rot = (t.rotation * Math.PI) / 180;
+      const cos = Math.cos(rot);
+      const sin = Math.sin(rot);
 
-        const points = [
-          { x: -t.width * t.anchor.x * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TL
-          { x: t.width * (1 - t.anchor.x) * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TR
-          { x: t.width * (1 - t.anchor.x) * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BR
-          { x: -t.width * t.anchor.x * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BL
-          { x: 0, y: 0 }, // Center
-        ];
+      const points = [
+        { x: -t.width * t.anchor.x * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TL
+        { x: t.width * (1 - t.anchor.x) * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TR
+        { x: t.width * (1 - t.anchor.x) * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BR
+        { x: -t.width * t.anchor.x * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BL
+        { x: 0, y: 0 }, // Center
+      ];
 
-        const transformed = points.map((p) => ({
-          x: t.x + (p.x * cos - p.y * sin),
-          y: t.y + (p.x * sin + p.y * cos),
-        }));
+      const transformed = points.map((p) => ({
+        x: t.x + (p.x * cos - p.y * sin),
+        y: t.y + (p.x * sin + p.y * cos),
+      }));
 
-        // Canvas Edge Snapping (Move)
-        const projectW = context.project.width;
-        const projectH = context.project.height;
+      // Canvas Edge Snapping (Move)
+      const projectW = context.project.width;
+      const projectH = context.project.height;
 
-        // Vertical snap (Canvas Edges)
-        const vEdges = [0, projectW];
-        for (const edge of vEdges) {
+      // Vertical snap (Canvas Edges)
+      const vEdges = [0, projectW];
+      for (const edge of vEdges) {
+        for (const p of transformed) {
+          if (Math.abs(p.x - edge) < snapMargin) {
+            const diff = edge - p.x;
+            t.x += diff;
+            this.activeSnapLines.push({ type: "vertical", position: edge });
+            transformed.forEach((pt) => (pt.x += diff));
+            break;
+          }
+        }
+        if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
+      }
+
+      // Horizontal snap (Canvas Edges)
+      const hEdges = [0, projectH];
+      for (const edge of hEdges) {
+        for (const p of transformed) {
+          if (Math.abs(p.y - edge) < snapMargin) {
+            const diff = edge - p.y;
+            t.y += diff;
+            this.activeSnapLines.push({ type: "horizontal", position: edge });
+            transformed.forEach((pt) => (pt.y += diff));
+            break;
+          }
+        }
+        if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
+      }
+
+      // Vertical snap (Guides)
+      if (showGuides && snapToGuides && !this.activeSnapLines.some((l) => l.type === "vertical")) {
+        for (const guide of guides.filter((g) => g.type === "vertical")) {
           for (const p of transformed) {
-            if (Math.abs(p.x - edge) < snapMargin) {
-              const diff = edge - p.x;
+            if (Math.abs(p.x - guide.position) < snapMargin) {
+              const diff = guide.position - p.x;
               t.x += diff;
-              this.activeSnapLines.push({ type: "vertical", position: edge });
+              this.activeSnapLines.push({ type: "vertical", position: guide.position });
               transformed.forEach((pt) => (pt.x += diff));
               break;
             }
           }
           if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
         }
+      }
 
-        // Horizontal snap (Canvas Edges)
-        const hEdges = [0, projectH];
-        for (const edge of hEdges) {
+      // Horizontal snap (Guides)
+      if (
+        showGuides &&
+        snapToGuides &&
+        !this.activeSnapLines.some((l) => l.type === "horizontal")
+      ) {
+        for (const guide of guides.filter((g) => g.type === "horizontal")) {
           for (const p of transformed) {
-            if (Math.abs(p.y - edge) < snapMargin) {
-              const diff = edge - p.y;
+            if (Math.abs(p.y - guide.position) < snapMargin) {
+              const diff = guide.position - p.y;
               t.y += diff;
-              this.activeSnapLines.push({ type: "horizontal", position: edge });
+              this.activeSnapLines.push({ type: "horizontal", position: guide.position });
               transformed.forEach((pt) => (pt.y += diff));
               break;
             }
           }
           if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
-        }
-
-        // Vertical snap (Guides)
-        if (!this.activeSnapLines.some(l => l.type === "vertical")) {
-          for (const guide of guides.filter((g) => g.type === "vertical")) {
-            for (const p of transformed) {
-              if (Math.abs(p.x - guide.position) < snapMargin) {
-                const diff = guide.position - p.x;
-                t.x += diff;
-                this.activeSnapLines.push({ type: "vertical", position: guide.position });
-                transformed.forEach((pt) => (pt.x += diff));
-                break;
-              }
-            }
-            if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
-          }
-        }
-
-        // Horizontal snap (Guides)
-        if (!this.activeSnapLines.some(l => l.type === "horizontal")) {
-          for (const guide of guides.filter((g) => g.type === "horizontal")) {
-            for (const p of transformed) {
-              if (Math.abs(p.y - guide.position) < snapMargin) {
-                const diff = guide.position - p.y;
-                t.y += diff;
-                this.activeSnapLines.push({ type: "horizontal", position: guide.position });
-                break;
-              }
-            }
-            if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
-          }
         }
       }
 
@@ -467,25 +470,25 @@ export class CropTool extends BaseTool {
 
       const potentialSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
+      // 1. Snap to Canvas Edges
+      if (Math.abs(targetMouseX - 0) < snapMargin) {
+        targetMouseX = 0;
+        potentialSnapLines.push({ type: "vertical", position: 0 });
+      } else if (Math.abs(targetMouseX - projectW) < snapMargin) {
+        targetMouseX = projectW;
+        potentialSnapLines.push({ type: "vertical", position: projectW });
+      }
+
+      if (Math.abs(targetMouseY - 0) < snapMargin) {
+        targetMouseY = 0;
+        potentialSnapLines.push({ type: "horizontal", position: 0 });
+      } else if (Math.abs(targetMouseY - projectH) < snapMargin) {
+        targetMouseY = projectH;
+        potentialSnapLines.push({ type: "horizontal", position: projectH });
+      }
+
+      // 2. Snap to Guides
       if (showGuides && snapToGuides) {
-        // 1. Snap to Canvas Edges
-        if (Math.abs(targetMouseX - 0) < snapMargin) {
-          targetMouseX = 0;
-          potentialSnapLines.push({ type: "vertical", position: 0 });
-        } else if (Math.abs(targetMouseX - projectW) < snapMargin) {
-          targetMouseX = projectW;
-          potentialSnapLines.push({ type: "vertical", position: projectW });
-        }
-
-        if (Math.abs(targetMouseY - 0) < snapMargin) {
-          targetMouseY = 0;
-          potentialSnapLines.push({ type: "horizontal", position: 0 });
-        } else if (Math.abs(targetMouseY - projectH) < snapMargin) {
-          targetMouseY = projectH;
-          potentialSnapLines.push({ type: "horizontal", position: projectH });
-        }
-
-        // 2. Snap to Guides
         for (const guide of guides) {
           if (
             guide.type === "vertical" &&

@@ -60,39 +60,43 @@ export class SelectTool extends BaseTool {
     const showGuides = uiState.showGuides;
     const snapToGuides = uiState.snapToGuides;
 
+    const vSnaps = [0, context.project.width];
+    const hSnaps = [0, context.project.height];
+
     if (showGuides && snapToGuides) {
-      const snapMargin = 5 / context.project.zoom;
       const guides = context.project.guides || [];
-      const vSnaps = [0, context.project.width, ...guides.filter(g => g.type === "vertical").map(g => g.position)];
-      const hSnaps = [0, context.project.height, ...guides.filter(g => g.type === "horizontal").map(g => g.position)];
+      vSnaps.push(...guides.filter(g => g.type === "vertical").map(g => g.position));
+      hSnaps.push(...guides.filter(g => g.type === "horizontal").map(g => g.position));
+    }
 
-      let bestDiffX = Infinity;
-      let bestGuideX = null;
-      for (const snapPos of vSnaps) {
-        const diff = snapPos - startX;
-        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
-          bestDiffX = diff;
-          bestGuideX = snapPos;
-        }
-      }
-      if (bestGuideX !== null) {
-        startX = bestGuideX;
-        this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
-      }
+    const snapMargin = 5 / context.project.zoom;
 
-      let bestDiffY = Infinity;
-      let bestGuideY = null;
-      for (const snapPos of hSnaps) {
-        const diff = snapPos - startY;
-        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
-          bestDiffY = diff;
-          bestGuideY = snapPos;
-        }
+    let bestDiffX = Infinity;
+    let bestGuideX = null;
+    for (const snapPos of vSnaps) {
+      const diff = snapPos - startX;
+      if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
+        bestDiffX = diff;
+        bestGuideX = snapPos;
       }
-      if (bestGuideY !== null) {
-        startY = bestGuideY;
-        this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
+    }
+    if (bestGuideX !== null) {
+      startX = bestGuideX;
+      this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
+    }
+
+    let bestDiffY = Infinity;
+    let bestGuideY = null;
+    for (const snapPos of hSnaps) {
+      const diff = snapPos - startY;
+      if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
+        bestDiffY = diff;
+        bestGuideY = snapPos;
       }
+    }
+    if (bestGuideY !== null) {
+      startY = bestGuideY;
+      this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
     }
 
     this.startX = Math.floor(startX);
@@ -119,52 +123,56 @@ export class SelectTool extends BaseTool {
       let dx = x - this.selectionMoveStart.x;
       let dy = y - this.selectionMoveStart.y;
 
+      const b = this.selectionMoveStartBounds;
+      const potentialX = b.x + dx;
+      const potentialY = b.y + dy;
+
+      let bestDiffX = Infinity;
+      let bestGuideX = null;
+
+      const vSnaps = [0, context.project.width];
       if (showGuides && snapToGuides) {
-        const b = this.selectionMoveStartBounds;
-        const potentialX = b.x + dx;
-        const potentialY = b.y + dy;
+        vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+      }
 
-        let bestDiffX = Infinity;
-        let bestGuideX = null;
-
-        const vSnaps = [0, context.project.width, ...guides.filter((g) => g.type === "vertical").map(g => g.position)];
-
-        for (const snapPos of vSnaps) {
-          for (const relX of this.relativeSnapPointsX) {
-            const worldPos = potentialX + relX;
-            const diff = snapPos - worldPos;
-            if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
-              bestDiffX = diff;
-              bestGuideX = snapPos;
-            }
+      for (const snapPos of vSnaps) {
+        for (const relX of this.relativeSnapPointsX) {
+          const worldPos = potentialX + relX;
+          const diff = snapPos - worldPos;
+          if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
+            bestDiffX = diff;
+            bestGuideX = snapPos;
           }
         }
+      }
 
-        if (bestGuideX !== null) {
-          dx += bestDiffX;
-          this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
-        }
+      if (bestGuideX !== null) {
+        dx += bestDiffX;
+        this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
+      }
 
-        let bestDiffY = Infinity;
-        let bestGuideY = null;
+      let bestDiffY = Infinity;
+      let bestGuideY = null;
 
-        const hSnaps = [0, context.project.height, ...guides.filter((g) => g.type === "horizontal").map(g => g.position)];
+      const hSnaps = [0, context.project.height];
+      if (showGuides && snapToGuides) {
+        hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+      }
 
-        for (const snapPos of hSnaps) {
-          for (const relY of this.relativeSnapPointsY) {
-            const worldPos = potentialY + relY;
-            const diff = snapPos - worldPos;
-            if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
-              bestDiffY = diff;
-              bestGuideY = snapPos;
-            }
+      for (const snapPos of hSnaps) {
+        for (const relY of this.relativeSnapPointsY) {
+          const worldPos = potentialY + relY;
+          const diff = snapPos - worldPos;
+          if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
+            bestDiffY = diff;
+            bestGuideY = snapPos;
           }
         }
+      }
 
-        if (bestGuideY !== null) {
-          dy += bestDiffY;
-          this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
-        }
+      if (bestGuideY !== null) {
+        dy += bestDiffY;
+        this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
       }
 
       const newBounds = {
@@ -186,39 +194,42 @@ export class SelectTool extends BaseTool {
       let curX = x;
       let curY = y;
 
+      let bestDiffX = Infinity;
+      let bestGuideX = null;
+      let bestDiffY = Infinity;
+      let bestGuideY = null;
+
+      const vSnaps = [0, context.project.width];
+      const hSnaps = [0, context.project.height];
+
       if (showGuides && snapToGuides) {
-        let bestDiffX = Infinity;
-        let bestGuideX = null;
-        let bestDiffY = Infinity;
-        let bestGuideY = null;
+        vSnaps.push(...guides.filter(g => g.type === "vertical").map(g => g.position));
+        hSnaps.push(...guides.filter(g => g.type === "horizontal").map(g => g.position));
+      }
 
-        const vSnaps = [0, context.project.width, ...guides.filter(g => g.type === "vertical").map(g => g.position)];
-        const hSnaps = [0, context.project.height, ...guides.filter(g => g.type === "horizontal").map(g => g.position)];
+      for (const snapPos of vSnaps) {
+        const diff = snapPos - curX;
+        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
+          bestDiffX = diff;
+          bestGuideX = snapPos;
+        }
+      }
 
-        for (const snapPos of vSnaps) {
-          const diff = snapPos - curX;
-          if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
-            bestDiffX = diff;
-            bestGuideX = snapPos;
-          }
+      for (const snapPos of hSnaps) {
+        const diff = snapPos - curY;
+        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
+          bestDiffY = diff;
+          bestGuideY = snapPos;
         }
+      }
 
-        for (const snapPos of hSnaps) {
-          const diff = snapPos - curY;
-          if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
-            bestDiffY = diff;
-            bestGuideY = snapPos;
-          }
-        }
-
-        if (bestGuideX !== null) {
-          curX = bestGuideX;
-          this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
-        }
-        if (bestGuideY !== null) {
-          curY = bestGuideY;
-          this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
-        }
+      if (bestGuideX !== null) {
+        curX = bestGuideX;
+        this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
+      }
+      if (bestGuideY !== null) {
+        curY = bestGuideY;
+        this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
       }
 
       curX = Math.floor(curX);

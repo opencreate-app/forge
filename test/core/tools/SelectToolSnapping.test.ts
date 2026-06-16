@@ -168,18 +168,27 @@ describe("SelectTool Snapping", () => {
     expect((tool as any).activeSnapLines).toContainEqual({ type: "vertical", position: 1000 });
   });
 
-  it("should NOT snap if snapToGuides is false, even if guides are present", () => {
+  it("should NOT snap to guides if snapToGuides is false, but SHOULD snap to canvas edges", () => {
     const tool = new SelectTool();
+    context.project.width = 1000;
+    context.project.height = 1000;
+    
     // Override mock to return snapToGuides: false
     (useUIStore.getState as any).mockReturnValue({ showGuides: true, snapToGuides: false });
     
+    // 1. Try snapping to vertical guide (100) -> 102
     context.screenToProject = vi.fn(() => ({ x: 102, y: 50 }));
     tool.onMouseDown({ button: 0, offsetX: 0, offsetY: 0 } as any, context);
-    
     expect((tool as any).startX).toBe(102); // Should NOT snap to 100
     expect((tool as any).activeSnapLines).toHaveLength(0);
     
-    // Restore mock for other tests if they share state (though describe block should be safe)
+    // 2. Try snapping to canvas edge (0) -> 2
+    context.screenToProject = vi.fn(() => ({ x: 2, y: 50 }));
+    tool.onMouseDown({ button: 0, offsetX: 0, offsetY: 0 } as any, context);
+    expect((tool as any).startX).toBe(0); // SHOULD snap to 0
+    expect((tool as any).activeSnapLines).toContainEqual({ type: "vertical", position: 0 });
+    
+    // Restore mock
     (useUIStore.getState as any).mockReturnValue({ showGuides: true, snapToGuides: true });
   });
 });

@@ -402,49 +402,58 @@ export class TransformTool extends BaseTool {
         t.x = startT.x + dx;
         t.y = startT.y + dy;
 
+        const rot = (t.rotation * Math.PI) / 180;
+        const cos = Math.cos(rot);
+        const sin = Math.sin(rot);
+
+        const points = [
+          { x: -t.width * t.anchor.x * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TL
+          { x: t.width * (1 - t.anchor.x) * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TR
+          { x: t.width * (1 - t.anchor.x) * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BR
+          { x: -t.width * t.anchor.x * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BL
+          { x: 0, y: 0 }, // Center
+        ];
+
+        const transformed = points.map((p) => ({
+          x: t.x + (p.x * cos - p.y * sin),
+          y: t.y + (p.x * sin + p.y * cos),
+        }));
+
+        // 1. Collect potential snap positions
+        const vSnaps = [0, context.project.width];
+        const hSnaps = [0, context.project.height];
+
         if (showGuides && snapToGuides) {
-          const rot = (t.rotation * Math.PI) / 180;
-          const cos = Math.cos(rot);
-          const sin = Math.sin(rot);
+          vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+          hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+        }
 
-          const points = [
-            { x: -t.width * t.anchor.x * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TL
-            { x: t.width * (1 - t.anchor.x) * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TR
-            { x: t.width * (1 - t.anchor.x) * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BR
-            { x: -t.width * t.anchor.x * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BL
-            { x: 0, y: 0 }, // Center
-          ];
-
-          const transformed = points.map((p) => ({
-            x: t.x + (p.x * cos - p.y * sin),
-            y: t.y + (p.x * sin + p.y * cos),
-          }));
-
-          // Vertical snap
-          for (const guide of guides.filter((g) => g.type === "vertical")) {
-            for (const p of transformed) {
-              if (Math.abs(p.x - guide.position) < snapMargin) {
-                t.x += guide.position - p.x;
-                this.activeSnapLines.push({ type: "vertical", position: guide.position });
-                // Re-transform points if we shifted X
-                transformed.forEach((pt) => (pt.x += guide.position - p.x));
-                break;
-              }
+        // Vertical snap
+        for (const snapPos of vSnaps) {
+          for (const p of transformed) {
+            if (Math.abs(p.x - snapPos) < snapMargin) {
+              const diff = snapPos - p.x;
+              t.x += diff;
+              this.activeSnapLines.push({ type: "vertical", position: snapPos });
+              // Re-transform points if we shifted X
+              transformed.forEach((pt) => (pt.x += diff));
+              break;
             }
-            if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
           }
+          if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
+        }
 
-          // Horizontal snap
-          for (const guide of guides.filter((g) => g.type === "horizontal")) {
-            for (const p of transformed) {
-              if (Math.abs(p.y - guide.position) < snapMargin) {
-                t.y += guide.position - p.y;
-                this.activeSnapLines.push({ type: "horizontal", position: guide.position });
-                break;
-              }
+        // Horizontal snap
+        for (const snapPos of hSnaps) {
+          for (const p of transformed) {
+            if (Math.abs(p.y - snapPos) < snapMargin) {
+              const diff = snapPos - p.y;
+              t.y += diff;
+              this.activeSnapLines.push({ type: "horizontal", position: snapPos });
+              break;
             }
-            if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
           }
+          if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
         }
 
         changed = t.x !== startT.x || t.y !== startT.y;
@@ -479,19 +488,30 @@ export class TransformTool extends BaseTool {
         let target_px = px;
         let target_py = py;
 
+        // 1. Collect potential snap positions
+        const vSnaps = [0, context.project.width];
+        const hSnaps = [0, context.project.height];
+
         if (showGuides && snapToGuides) {
-          // Snap mouse position to guides during scaling
-          for (const guide of guides) {
-            if (guide.type === "vertical" && Math.abs(target_px - guide.position) < snapMargin) {
-              target_px = guide.position;
-              this.activeSnapLines.push({ type: "vertical", position: guide.position });
-            } else if (
-              guide.type === "horizontal" &&
-              Math.abs(target_py - guide.position) < snapMargin
-            ) {
-              target_py = guide.position;
-              this.activeSnapLines.push({ type: "horizontal", position: guide.position });
-            }
+          vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+          hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+        }
+
+        // Vertical snap
+        for (const snapPos of vSnaps) {
+          if (Math.abs(target_px - snapPos) < snapMargin) {
+            target_px = snapPos;
+            this.activeSnapLines.push({ type: "vertical", position: snapPos });
+            break;
+          }
+        }
+
+        // Horizontal snap
+        for (const snapPos of hSnaps) {
+          if (Math.abs(target_py - snapPos) < snapMargin) {
+            target_py = snapPos;
+            this.activeSnapLines.push({ type: "horizontal", position: snapPos });
+            break;
           }
         }
 
