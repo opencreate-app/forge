@@ -236,8 +236,16 @@ const BaseModal: React.FC<BaseModalProps> = ({
   const modalStyle: React.CSSProperties = {
     width: manualSize ? `${manualSize.width}px` : initialWidth,
     height: manualSize ? `${manualSize.height}px` : initialHeight,
-    left: centered && dragOffset.x === 0 && dragOffset.y === 0 ? undefined : `${dragOffset.x}px`,
-    top: centered && dragOffset.x === 0 && dragOffset.y === 0 ? undefined : `${dragOffset.y}px`,
+    left: draggable
+      ? centered && dragOffset.x === 0 && dragOffset.y === 0
+        ? undefined
+        : `${dragOffset.x}px`
+      : undefined,
+    top: draggable
+      ? centered && dragOffset.x === 0 && dragOffset.y === 0
+        ? undefined
+        : `${dragOffset.y}px`
+      : undefined,
     position: draggable ? "absolute" : "relative",
   };
 
