@@ -423,6 +423,10 @@ export const useMenuHandler = () => {
             new CustomEvent("forge:zoom-to", { detail: { zoom: -1 /* Trigger fit */ } }),
           );
           break;
+
+        case "about":
+          window.dispatchEvent(new CustomEvent("forge:open-about"));
+          break;
       }
     };
 

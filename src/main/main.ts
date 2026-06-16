@@ -303,7 +303,32 @@ function createMenu(
       ],
     },
     { label: "Window", submenu: [{ role: "minimize" }] },
-    { label: "Help", submenu: [{ label: "About OpenCreate Forge", enabled: false }] },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "About OpenCreate Forge",
+          click: () => win?.webContents.send("menu:action", "about"),
+        },
+        { type: "separator" },
+        {
+          label: "View on GitHub",
+          click: () => shell.openExternal("https://github.com/gabrielborgesweb/opencreate-forge"),
+        },
+        {
+          label: "Report an Issue",
+          click: () =>
+            shell.openExternal("https://github.com/gabrielborgesweb/opencreate-forge/issues"),
+        },
+        {
+          label: "Latest Release",
+          click: () =>
+            shell.openExternal(
+              "https://github.com/gabrielborgesweb/opencreate-forge/releases/latest",
+            ),
+        },
+      ],
+    },
   ];
 
   const menu = Menu.buildFromTemplate(template);
@@ -427,6 +452,13 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("app:getVersion", () => app.getVersion());
+
+  ipcMain.handle("shell:openExternal", (_event, url: string) => {
+    // Allowlist only http/https URLs to prevent arbitrary protocol execution
+    if (url.startsWith("https://") || url.startsWith("http://")) {
+      shell.openExternal(url);
+    }
+  });
 
   ipcMain.handle("dialog:saveProjectAs", async (_event, { jsonString, defaultName }) => {
     const { canceled, filePath } = await dialog.showSaveDialog({
