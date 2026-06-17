@@ -67,9 +67,23 @@ const CanvasViewport: React.FC = () => {
   }, []);
 
   // 2. Synchronizes the active project with the engine
+  const lastProjectRef = useRef<{ id: string; layers: any } | null>(null);
+
   useEffect(() => {
     if (engineRef.current && project) {
       engineRef.current.setProject(project);
+
+      const layersChanged = lastProjectRef.current?.layers !== project.layers;
+      const idChanged = lastProjectRef.current?.id !== project.id;
+
+      if (idChanged || layersChanged) {
+        // Preload project assets (including Google Fonts) as soon as the project changes/opens
+        engineRef.current.preloadImages().then(() => {
+          engineRef.current?.render();
+        });
+      }
+
+      lastProjectRef.current = { id: project.id, layers: project.layers };
     }
   }, [project]);
 

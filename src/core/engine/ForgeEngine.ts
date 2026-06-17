@@ -141,6 +141,7 @@ export class ForgeEngine {
     this.handleMouseMove = this.handleMouseMove.bind(this);
     this.handleMouseUp = this.handleMouseUp.bind(this);
     this.handleKeyDown = this.handleKeyDown.bind(this);
+    this.handleFontsLoaded = this.handleFontsLoaded.bind(this);
 
     if (!this.options.headless) {
       this.setupEventListeners();
@@ -198,6 +199,28 @@ export class ForgeEngine {
   private handleDuplicate = () => {
     this.duplicateLayer();
   };
+
+  private handleFontsLoaded() {
+    this.invalidateAllTextLayers();
+  }
+
+  /**
+   * Invalidates the cache for all text layers in the current project.
+   * Useful when fonts finish loading in the background.
+   */
+  public invalidateAllTextLayers() {
+    if (!this.project) return;
+    let hasText = false;
+    for (const layer of this.project.layers) {
+      if (layer.type === "text") {
+        this.invalidateLayerCache(layer.id);
+        hasText = true;
+      }
+    }
+    if (hasText && !this.options.headless) {
+      this.render();
+    }
+  }
 
   /**
    * Handles zoom requests from external events.
@@ -293,6 +316,10 @@ export class ForgeEngine {
     window.addEventListener("forge:zoom-to", this.handleZoomTo as any);
     window.addEventListener("forge:export-to-clipboard", this.handleExportToClipboard as any);
     window.addEventListener("forge:guide-drag-new", this.handleGuideDragNew as any);
+
+    if ((document as any).fonts) {
+      (document as any).fonts.addEventListener("loadingdone", this.handleFontsLoaded);
+    }
   }
 
   /**
@@ -325,8 +352,70 @@ export class ForgeEngine {
 
     // 1. Wait for fonts to be ready
     try {
+      // Find all unique font/weight combinations used in text layers (including inside textSpans)
+      const uniqueFonts = new Map<string, Set<string | number>>();
+      const textLayerIds: string[] = [];
+
+      for (const layer of this.project.layers) {
+        if (layer.type === "text") {
+          textLayerIds.push(layer.id);
+          const family = layer.fontFamily || "Arial";
+          const weight = layer.fontWeight || "400";
+          
+          if (!uniqueFonts.has(family)) uniqueFonts.set(family, new Set());
+          uniqueFonts.get(family)!.add(weight);
+
+          if (layer.textSpans) {
+            for (const span of layer.textSpans) {
+              const spanFamily = span.fontFamily || family;
+              const spanWeight = span.fontWeight || weight;
+              if (!uniqueFonts.has(spanFamily)) uniqueFonts.set(spanFamily, new Set());
+              uniqueFonts.get(spanFamily)!.add(spanWeight);
+            }
+          }
+        }
+      }
+
+      // Import useFontStore dynamically to avoid circular dependency or import issues in headless canvas contexts
+      const { useFontStore } = await import("@/renderer/store/fontStore");
+      const fontStore = useFontStore.getState();
+
+      // Ensure all google fonts are initialized in the store
+      await fontStore.loadGoogleFonts();
+
+      // Load each unique font face (family + weight)
+      const fontPromises: Promise<any>[] = [];
+      for (const [family, weights] of uniqueFonts.entries()) {
+        for (const weight of weights) {
+          fontPromises.push(fontStore.ensureFontLoaded(family, weight));
+        }
+      }
+      await Promise.all(fontPromises);
+
       if ((document as any).fonts) {
+        // Wait for all loaded fonts to be fully loaded/ready in document.fonts
+        const loadWaitPromises: Promise<any>[] = [];
+        for (const [family, weights] of uniqueFonts.entries()) {
+          for (const weight of weights) {
+            try {
+              loadWaitPromises.push((document as any).fonts.load(`${weight} 1em "${family}"`));
+            } catch (e) {
+              console.warn(`Failed waiting for font ready: ${family} (${weight})`, e);
+            }
+          }
+        }
+        await Promise.allSettled(loadWaitPromises);
         await (document as any).fonts.ready;
+      }
+
+      // Give a tiny safety window (e.g., 50ms) for the browser to register the font face in the drawing context
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // CRITICAL: Invalidate all text layer caches now that fonts are definitively loaded and registered.
+      // This is done AFTER the safety window to ensure the render loop doesn't re-cache a fallback font
+      // during the registration period.
+      for (const id of textLayerIds) {
+        this.invalidateLayerCache(id);
       }
     } catch (e) {
       console.warn("Font preloading failed", e);
@@ -1273,6 +1362,9 @@ export class ForgeEngine {
   public stopRenderLoop() {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
+    }
+    if ((document as any).fonts) {
+      (document as any).fonts.removeEventListener("loadingdone", this.handleFontsLoaded);
     }
     this.canvas.removeEventListener("wheel", this.handleWheel);
     this.canvas.removeEventListener("mousedown", this.handleMouseDown);
