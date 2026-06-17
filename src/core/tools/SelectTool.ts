@@ -99,8 +99,8 @@ export class SelectTool extends BaseTool {
       this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
     }
 
-    this.startX = Math.floor(startX);
-    this.startY = Math.floor(startY);
+    this.startX = Math.round(startX);
+    this.startY = Math.round(startY);
     this.currentX = this.startX;
     this.currentY = this.startY;
 
@@ -232,8 +232,8 @@ export class SelectTool extends BaseTool {
         this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
       }
 
-      curX = Math.floor(curX);
-      curY = Math.floor(curY);
+      curX = Math.round(curX);
+      curY = Math.round(curY);
 
       // Shift: 1:1 ratio
       if (e.shiftKey) {
