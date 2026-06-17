@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { ExternalLink, Heart, Zap, Code2, Download, GitBranch, InfoIcon, Bug } from "lucide-react";
 import BaseModal from "./BaseModal";
+import { MadeInBrasilSeal } from "../ui/Global";
 
 interface AboutModalProps {
   /** Flag showing if the modal is currently open */
@@ -238,6 +239,14 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             </button>
             .
           </p>
+        </div>
+
+        {/* Seal */}
+        <div className="flex justify-center">
+          <MadeInBrasilSeal
+            height={56}
+            className="scale-[1] hover:scale-[1.1] transition-transform duration-300 ease-[cubic-bezier(0.175,0.885,0.32,1.275)]"
+          />
         </div>
       </div>
     </BaseModal>
