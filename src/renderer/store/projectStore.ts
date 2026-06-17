@@ -12,7 +12,7 @@ export * from "./layerStylesStore";
 
 const transformDataUrl = async (
   dataUrl: string,
-  op: "rotate90cw" | "rotate90ccw" | "rotate180" | "flipH" | "flipV"
+  op: "rotate90cw" | "rotate90ccw" | "rotate180" | "flipH" | "flipV",
 ): Promise<string> => {
   if (!dataUrl) return dataUrl;
   try {
@@ -765,10 +765,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       let newUndoStack = project.undoStack;
       if (!skipHistory) {
         const historyState = createHistoryState(project);
-        newUndoStack = [
-          ...project.undoStack,
-          { description: "Add Guide", state: historyState },
-        ];
+        newUndoStack = [...project.undoStack, { description: "Add Guide", state: historyState }];
         if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
       }
 
@@ -795,10 +792,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       let newUndoStack = project.undoStack;
       if (!skipHistory) {
         const historyState = createHistoryState(project);
-        newUndoStack = [
-          ...project.undoStack,
-          { description: "Remove Guide", state: historyState },
-        ];
+        newUndoStack = [...project.undoStack, { description: "Remove Guide", state: historyState }];
         if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
       }
 
@@ -1968,7 +1962,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const scaleX = newWidth / oldWidth;
     const scaleY = newHeight / oldHeight;
 
-    const resampleDataUrl = async (dataUrl: string, targetW: number, targetH: number): Promise<string> => {
+    const resampleDataUrl = async (
+      dataUrl: string,
+      targetW: number,
+      targetH: number,
+    ): Promise<string> => {
       if (!dataUrl) return dataUrl;
       try {
         const img = await loadImage(dataUrl);
@@ -2091,7 +2089,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           tracking: scaledTracking,
           textSpans: scaledTextSpans,
         };
-      })
+      }),
     );
 
     // 3. Scale guides
@@ -2348,7 +2346,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           originalTransform: updatedOriginalTransform,
           mask: updatedMask,
         };
-      })
+      }),
     );
 
     // 3. Map and transform guides
@@ -2619,7 +2617,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           originalTransform: updatedOriginalTransform,
           mask: updatedMask,
         };
-      })
+      }),
     );
 
     // 3. Map and transform guides

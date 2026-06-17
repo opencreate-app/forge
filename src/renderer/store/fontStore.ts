@@ -354,9 +354,15 @@ export const useFontStore = create<FontState>((set, get) => ({
 
   ensureFontLoaded: async (family: string, weight?: string | number) => {
     const font = [...get().systemFonts, ...get().googleFonts].find((f) => f.family === family);
-    
+
     // If it's a known Google font, or it's not a known system font, treat it as a potential Google font
-    const isGoogle = font?.source === "google" || (!font && family !== "Arial" && family !== "serif" && family !== "sans-serif" && family !== "monospace");
+    const isGoogle =
+      font?.source === "google" ||
+      (!font &&
+        family !== "Arial" &&
+        family !== "serif" &&
+        family !== "sans-serif" &&
+        family !== "monospace");
 
     if (isGoogle) {
       const fontId = `google-font-${family.replace(/\s+/g, "-").toLowerCase()}`;
@@ -366,12 +372,12 @@ export const useFontStore = create<FontState>((set, get) => ({
         link.rel = "stylesheet";
         const weights = [100, 200, 300, 400, 500, 600, 700, 800, 900].join(";");
         link.href = `https://fonts.googleapis.com/css2?family=${family.replace(/\s+/g, "+")}:wght@${weights}&display=swap`;
-        
+
         const loadPromise = new Promise<void>((resolve) => {
           link.onload = () => resolve();
           link.onerror = () => resolve();
         });
-        
+
         document.head.appendChild(link);
         await loadPromise;
       }
