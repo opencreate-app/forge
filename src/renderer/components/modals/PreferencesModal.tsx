@@ -25,12 +25,12 @@ interface SettingMetadata {
 }
 
 const SETTINGS_METADATA: SettingMetadata[] = [
-  {
-    id: "forge:general:theme",
-    label: "Theme Style",
-    hint: "Choose between dark focus, high-contrast light theme, or follow system default.",
-    group: "General",
-  },
+  // {
+  //   id: "forge:general:theme",
+  //   label: "Theme Style",
+  //   hint: "Choose between dark focus, high-contrast light theme, or follow system default.",
+  //   group: "General",
+  // },
   {
     id: "forge:general:autosave",
     label: "Periodic Auto-Save",
@@ -97,6 +97,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({ isOpen, onCl
   const showToast = useUIStore((state) => state.showToast);
 
   // Local state to support Apply/Cancel conventions
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [localTheme, setLocalTheme] = useState<"dark" | "light" | "auto">(preferences.theme);
   const [localAutosave, setLocalAutosave] = useState(preferences.autosave);
   const [localAutosaveInterval, setLocalAutosaveInterval] = useState(preferences.autosaveInterval);
@@ -205,7 +206,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({ isOpen, onCl
               {activeTab === "General" && (
                 <div className="space-y-4">
                   {/* Theme Selection */}
-                  <PreferenceOption
+                  {/* <PreferenceOption
                     {...getMetadata("forge:general:theme")}
                     onHover={setHoveredHint}
                     hasChanges={changes.theme}
@@ -221,7 +222,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({ isOpen, onCl
                         <option value="light">Light Theme</option>
                       </select>
                     }
-                  />
+                  /> */}
 
                   {/* Auto-Save */}
                   <PreferenceOption

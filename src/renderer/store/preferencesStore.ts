@@ -34,7 +34,7 @@ interface PreferencesState {
 export const usePreferencesStore = create<PreferencesState>()(
   persist(
     (set) => ({
-      theme: "auto",
+      theme: "dark",
       autosave: false,
       autosaveInterval: 5,
       saveHistory: false,
