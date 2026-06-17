@@ -1,6 +1,20 @@
 /**
  * Purpose: Utility functions for checking the clipboard for image data and retrieving dimensions.
  */
+
+export const FORGE_CLIPBOARD_METADATA_KEY = "forge-clipboard-metadata";
+
+export interface ClipboardMetadata {
+  source: "forge-editor";
+  projectId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  // blobSize: number;
+  timestamp: number;
+}
+
 export const getClipboardImageDimensions = async (): Promise<{
   width: number;
   height: number;

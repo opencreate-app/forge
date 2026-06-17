@@ -21,6 +21,7 @@ import {
   // quantizeImageData,
   safeBase64FromBuffer,
 } from "../utils/imageUtils";
+import { FORGE_CLIPBOARD_METADATA_KEY, ClipboardMetadata } from "@/renderer/utils/clipboardUtils";
 import { getCombinedStyledBounds } from "@/renderer/utils/projectUtils";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TextLayer } from "../layers/TextLayer";
@@ -361,7 +362,7 @@ export class ForgeEngine {
           textLayerIds.push(layer.id);
           const family = layer.fontFamily || "Arial";
           const weight = layer.fontWeight || "400";
-          
+
           if (!uniqueFonts.has(family)) uniqueFonts.set(family, new Set());
           uniqueFonts.get(family)!.add(weight);
 
@@ -825,21 +826,22 @@ export class ForgeEngine {
       );
       if (!blob) return;
 
-      const metadata = {
+      const metadata: ClipboardMetadata = {
         source: "forge-editor",
         projectId: this.project.id,
         x: finalX,
         y: finalY,
+        width: sourceCanvas.width,
+        height: sourceCanvas.height,
+        // blobSize: blob.size,
+        timestamp: Date.now(),
       };
 
-      const metadataBlob = new Blob([JSON.stringify(metadata)], {
-        type: "text/plain",
-      });
+      localStorage.setItem(FORGE_CLIPBOARD_METADATA_KEY, JSON.stringify(metadata));
 
       await navigator.clipboard.write([
         new ClipboardItem({
           "image/png": blob,
-          "text/plain": metadataBlob,
         }),
       ]);
     } catch (err) {
@@ -874,26 +876,47 @@ export class ForgeEngine {
         let pasteX: number | null = null;
         let pasteY: number | null = null;
 
-        if (item.types.includes("text/plain")) {
-          const textBlob = await item.getType("text/plain");
-          const text = await textBlob.text();
+        const imageBlob = await item.getType(imageType);
+
+        // Try to retrieve and verify metadata from localStorage
+        const storedMetadata = localStorage.getItem(FORGE_CLIPBOARD_METADATA_KEY);
+        if (storedMetadata) {
           try {
-            const metadata = JSON.parse(text);
+            const metadata = JSON.parse(storedMetadata) as ClipboardMetadata;
+            // Verify source and project (dimensions will be verified in img.onload)
             if (metadata.source === "forge-editor" && metadata.projectId === this.project.id) {
               pasteX = metadata.x;
               pasteY = metadata.y;
             }
           } catch (_) {
-            // Not our metadata
+            // Invalid metadata
           }
         }
 
-        const imageBlob = await item.getType(imageType);
         const reader = new FileReader();
         reader.onload = (e) => {
           const dataUrl = e.target?.result as string;
           const img = new Image();
           img.onload = () => {
+            // Final verification with dimensions and relaxed blob size
+            const metadata = storedMetadata
+              ? (JSON.parse(storedMetadata) as ClipboardMetadata)
+              : null;
+            const isVerified =
+              metadata &&
+              pasteX !== null &&
+              pasteY !== null &&
+              metadata.width === img.naturalWidth &&
+              metadata.height === img.naturalHeight; // &&
+            // Relaxed blob size: allow up to 2KB difference for re-encoding/metadata
+            // Math.abs(metadata.blobSize - imageBlob.size) < 2048;
+
+            if (!isVerified) {
+              // Reset coordinates if verification fails
+              pasteX = null;
+              pasteY = null;
+            }
+
             if (pasteX === null || pasteY === null) {
               // Center in viewport
               const viewportWidth = this.canvas.width;
