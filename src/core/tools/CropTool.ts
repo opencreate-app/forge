@@ -266,13 +266,13 @@ export class CropTool extends BaseTool {
       };
       handle = { name: "bottom-right", cursor: "nwse-resize" };
       this.syncStore(context);
-      
+
       // Update drag start coords to snapped values too
       this.dragStartCoords = { x: snappedX, y: snappedY };
       this.handleStartOffset = { x: 0, y: 0 };
     } else {
       this.dragStartCoords = { x, y };
-      
+
       if (handle.name !== "move" && handle.name !== "rotate") {
         const handles = this.getHandles(context);
         const currentHandle = handles.find((h) => h.name === handle?.name);
@@ -326,7 +326,7 @@ export class CropTool extends BaseTool {
 
     const t = this.cropState;
     const startT = this.dragStartCrop;
-    
+
     // Initial mouse delta
     const dx = rawX - this.dragStartCoords.x;
     const dy = rawY - this.dragStartCoords.y;
@@ -428,11 +428,11 @@ export class CropTool extends BaseTool {
         const h = Math.round(t.height * t.scaleY);
         const left = t.x - w / 2;
         const top = t.y - h / 2;
-        
-        if (!this.activeSnapLines.some(l => l.type === "vertical")) {
+
+        if (!this.activeSnapLines.some((l) => l.type === "vertical")) {
           t.x = Math.round(left) + w / 2;
         }
-        if (!this.activeSnapLines.some(l => l.type === "horizontal")) {
+        if (!this.activeSnapLines.some((l) => l.type === "horizontal")) {
           t.y = Math.round(top) + h / 2;
         }
       }
@@ -565,8 +565,10 @@ export class CropTool extends BaseTool {
         }
       }
 
-      const finalSfx = applyX || (keepAspect && applyY) ? (startT.width === 0 ? currentProjX : sfx) : 1;
-      const finalSfy = applyY || (keepAspect && applyX) ? (startT.height === 0 ? currentProjY : sfy) : 1;
+      const finalSfx =
+        applyX || (keepAspect && applyY) ? (startT.width === 0 ? currentProjX : sfx) : 1;
+      const finalSfy =
+        applyY || (keepAspect && applyX) ? (startT.height === 0 ? currentProjY : sfy) : 1;
 
       if (startT.width === 0 || startT.height === 0) {
         // Special case for new creation from zero size

@@ -106,12 +106,7 @@ export class PaintBucketTool extends BaseTool {
     const localY = clickY - offsetY;
 
     // click must be within sample canvas
-    if (
-      localX < 0 ||
-      localX >= sampleCanvas.width ||
-      localY < 0 ||
-      localY >= sampleCanvas.height
-    ) {
+    if (localX < 0 || localX >= sampleCanvas.width || localY < 0 || localY >= sampleCanvas.height) {
       if (context.project.selection.hasSelection && context.project.selection.mask) {
         this.createColorFillLayer(context, context.project.selection.mask);
         return;
@@ -456,7 +451,17 @@ export class PaintBucketTool extends BaseTool {
       for (let x = 0; x < width; x++) {
         const i = (y * width + x) * 4;
         if (
-          this.colorsMatch(data[i], data[i + 1], data[i + 2], data[i + 3], tr, tg, tb, ta, tolerance)
+          this.colorsMatch(
+            data[i],
+            data[i + 1],
+            data[i + 2],
+            data[i + 3],
+            tr,
+            tg,
+            tb,
+            ta,
+            tolerance,
+          )
         ) {
           const projX = x + offsetX;
           const projY = y + offsetY;

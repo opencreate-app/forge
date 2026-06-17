@@ -540,7 +540,7 @@ export class TextTool extends BaseTool {
     }
 
     if (this.isMoving && this.editingLayerId) {
-      const layer = context.project.layers.find(l => l.id === this.editingLayerId);
+      const layer = context.project.layers.find((l) => l.id === this.editingLayerId);
       if (!layer) return;
 
       let dx = x - this.startPos.x;
@@ -589,9 +589,7 @@ export class TextTool extends BaseTool {
 
       const hSnapsCurrent = [0, context.project.height / 2, context.project.height];
       if (showGuides && snapToGuides) {
-        hSnapsCurrent.push(
-          ...guides.filter((g) => g.type === "horizontal").map((g) => g.position),
-        );
+        hSnapsCurrent.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
       }
 
       for (const snapPos of hSnapsCurrent) {

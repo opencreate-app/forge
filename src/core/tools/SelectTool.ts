@@ -65,8 +65,8 @@ export class SelectTool extends BaseTool {
 
     if (showGuides && snapToGuides) {
       const guides = context.project.guides || [];
-      vSnaps.push(...guides.filter(g => g.type === "vertical").map(g => g.position));
-      hSnaps.push(...guides.filter(g => g.type === "horizontal").map(g => g.position));
+      vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+      hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
     }
 
     const snapMargin = 5 / context.project.zoom;
@@ -203,8 +203,8 @@ export class SelectTool extends BaseTool {
       const hSnaps = [0, context.project.height / 2, context.project.height];
 
       if (showGuides && snapToGuides) {
-        vSnaps.push(...guides.filter(g => g.type === "vertical").map(g => g.position));
-        hSnaps.push(...guides.filter(g => g.type === "horizontal").map(g => g.position));
+        vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+        hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
       }
 
       for (const snapPos of vSnaps) {
@@ -598,7 +598,7 @@ export class SelectTool extends BaseTool {
       for (let y = 0; y < height; y++) {
         const idx1 = (y * width + (x - 1)) * 4 + 3;
         const idx2 = (y * width + x) * 4 + 3;
-        if ((imgData[idx1] > 0) !== (imgData[idx2] > 0)) {
+        if (imgData[idx1] > 0 !== imgData[idx2] > 0) {
           transitions++;
         }
       }
@@ -613,7 +613,7 @@ export class SelectTool extends BaseTool {
       for (let x = 0; x < width; x++) {
         const idx1 = ((y - 1) * width + x) * 4 + 3;
         const idx2 = (y * width + x) * 4 + 3;
-        if ((imgData[idx1] > 0) !== (imgData[idx2] > 0)) {
+        if (imgData[idx1] > 0 !== imgData[idx2] > 0) {
           transitions++;
         }
       }

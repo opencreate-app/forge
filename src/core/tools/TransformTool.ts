@@ -397,7 +397,7 @@ export class TransformTool extends BaseTool {
 
     const t = this.currentTransform!;
     const startT = this.dragStartTransform!;
-    
+
     // Use raw coordinates for snapping logic to avoid premature rounding
     const dx = raw_px - this.dragStartCoords.x;
     const dy = raw_py - this.dragStartCoords.y;
@@ -524,8 +524,8 @@ export class TransformTool extends BaseTool {
         }
 
         const vec_start = {
-          x: (this.dragStartCoords.x - this.handleOffset.x) - scaleAnchor.x,
-          y: (this.dragStartCoords.y - this.handleOffset.y) - scaleAnchor.y,
+          x: this.dragStartCoords.x - this.handleOffset.x - scaleAnchor.x,
+          y: this.dragStartCoords.y - this.handleOffset.y - scaleAnchor.y,
         };
         const vec_current = { x: target_px - scaleAnchor.x, y: target_py - scaleAnchor.y };
 
