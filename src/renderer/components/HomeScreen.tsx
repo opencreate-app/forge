@@ -53,9 +53,9 @@ const RecentProjectItem: React.FC<{
     <div
       onClick={() => onClick(project)}
       onContextMenu={(e) => onContextMenu(e, project)}
-      className="flex flex-col gap-2 group cursor-pointer w-[150px] relative before:absolute before:inset-0 before:bg-bg-tertiary before:rounded-xl before:opacity-0 hover:before:opacity-50 hover:before:inset-[-8px] before:transition-all before:pointer-events-none"
+      className="flex flex-col gap-2 group cursor-pointer w-full h-auto relative before:absolute before:inset-0 before:bg-bg-tertiary before:rounded-xl before:opacity-0 hover:before:opacity-50 hover:before:inset-[-8px] before:transition-all before:pointer-events-none"
     >
-      <div className="relative z-1 w-[150px] h-[150px] bg-bg-tertiary rounded overflow-hidden border border-bg-tertiary transition-all group-hover:border-accent">
+      <div className="relative z-1 aspect-square bg-bg-tertiary rounded overflow-hidden border border-bg-tertiary transition-all group-hover:border-accent">
         {project.thumbnail ? (
           <img src={project.thumbnail} alt={project.name} className="w-full h-full object-cover" />
         ) : (
@@ -422,7 +422,7 @@ const HomeScreen: React.FC = () => {
           }
         }`}
       </style>
-      <div className="flex flex-row gap-8 animate-fade-in-up">
+      <div className="flex flex-row gap-8">
         <div className="flex flex-col gap-2">
           <LogoDark width={300} />
           <div className="text-[0.7rem] text-white/60 font-medium">Version {appVersion}</div>
@@ -449,10 +449,7 @@ const HomeScreen: React.FC = () => {
       </div>
 
       {recentProjects.length > 0 && (
-        <div
-          className="w-full max-w-[800px] mt-8 flex flex-col gap-4 animate-fade-in-up"
-          style={{ animationDelay: "150ms" }}
-        >
+        <div className="w-full max-w-[800px] mt-8 flex flex-col gap-4 animate-fade-in-up">
           <h2 className="text-[1rem] font-semibold text-text-secondary border-b border-bg-tertiary pb-2 flex items-center gap-2">
             Recent Projects
             <div
@@ -470,7 +467,7 @@ const HomeScreen: React.FC = () => {
               Clear
             </div>
           </h2>
-          <div className="grid grid-cols-5 gap-6">
+          <div className="grid grid-cols-5 gap-4 max-h-110 p-2 m-[-8px] overflow-y-auto">
             {recentProjects.map((project) => (
               <RecentProjectItem
                 key={project.id}
