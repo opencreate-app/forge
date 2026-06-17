@@ -153,4 +153,3 @@ export function applyAlphaThreshold(canvas: HTMLCanvasElement, threshold: number
   }
   ctx.putImageData(imageData, 0, 0);
 }
-
