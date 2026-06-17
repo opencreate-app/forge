@@ -22,14 +22,7 @@
     "prettier": "prettier --write . --ignore-path .prettierignore",
     "publish": "bash -c 'git tag -d $1 && git push origin :refs/tags/$1 && git tag $1 && git push origin $1' --"
   },
-  "dependencies": {
-    "lucide-react": "^1.8.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "upng-js": "^2.1.0",
-    "wasm-vips": "^0.0.14",
-    "zustand": "^5.0.12"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/vite": "^4.2.2",
@@ -47,19 +40,27 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "jsdom": "^29.0.2",
+    "lucide-react": "^1.8.0",
     "prettier": "^3.8.3",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.2",
+    "upng-js": "^2.1.0",
     "vite": "^8.0.8",
     "vite-plugin-electron": "^0.29.1",
     "vite-plugin-electron-renderer": "^0.14.6",
     "vitest": "^4.1.5",
-    "vitest-canvas-mock": "^1.1.4"
+    "vitest-canvas-mock": "^1.1.4",
+    "wasm-vips": "^0.0.14",
+    "zustand": "^5.0.12"
   },
   "build": {
     "appId": "app.opencreate.forge",
     "productName": "OpenCreate Forge",
+    "compression": "normal",
+    "asar": true,
     "directories": {
       "output": "dist"
     },
@@ -67,9 +68,7 @@
       "dist/**/*",
       "dist-electron/**/*",
       "package.json",
-      "!**/*.map",
-      "!src",
-      "!node_modules/.cache"
+      "!**/*.map"
     ],
     "extraMetadata": {
       "main": "dist-electron/main.js"
