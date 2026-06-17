@@ -653,10 +653,17 @@ const LayerList: React.FC = () => {
             ...(contextMenu.layer.mask
               ? [
                   {
-                    label: contextMenu.layer.mask.enabled ? "Disable Layer Mask" : "Enable Layer Mask",
+                    label: contextMenu.layer.mask.enabled
+                      ? "Disable Layer Mask"
+                      : "Enable Layer Mask",
                     icon: CircleHalfDashed,
                     onClick: () => {
-                      pushHistory(project.id, contextMenu.layer.mask!.enabled ? "Disable Layer Mask" : "Enable Layer Mask");
+                      pushHistory(
+                        project.id,
+                        contextMenu.layer.mask!.enabled
+                          ? "Disable Layer Mask"
+                          : "Enable Layer Mask",
+                      );
                       updateLayerMask(project.id, contextMenu.layer.id, {
                         enabled: !contextMenu.layer.mask!.enabled,
                       });

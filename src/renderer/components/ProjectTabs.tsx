@@ -93,14 +93,7 @@ const ProjectTabs: React.FC = () => {
         }
       }
     },
-    [
-      projects,
-      removeFromHistory,
-      removeProject,
-      activeTab,
-      setActiveTab,
-      setActiveProject,
-    ],
+    [projects, removeFromHistory, removeProject, activeTab, setActiveTab, setActiveProject],
   );
 
   React.useEffect(() => {
