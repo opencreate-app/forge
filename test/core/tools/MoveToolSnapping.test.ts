@@ -57,7 +57,9 @@ describe("MoveTool Snapping", () => {
     context.project = project;
 
     // Ensure mocks use the current project
-    context.isLayerVisible = vi.fn((id) => project.layers.find((l) => l.id === id)?.visible ?? false);
+    context.isLayerVisible = vi.fn(
+      (id) => project.layers.find((l) => l.id === id)?.visible ?? false,
+    );
     context.isLayerLocked = vi.fn((id) => project.layers.find((l) => l.id === id)?.locked ?? false);
 
     // Start drag at (100, 100)
@@ -65,7 +67,7 @@ describe("MoveTool Snapping", () => {
     tool.onMouseDown({ button: 0, offsetX: 100, offsetY: 100 } as MouseEvent, context);
 
     // Move to (398, 100) - Should snap "moving" right edge (which would be at 498) to "target" left edge (500)
-    // dx = 398 - 100 = 298. 
+    // dx = 398 - 100 = 298.
     // Initial right edge = 200. New right edge = 200 + 298 = 498.
     // Snap margin is 4 pixels. 498 is within 4 pixels of 500.
     context.screenToProject = vi.fn().mockReturnValue({ x: 398, y: 100 });
@@ -73,7 +75,7 @@ describe("MoveTool Snapping", () => {
 
     const updateCall = context.updateProject.mock.calls.find((call: any) => call[0].layers);
     const updatedMovingLayer = updateCall[0].layers.find((l: any) => l.id === "moving");
-    
+
     // Expected dx should be 300 (to make right edge 500), so new x should be 100 + 300 = 400.
     // Initial x was 100. dx = 500 - 200 = 300. New x = 100 + 300 = 400.
     expect(updatedMovingLayer.x).toBe(400);
@@ -121,12 +123,14 @@ describe("MoveTool Snapping", () => {
     context.project = project;
 
     // Ensure mocks use the current project
-    context.isLayerVisible = vi.fn((id) => project.layers.find((l) => l.id === id)?.visible ?? false);
+    context.isLayerVisible = vi.fn(
+      (id) => project.layers.find((l) => l.id === id)?.visible ?? false,
+    );
     context.isLayerLocked = vi.fn((id) => project.layers.find((l) => l.id === id)?.locked ?? false);
 
     // Target vertical center is 550 (500 + 100/2)
     // Moving initial vertical center is 40 (0 + 80/2)
-    
+
     // Start drag at (0, 0)
     context.screenToProject = vi.fn().mockReturnValue({ x: 0, y: 0 });
     tool.onMouseDown({ button: 0, offsetX: 0, offsetY: 0 } as MouseEvent, context);
@@ -140,7 +144,7 @@ describe("MoveTool Snapping", () => {
 
     const updateCall = context.updateProject.mock.calls.find((call: any) => call[0].layers);
     const updatedMovingLayer = updateCall[0].layers.find((l: any) => l.id === "moving");
-    
+
     // Expected dx = 510 (550 - 40). New x = 0 + 510 = 510.
     expect(updatedMovingLayer.x).toBe(510);
     expect((tool as any).activeSnapLines).toContainEqual({ type: "vertical", position: 550 });
@@ -189,7 +193,9 @@ describe("MoveTool Snapping", () => {
     context.project = project;
 
     // Ensure mocks use the current project
-    context.isLayerVisible = vi.fn((id) => project.layers.find((l) => l.id === id)?.visible ?? false);
+    context.isLayerVisible = vi.fn(
+      (id) => project.layers.find((l) => l.id === id)?.visible ?? false,
+    );
     context.isLayerLocked = vi.fn((id) => project.layers.find((l) => l.id === id)?.locked ?? false);
 
     context.screenToProject = vi.fn().mockReturnValue({ x: 100, y: 100 });
@@ -201,7 +207,7 @@ describe("MoveTool Snapping", () => {
 
     const updateCall = context.updateProject.mock.calls.find((call: any) => call[0].layers);
     const updatedMovingLayer = updateCall[0].layers.find((l: any) => l.id === "moving");
-    
+
     // Should NOT snap, so x should be 100 + (300 - 100) = 300.
     expect(updatedMovingLayer.x).toBe(300);
     expect((tool as any).activeSnapLines).not.toContainEqual({ type: "vertical", position: 500 });
