@@ -3,7 +3,8 @@
  */
 import React from "react";
 import { useProjectStore, Layer } from "@store/projectStore";
-import LayerItem from "./LayerItem";
+import { useUIStore } from "@store/uiStore";
+import LayerItem, { EffectsIcon } from "./LayerItem";
 import {
   Plus,
   Trash2,
@@ -89,6 +90,8 @@ const LayerList: React.FC = () => {
   const addLayerMask = useProjectStore((state) => state.addLayerMask);
   const removeLayerMask = useProjectStore((state) => state.removeLayerMask);
   const updateLayerMask = useProjectStore((state) => state.updateLayerMask);
+
+  const setStylingLayerId = useUIStore((state) => state.setStylingLayerId);
 
   const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
   const [visibilityDrag, setVisibilityDrag] = React.useState<{
@@ -364,29 +367,40 @@ const LayerList: React.FC = () => {
   };
 
   const getDisplayLayers = () => {
-    const displayLayers: { layer: Layer; depth: number; actualIndex: number }[] = [];
+    const displayLayers: {
+      layer: Layer;
+      depth: number;
+      actualIndex: number;
+      isInheritedHidden: boolean;
+    }[] = [];
 
     // Process from top to bottom (end of array to start)
     // Note: layers are stored bottom-to-top, so we iterate backwards for display
     for (let i = project.layers.length - 1; i >= 0; i--) {
       const layer = project.layers[i];
 
-      // Check if any ancestor is collapsed
-      let isHidden = false;
+      // Check if any ancestor is collapsed or hidden
+      let isCollapsed = false;
+      let isInheritedHidden = false;
       let currentParentId = layer.parentId;
       let depth = 0;
 
       while (currentParentId) {
         depth++;
         const parent = project.layers.find((l) => l.id === currentParentId);
-        if (parent && !parent.isExpanded) {
-          isHidden = true;
+        if (parent) {
+          if (!parent.isExpanded) {
+            isCollapsed = true;
+          }
+          if (!parent.visible) {
+            isInheritedHidden = true;
+          }
         }
         currentParentId = parent?.parentId;
       }
 
-      if (!isHidden) {
-        displayLayers.push({ layer, depth, actualIndex: i });
+      if (!isCollapsed) {
+        displayLayers.push({ layer, depth, actualIndex: i, isInheritedHidden });
       }
     }
 
@@ -482,7 +496,7 @@ const LayerList: React.FC = () => {
           }
         }}
       >
-        {getDisplayLayers().map(({ layer, depth, actualIndex }) => (
+        {getDisplayLayers().map(({ layer, depth, actualIndex, isInheritedHidden }) => (
           <LayerItem
             key={layer.id}
             layer={layer}
@@ -491,6 +505,7 @@ const LayerList: React.FC = () => {
             isSelected={project.selectedLayerIds.includes(layer.id)}
             index={actualIndex}
             depth={depth}
+            isInheritedHidden={isInheritedHidden}
             draggedIndex={draggedIndex}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
@@ -564,6 +579,15 @@ const LayerList: React.FC = () => {
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           items={[
+            {
+              label: "Layer Styles...",
+              icon: EffectsIcon,
+              onClick: () => {
+                setStylingLayerId(contextMenu.layer.id);
+                window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
+              },
+            },
+            { isSeparator: true },
             {
               label: "Duplicate Layer(s)",
               icon: Copy,

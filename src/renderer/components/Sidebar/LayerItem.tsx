@@ -29,6 +29,7 @@ interface LayerItemProps {
   isSelected: boolean;
   index: number;
   depth: number;
+  isInheritedHidden: boolean;
   draggedIndex: number | null;
   onDragStart: (e: React.DragEvent, index: number) => void;
   onDragOver: (e: React.DragEvent, index: number, position: "above" | "below") => void;
@@ -93,6 +94,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
   isSelected,
   index,
   depth,
+  isInheritedHidden,
   draggedIndex,
   onDragStart,
   onDragOver,
@@ -281,7 +283,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
           : isSelected
             ? "bg-bg-tertiary/70"
             : "bg-transparent hover:bg-bg-tertiary/30"
-      } ${!layer.visible ? "opacity-60" : ""} ${draggedIndex === index ? "opacity-30" : ""} ${
+      } ${!layer.visible || isInheritedHidden ? "opacity-50" : ""} ${draggedIndex === index ? "opacity-30" : ""} ${
         dropPosition === "above" ? "border-t-2 border-t-accent" : ""
       } ${dropPosition === "below" ? "border-b-2 border-b-accent" : ""}`}
       onClick={(e) => onClick(e, layer.id)}
@@ -343,7 +345,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
       >
         {layer.type === "group" ? (
           <button
-            className="p-2 py-1 text-text"
+            className="pl-2 py-1 text-text"
             onClick={(e) => {
               e.stopPropagation(); // Prevent opening LayerStylesModal on double click
               // toggle expand or collapse on click
