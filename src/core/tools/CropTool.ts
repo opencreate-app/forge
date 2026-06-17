@@ -269,13 +269,23 @@ export class CropTool extends BaseTool {
       
       // Update drag start coords to snapped values too
       this.dragStartCoords = { x: snappedX, y: snappedY };
+      this.handleStartOffset = { x: 0, y: 0 };
     } else {
       this.dragStartCoords = { x, y };
+      
+      if (handle.name !== "move" && handle.name !== "rotate") {
+        const handles = this.getHandles(context);
+        const currentHandle = handles.find((h) => h.name === handle?.name);
+        if (currentHandle) {
+          this.handleStartOffset = { x: x - currentHandle.x, y: y - currentHandle.y };
+        }
+      } else {
+        this.handleStartOffset = { x: 0, y: 0 };
+      }
     }
 
     this.activeHandle = handle;
     this.dragStartCrop = { ...this.cropState };
-    this.handleStartOffset = { x: 0, y: 0 };
 
     if (handle.name !== "move" && handle.name !== "rotate") {
       let oppositeName = handle.name;
@@ -286,11 +296,6 @@ export class CropTool extends BaseTool {
       else if (oppositeName.includes("right")) oppositeName = oppositeName.replace("right", "left");
 
       const handles = this.getHandles(context);
-      const currentHandle = handles.find((h) => h.name === handle.name);
-      if (currentHandle) {
-        this.handleStartOffset = { x: x - currentHandle.x, y: y - currentHandle.y };
-      }
-
       const opp = handles.find((h) => h.name === oppositeName);
       if (opp) {
         this.scaleAnchor = { x: opp.x, y: opp.y };
@@ -560,11 +565,12 @@ export class CropTool extends BaseTool {
         }
       }
 
-      const finalSfx = applyX || (keepAspect && applyY) ? sfx : 1;
-      const finalSfy = applyY || (keepAspect && applyX) ? sfy : 1;
+      const finalSfx = applyX || (keepAspect && applyY) ? (startT.width === 0 ? currentProjX : sfx) : 1;
+      const finalSfy = applyY || (keepAspect && applyX) ? (startT.height === 0 ? currentProjY : sfy) : 1;
 
-      if (startProjX === 0 && startProjY === 0) {
+      if (startT.width === 0 || startT.height === 0) {
         // Special case for new creation from zero size
+        // finalSfx and finalSfy are actually the absolute width/height in this case because start is 0
         t.width = Math.abs(finalSfx);
         t.height = Math.abs(finalSfy);
         t.scaleX = 1;
