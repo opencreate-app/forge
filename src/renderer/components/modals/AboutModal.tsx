@@ -146,7 +146,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             <span className="font-mono bg-bg-tertiary px-2 py-0.5 rounded text-accent text-[0.72rem]">
               v{appVersion}
             </span> */}
-            <span className="text-xs font-bold text-text-secondary">v{appVersion}</span>
+            <div className="text-[0.7rem] text-white/60 font-medium">Version {appVersion}</div>
           </div>
           <p className="text-xs text-text-secondary text-center leading-relaxed max-w-[340px]">
             A modern, open-source image manipulation software powered by

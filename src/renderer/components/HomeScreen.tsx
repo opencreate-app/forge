@@ -95,6 +95,20 @@ const HomeScreen: React.FC = () => {
     project: RecentProject;
   } | null>(null);
 
+  const [appVersion, setAppVersion] = useState<string>("0.1.0");
+  useEffect(() => {
+    if ((window as any).electronAPI?.getAppVersion) {
+      (window as any).electronAPI
+        .getAppVersion()
+        .then((v: string) => {
+          if (v) setAppVersion(v);
+        })
+        .catch(() => {
+          // Fallback to default
+        });
+    }
+  }, []);
+
   const handleOpenRecent = async (recent: RecentProject) => {
     try {
       // We need to read the file from disk
@@ -411,6 +425,7 @@ const HomeScreen: React.FC = () => {
       <div className="flex flex-row gap-8 animate-fade-in-up">
         <div className="flex flex-col gap-2">
           <LogoDark width={300} />
+          <div className="text-[0.7rem] text-white/60 font-medium">Version {appVersion}</div>
           {/* <h1 className="text-[2rem] mb-2 font-bold text-text">
             OpenCreate <span className="text-accent">Forge</span>
           </h1> */}
