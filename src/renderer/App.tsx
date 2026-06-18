@@ -29,6 +29,14 @@ import { Box, X } from "lucide-react";
 
 // ... (imports remain)
 
+interface UpdateInfo {
+  version: string;
+  releaseUrl: string;
+  isPortable: boolean;
+  assetName: string | null;
+  isClosed: boolean;
+}
+
 function App() {
   useMenuHandler();
   useAutosave();
@@ -58,28 +66,38 @@ function App() {
   const [isImageSizeModalOpen, setIsImageSizeModalOpen] = React.useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = React.useState(false);
 
-  // Placeholder for update availability
-  const [isUpdateAvailable, setIsUpdateAvailable] = React.useState(null as any);
-  // const [isUpdateAvailable, setIsUpdateAvailable] = React.useState({
-  //   version: "v0.1.1",
-  //   channel: "stable",
-  //   changelog_md: "https://example.com/changelog.md",
-  //   isClosed: false,
-  // });
+  // Auto-update state
+  const [isUpdateAvailable, setIsUpdateAvailable] = React.useState<UpdateInfo | null>(null);
+  const [updateDownloadProgress, setUpdateDownloadProgress] = React.useState<number | null>(null);
 
-  // (Placeholder) Simulate update check on mount
+  const showToast = useUIStore((state) => state.showToast);
+
+  // Auto-update IPC listeners
   React.useEffect(() => {
-    // Simulate an update being available after 5 seconds
-    // const updateTimeout = setTimeout(() => {
-    //   setIsUpdateAvailable({
-    //     version: "0.1.1",
-    //     channel: "stable",
-    //     changelog_md: "https://example.com/changelog.md",
-    //     isClosed: false,
-    //   });
-    // }, 3500);
-    // return () => clearTimeout(updateTimeout);
-  }, []);
+    const api = (window as any).electronAPI;
+    if (!api) return;
+
+    const cleanups = [
+      api.onUpdateAvailable((info: any) => {
+        setIsUpdateAvailable({ ...info, isClosed: false });
+      }),
+      api.onUpdateDownloadProgress(({ percent }: { percent: number }) => {
+        setUpdateDownloadProgress(percent);
+      }),
+      api.onUpdateDownloadComplete(({ filePath }: { filePath: string }) => {
+        setUpdateDownloadProgress(null);
+        api.installUpdate(filePath);
+      }),
+      api.onUpdateDownloadError(({ message }: { message: string }) => {
+        setUpdateDownloadProgress(null);
+        showToast(`Update failed: ${message}`, "error");
+      }),
+    ];
+
+    return () => {
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [showToast]);
 
   const showRulers = useUIStore((state) => state.showRulers);
   const showGuides = useUIStore((state) => state.showGuides);
@@ -110,7 +128,6 @@ function App() {
   const toolSettings = useToolStore((state) => state.toolSettings);
   const updateToolSettings = useToolStore((state) => state.updateToolSettings);
   const transformSettings = useToolStore((state) => state.toolSettings.transform);
-  const showToast = useUIStore((state) => state.showToast);
   const isInteracting = useToolStore((state) => state.isInteracting);
   const setShowRulers = useUIStore((state) => state.setShowRulers);
   const swapColors = useToolStore((state) => state.swapColors);
@@ -346,9 +363,17 @@ function App() {
       {/* Update Notification */}
       {isUpdateAvailable && !isUpdateAvailable.isClosed && (
         <div
-          className="h-10 bg-accent overflow-hidden animate-banner-slide-down"
+          className="h-10 bg-accent overflow-hidden animate-banner-slide-down relative"
           id="banner-update-notification"
         >
+          {/* Progress Bar */}
+          {updateDownloadProgress !== null && updateDownloadProgress >= 0 && (
+            <div
+              className="absolute bottom-0 left-0 h-1 bg-white/40 transition-all duration-300 z-10"
+              style={{ width: `${updateDownloadProgress}%` }}
+            />
+          )}
+
           <style>
             {`@keyframes banner-fade-in {
               from { opacity: 0; }
@@ -376,26 +401,43 @@ function App() {
           </style>
           <div className="w-full h-full flex gap-3 items-center justify-center px-4 text-[0.85rem] text-text relative opacity-0 animate-banner-fade-in">
             <span className="mr-2">
-              New patch <b>{isUpdateAvailable.version.trim()}</b> is available!
+              New version <b>{isUpdateAvailable.version.trim()}</b> is available!
             </span>
 
+            {!isUpdateAvailable.isPortable && (
+              <button
+                className="underline !cursor-pointer"
+                onClick={() => {
+                  (window as any).electronAPI.openExternal(isUpdateAvailable.releaseUrl);
+                }}
+              >
+                View Release Notes
+              </button>
+            )}
             <button
-              className="underline !cursor-pointer"
+              className="bg-white/90 text-accent px-3 py-1 rounded !cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              disabled={updateDownloadProgress !== null}
               onClick={() => {
-                // TODO: Open changelog in a modal `ChangelogModal` rendering the markdown content
-                showToast("(Placeholder) Opening changelog...", "info");
+                if (isUpdateAvailable.isPortable) {
+                  (window as any).electronAPI.openReleasePage(isUpdateAvailable.releaseUrl);
+                } else {
+                  if (isUpdateAvailable.assetName) {
+                    (window as any).electronAPI.downloadUpdate({
+                      version: isUpdateAvailable.version,
+                      assetName: isUpdateAvailable.assetName,
+                    });
+                    setUpdateDownloadProgress(0);
+                  } else {
+                    (window as any).electronAPI.openReleasePage(isUpdateAvailable.releaseUrl);
+                  }
+                }
               }}
             >
-              View Changelog
-            </button>
-            <button
-              className="bg-white/90 text-accent px-3 py-1 rounded !cursor-pointer"
-              onClick={() => {
-                // TODO: Trigger actual update process
-                showToast("(Placeholder) Downloading update...", "info");
-              }}
-            >
-              Update Now
+              {updateDownloadProgress !== null
+                ? `Downloading... ${updateDownloadProgress}%`
+                : isUpdateAvailable.isPortable
+                  ? "Go to Release Page"
+                  : "Update Now"}
             </button>
 
             <button

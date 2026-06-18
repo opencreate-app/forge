@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { checkForUpdates, downloadUpdate } from "./autoUpdater.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -385,6 +386,11 @@ function createWindow() {
   // Test active push message to Renderer-process.
   win.webContents.on("did-finish-load", () => {
     win?.webContents.send("main-process-message", new Date().toLocaleString());
+
+    // Auto-update check (with delay to avoid competing with splash/load)
+    setTimeout(() => {
+      if (win) checkForUpdates(win);
+    }, 5000);
   });
 
   if (VITE_DEV_SERVER_URL) {
@@ -620,6 +626,25 @@ app.whenReady().then(() => {
       }
     } catch (err: any) {
       return { success: false, error: err.message };
+    }
+  });
+
+  // Auto-Update Handlers
+  ipcMain.handle("forge:update-download", async (_event, { version, assetName }) => {
+    if (win) downloadUpdate(win, version, assetName);
+  });
+
+  ipcMain.handle("forge:update-open-release-page", (_event, url: string) => {
+    if (url.startsWith("https://github.com/")) {
+      shell.openExternal(url);
+    }
+  });
+
+  ipcMain.handle("forge:update-install", async (_event, filePath: string) => {
+    // Only allow opening paths within the temp directory for security
+    const tempDir = app.getPath("temp");
+    if (filePath.startsWith(tempDir)) {
+      shell.openPath(filePath);
     }
   });
 

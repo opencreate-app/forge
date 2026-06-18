@@ -35,4 +35,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener("menu:action", listener);
     };
   },
+  // Auto-Update Events
+  onUpdateAvailable: (callback: (info: any) => void) => {
+    const listener = (_event: any, info: any) => callback(info);
+    ipcRenderer.on("forge:update-available", listener);
+    return () => ipcRenderer.removeListener("forge:update-available", listener);
+  },
+  onUpdateDownloadProgress: (callback: (progress: { percent: number }) => void) => {
+    const listener = (_event: any, progress: { percent: number }) => callback(progress);
+    ipcRenderer.on("forge:update-download-progress", listener);
+    return () => ipcRenderer.removeListener("forge:update-download-progress", listener);
+  },
+  onUpdateDownloadComplete: (callback: (data: { filePath: string }) => void) => {
+    const listener = (_event: any, data: { filePath: string }) => callback(data);
+    ipcRenderer.on("forge:update-download-complete", listener);
+    return () => ipcRenderer.removeListener("forge:update-download-complete", listener);
+  },
+  onUpdateDownloadError: (callback: (data: { message: string }) => void) => {
+    const listener = (_event: any, data: { message: string }) => callback(data);
+    ipcRenderer.on("forge:update-download-error", listener);
+    return () => ipcRenderer.removeListener("forge:update-download-error", listener);
+  },
+  // Auto-Update Invokes
+  downloadUpdate: (data: { version: string; assetName: string }) =>
+    ipcRenderer.invoke("forge:update-download", data),
+  openReleasePage: (url: string) => ipcRenderer.invoke("forge:update-open-release-page", url),
+  installUpdate: (filePath: string) => ipcRenderer.invoke("forge:update-install", filePath),
 });
