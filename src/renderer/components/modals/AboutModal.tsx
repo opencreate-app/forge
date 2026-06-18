@@ -53,7 +53,7 @@ const LinkButton: React.FC<LinkButtonProps> = ({
   variant = "secondary",
 }) => {
   const baseClass =
-    "flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 cursor-pointer border focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent";
+    "flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 !cursor-pointer border focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent";
 
   const variantClass =
     variant === "primary"
@@ -221,7 +221,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
                   "https://github.com/gabrielborgesweb/opencreate-forge/blob/main/LICENSE",
                 )
               }
-              className="underline text-accent hover:text-accent/80 cursor-pointer bg-transparent border-none p-0 font-medium"
+              className="underline text-accent hover:text-accent/80 !cursor-pointer bg-transparent border-none p-0 font-medium"
             >
               GPL-3.0 License
             </button>
@@ -233,7 +233,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             <button
               type="button"
               onClick={() => openExternal("https://github.com/gabrielborgesweb")}
-              className="underline text-accent hover:text-accent/80 cursor-pointer bg-transparent border-none p-0 font-medium"
+              className="underline text-accent hover:text-accent/80 !cursor-pointer bg-transparent border-none p-0 font-medium"
             >
               Gabriel Borges
             </button>
