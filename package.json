@@ -96,11 +96,49 @@
       "target": [
         "AppImage",
         "deb",
-        "rpm"
+        "rpm",
+        "flatpak"
+      ]
+    },
+    "flatpak": {
+      "id": "app.opencreate.forge",
+      "branch": "stable",
+      "runtime": "org.freedesktop.Platform",
+      "runtimeVersion": "23.08",
+      "sdk": "org.freedesktop.Sdk",
+      "base": "org.electronjs.Electron2.BaseApp",
+      "baseVersion": "23.08",
+      "finishArgs": [
+        "--share=ipc",
+        "--share=network",
+        "--socket=x11",
+        "--socket=wayland",
+        "--device=dri",
+        "--allow=devel",
+        "--filesystem=home"
       ]
     },
     "dmg": {
-      "sign": false
+      "sign": false,
+      "background": "shared/favicon/dmg-background.png",
+      "iconSize": 128,
+      "window": {
+        "width": 540,
+        "height": 300
+      },
+      "contents": [
+        {
+          "x": 130,
+          "y": 120,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 120,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   }
 }
