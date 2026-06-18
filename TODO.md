@@ -21,7 +21,7 @@ TODO: OpenCreate Forge
 ## Alpha 2
 
 - [/] Finalização
-  - [ ] Funcionalidade de Auto-Update
+  - [/] Funcionalidade de [Auto-Update](docs/AUTOUPDATE.md)
   - [x] Adicionar [Selo Made in Brasil](https://feitonobrasil.dev.br/)
   - [x] Corrigir layout do RecentProjects
   - [x] Otimizar o [Electron Builder](docs/ELECTRON_OPTIMIZE.md)
