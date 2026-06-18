@@ -145,7 +145,7 @@ jobs:
           <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION.AppImage">AppImage</a></td>
           </tr>
           <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION.flatpak">Flatpak</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-x86_64.flatpak">Flatpak</a></td>
           </tr>
           <tr>
           <td><a href="$BASE_URL/${INTERNAL_NAME}_${VERSION}_amd64.deb">Debian (DEB)</a></td>
