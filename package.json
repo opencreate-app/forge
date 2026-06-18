@@ -20,7 +20,7 @@
     "test:layers": "vitest run test/core/layers",
     "test:watch": "vitest",
     "prettier": "prettier --write . --ignore-path .prettierignore",
-    "publish": "bash -c 'git tag -d $1 && git push origin :refs/tags/$1 && git tag $1 && git push origin $1' --"
+    "publish": "bash -c 'git tag -d $1 || git push origin :refs/tags/$1 && git tag $1 && git push origin $1' --"
   },
   "dependencies": {},
   "devDependencies": {
@@ -101,7 +101,6 @@
       ]
     },
     "flatpak": {
-      "id": "app.opencreate.forge",
       "branch": "stable",
       "runtime": "org.freedesktop.Platform",
       "runtimeVersion": "23.08",
