@@ -4,7 +4,8 @@
 @import "tailwindcss";
 
 @theme {
-  --color-accent: #cc6d29;
+  /* --color-accent: #cc6d29; */
+  --color-accent: #ff6c02;
   --color-bg-primary: #1a1a1a;
   --color-bg-secondary: #2a2a2a;
   --color-bg-tertiary: #333333;
