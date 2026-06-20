@@ -28,23 +28,35 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache Flatpak Dependencies
+      - name: Cache APT Packages
         if: matrix.os == 'ubuntu-latest'
         uses: actions/cache@v4
-        id: flatpak-cache
         with:
-          path: |
-            ~/.local/share/flatpak
-            /var/tmp/flatpak-builder-*
-          key: ${{ runner.os }}-flatpak-v1-23.08
+          path: ~/apt-cache
+          key: ${{ runner.os }}-apt-flatpak-v1
 
       - name: Install Flatpak dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get install -y flatpak flatpak-builder elfutils
+          # 1. Cria o diretório de cache se não existir
+          mkdir -p ~/apt-cache
+
+          # 2. Copia debs antigos de volta para o cache do sistema (se houver)
+          if [ "$(ls -A ~/apt-cache)" ]; then
+            sudo cp -r ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          fi
+
+          # 3. Atualiza e instala sem baixar o que já existe
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils
+
+          # 4. Copia os novos debs baixados de volta para o cache do usuário
+          cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
+
+          # 5. Configura o Flathub
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
-          # Só instala se não foi restaurado pelo cache
+          # Só instala runtimes se não foi restaurado pelo cache do flatpak
           if [ "${{ steps.flatpak-cache.outputs.cache-hit }}" != 'true' ]; then
             flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08 org.electronjs.Electron2.BaseApp//23.08
           fi
