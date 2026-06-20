@@ -120,6 +120,7 @@ export async function checkForUpdates(win: BrowserWindow) {
 
       response.on("end", () => {
         if (response.statusCode !== 200) {
+          setStatusAndRefreshMenu(win, `error:gh-api-status-${response.statusCode}`);
           console.error(`[AutoUpdater] GitHub API returned status ${response.statusCode}`);
           return;
         }
@@ -131,6 +132,7 @@ export async function checkForUpdates(win: BrowserWindow) {
 
           // Proper semver comparison
           if (isNewer(latestVersion, currentVersion)) {
+            setStatusAndRefreshMenu(win, "update-available");
             console.log("[AutoUpdater] New version available!");
             const payload: UpdateAvailablePayload = {
               version: latestVersion,
@@ -172,6 +174,7 @@ export async function downloadUpdate(win: BrowserWindow, version: string, assetN
   const tempPath = app.getPath("temp");
   const filePath = path.join(tempPath, assetName);
 
+  setStatusAndRefreshMenu(win, "downloading");
   console.log(`[AutoUpdater] Starting download: ${url}`);
   console.log(`[AutoUpdater] Target path: ${filePath}`);
 
@@ -183,6 +186,7 @@ export async function downloadUpdate(win: BrowserWindow, version: string, assetN
 
     request.on("response", (response) => {
       if (response.statusCode !== 200) {
+        setStatusAndRefreshMenu(win, `error:download-failed-status-${response.statusCode}`);
         console.error(`[AutoUpdater] Download failed with status ${response.statusCode}`);
         win.webContents.send("forge:update-download-error", {
           message: `Failed to download: HTTP ${response.statusCode}`,
@@ -212,6 +216,7 @@ export async function downloadUpdate(win: BrowserWindow, version: string, assetN
       });
 
       response.on("error", (err) => {
+        setStatusAndRefreshMenu(win, `error:writing-file`);
         console.error(`[AutoUpdater] Error writing to file: ${err.message}`);
         fileStream.destroy();
         win.webContents.send("forge:update-download-error", { message: err.message });
@@ -219,12 +224,14 @@ export async function downloadUpdate(win: BrowserWindow, version: string, assetN
     });
 
     request.on("error", (err) => {
+      setStatusAndRefreshMenu(win, `error:network-on-download`);
       console.error(`[AutoUpdater] Network error during download: ${err.message}`);
       win.webContents.send("forge:update-download-error", { message: err.message });
     });
 
     request.end();
   } catch (error: any) {
+    setStatusAndRefreshMenu(win, `error:unexpected-on-download`);
     console.error(`[AutoUpdater] Unexpected download error: ${error.message}`);
     win.webContents.send("forge:update-download-error", { message: error.message });
   }
