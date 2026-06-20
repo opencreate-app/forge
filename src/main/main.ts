@@ -314,19 +314,16 @@ function createMenu(
         { type: "separator" },
         {
           label: "View on GitHub",
-          click: () => shell.openExternal("https://github.com/gabrielborgesweb/opencreate-forge"),
+          click: () => shell.openExternal("https://github.com/opencreate-app/forge"),
         },
         {
           label: "Report an Issue",
-          click: () =>
-            shell.openExternal("https://github.com/gabrielborgesweb/opencreate-forge/issues"),
+          click: () => shell.openExternal("https://github.com/opencreate-app/forge/issues"),
         },
         {
           label: "Latest Release",
           click: () =>
-            shell.openExternal(
-              "https://github.com/gabrielborgesweb/opencreate-forge/releases/latest",
-            ),
+            shell.openExternal("https://github.com/opencreate-app/forge/releases/latest"),
         },
       ],
     },

@@ -2,7 +2,7 @@
 
 **OpenCreate Forge** is a modern, high-performance, and open-source image manipulation software. Built with a focus on professional creative workflows, it combines the flexibility of web technologies with the power of a custom-built canvas engine to deliver a seamless editing experience.
 
-**[💻 Download Latest Release](https://github.com/gabrielborgesweb/opencreate-forge/releases/latest)**
+**[💻 Download Latest Release](https://github.com/opencreate-app/forge/releases/latest)**
 
 ## ✨ Features
 
@@ -38,7 +38,7 @@
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/gabrielborgesweb/opencreate-forge.git
+   git clone https://github.com/opencreate-app/forge.git
    cd opencreate-forge
    ```
 

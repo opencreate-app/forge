@@ -8,13 +8,13 @@ Implementar verificação automática de atualizações com download inteligente
 
 ### Main Process
 
-#### [NEW] [autoUpdater.ts](file:///Users/gabriel/Git/opencreate-forge/src/main/autoUpdater.ts)
+#### [NEW] [autoUpdater.ts](/src/main/autoUpdater.ts)
 
 Módulo com três responsabilidades:
 
 **1. `checkForUpdates(win)`** — Verificação de versão via GitHub API
 
-- Endpoint: `GET https://api.github.com/repos/gabrielborgesweb/opencreate-forge/releases/latest`
+- Endpoint: `GET https://api.github.com/repos/opencreate-app/forge/releases/latest`
 - Compara `tag_name` (ex: `v0.3.0`) com `app.getVersion()` via semver simples
 - Se houver update, envia `forge:update-available` com payload:
   ```ts
@@ -61,7 +61,7 @@ Lógica de detecção por plataforma:
 
 ---
 
-#### [MODIFY] [main.ts](file:///Users/gabriel/Git/opencreate-forge/src/main/main.ts)
+#### [MODIFY] [main.ts](/src/main/main.ts)
 
 - Importar `checkForUpdates` e `downloadUpdate` de `./autoUpdater`
 - Invocar `checkForUpdates(win)` no `did-finish-load` com delay de ~5s
@@ -74,7 +74,7 @@ Lógica de detecção por plataforma:
 
 ### Preload — IPC Bridge
 
-#### [MODIFY] [preload.ts](file:///Users/gabriel/Git/opencreate-forge/src/main/preload.ts)
+#### [MODIFY] [preload.ts](/src/main/preload.ts)
 
 Adicionar ao `electronAPI`:
 
@@ -97,7 +97,7 @@ Todos os listeners retornam cleanup function (padrão `onMenuAction` existente).
 
 ### Renderer — UI
 
-#### [MODIFY] [App.tsx](file:///Users/gabriel/Git/opencreate-forge/src/renderer/App.tsx)
+#### [MODIFY] [App.tsx](/src/renderer/App.tsx)
 
 **Tipagem (substituindo `any`):**
 

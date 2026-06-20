@@ -94,7 +94,7 @@ export async function checkForUpdates(win: BrowserWindow) {
       method: "GET",
       protocol: "https:",
       hostname: "api.github.com",
-      path: "/repos/gabrielborgesweb/opencreate-forge/releases/latest",
+      path: "/repos/opencreate-app/forge/releases/latest",
       headers: {
         "User-Agent": "OpenCreate-Forge-AutoUpdater",
       },
@@ -152,7 +152,7 @@ export async function checkForUpdates(win: BrowserWindow) {
  * Downloads the update asset from GitHub.
  */
 export async function downloadUpdate(win: BrowserWindow, version: string, assetName: string) {
-  const url = `https://github.com/gabrielborgesweb/opencreate-forge/releases/download/v${version}/${assetName}`;
+  const url = `https://github.com/opencreate-app/forge/releases/download/v${version}/${assetName}`;
   const tempPath = app.getPath("temp");
   const filePath = path.join(tempPath, assetName);
 

@@ -163,26 +163,26 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
           {/* <p className="text-[0.9rem] text-text-secondary/60 mb-0.5">Resources</p> */}
           <div className="grid grid-cols-2 gap-2">
             <LinkButton
-              href="https://github.com/gabrielborgesweb/opencreate-forge"
+              href="https://github.com/opencreate-app/forge"
               icon={<GitBranch size={22} strokeWidth={1.4} />}
               label="Source Code"
               description="GitHub repository"
               // variant="primary"
             />
             <LinkButton
-              href="https://github.com/gabrielborgesweb/opencreate-forge/releases/latest"
+              href="https://github.com/opencreate-app/forge/releases/latest"
               icon={<Download size={22} strokeWidth={1.4} />}
               label="Latest Release"
               description="Download builds"
             />
             <LinkButton
-              href="https://github.com/gabrielborgesweb/opencreate-forge/issues"
+              href="https://github.com/opencreate-app/forge/issues"
               icon={<Bug size={22} strokeWidth={1.4} />}
               label="Issue Tracker"
               description="Report bugs &amp; ideas"
             />
             <LinkButton
-              href="https://github.com/gabrielborgesweb/opencreate-forge/blob/main/CONTRIBUTING.md"
+              href="https://github.com/opencreate-app/forge/blob/main/CONTRIBUTING.md"
               icon={<Code2 size={22} strokeWidth={1.4} />}
               label="Contributing"
               description="How to contribute"
@@ -217,9 +217,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             <button
               type="button"
               onClick={() =>
-                openExternal(
-                  "https://github.com/gabrielborgesweb/opencreate-forge/blob/main/LICENSE",
-                )
+                openExternal("https://github.com/opencreate-app/forge/blob/main/LICENSE")
               }
               className="underline text-accent hover:text-accent/80 !cursor-pointer bg-transparent border-none p-0 font-medium"
             >
@@ -232,7 +230,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             <Heart size={14} className="text-red-400 fill-red-400 flex-shrink-0 inline mb-1" /> by{" "}
             <button
               type="button"
-              onClick={() => openExternal("https://github.com/gabrielborgesweb")}
+              onClick={() => openExternal("https://github.com/opencreate-app")}
               className="underline text-accent hover:text-accent/80 !cursor-pointer bg-transparent border-none p-0 font-medium"
             >
               Gabriel Borges
