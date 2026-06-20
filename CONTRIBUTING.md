@@ -19,7 +19,7 @@ By contributing, you agree to abide by our terms and that your contributions wil
 1. Fork the repository on GitHub.
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/gabrielborgesweb/opencreate-forge.git
+   git clone https://github.com/opencreate-app/forge.git
    cd opencreate-forge
    ```
 3. Install dependencies:

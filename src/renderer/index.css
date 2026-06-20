@@ -4,11 +4,18 @@
 @import "tailwindcss";
 
 @theme {
-  --color-accent: #cc6d29;
+  /* --color-accent: #cc6d29; */
+  --color-accent: #ff6c02;
   --color-bg-primary: #1a1a1a;
   --color-bg-secondary: #2a2a2a;
   --color-bg-tertiary: #333333;
   --color-border: #444444;
+}
+
+@layer utilities {
+  .rendering-pixelated {
+    image-rendering: pixelated;
+  }
 }
 
 :root {
@@ -35,6 +42,16 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  color: #1a1a1a;
+  background-color: #f5f5f5;
+  --color-bg-primary: #f5f5f5;
+  --color-bg-secondary: #e5e5e5;
+  --color-bg-tertiary: #d5d5d5;
+  --color-border: #cccccc;
 }
 
 @keyframes bounce-in {

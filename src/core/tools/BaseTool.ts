@@ -70,6 +70,10 @@ export interface ToolContext {
   subscribe: (listener: (settings: ToolSettings) => void) => () => void;
   /** Animates the viewport to fit the project on screen. */
   animateFitToScreen: (overrideWidth?: number, overrideHeight?: number) => void;
+  /** Checks if a layer is effectively locked (including ancestors). */
+  isLayerLocked: (layerId: string) => boolean;
+  /** Checks if a layer is effectively visible (including ancestors). */
+  isLayerVisible: (layerId: string) => boolean;
 }
 
 /**
@@ -106,6 +110,13 @@ export abstract class BaseTool {
    * Returns the ID of the layer currently being edited by this tool (if any).
    */
   getEditingLayerId(): string | null {
+    return null;
+  }
+
+  /**
+   * Returns the active drawing canvas and its position if the tool is currently painting.
+   */
+  getDrawingCanvas(): { canvas: HTMLCanvasElement; x: number; y: number } | null {
     return null;
   }
 

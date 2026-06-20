@@ -21,7 +21,7 @@ interface FontState {
 
   loadSystemFonts: () => Promise<void>;
   loadGoogleFonts: () => Promise<void>;
-  ensureFontLoaded: (family: string) => Promise<void>;
+  ensureFontLoaded: (family: string, weight?: string | number) => Promise<void>;
   getFontWeights: (family: string) => string[];
 }
 
@@ -352,9 +352,19 @@ export const useFontStore = create<FontState>((set, get) => ({
     set({ googleFonts: popularGoogleFonts });
   },
 
-  ensureFontLoaded: async (family: string) => {
+  ensureFontLoaded: async (family: string, weight?: string | number) => {
     const font = [...get().systemFonts, ...get().googleFonts].find((f) => f.family === family);
-    if (font?.source === "google") {
+
+    // If it's a known Google font, or it's not a known system font, treat it as a potential Google font
+    const isGoogle =
+      font?.source === "google" ||
+      (!font &&
+        family !== "Arial" &&
+        family !== "serif" &&
+        family !== "sans-serif" &&
+        family !== "monospace");
+
+    if (isGoogle) {
       const fontId = `google-font-${family.replace(/\s+/g, "-").toLowerCase()}`;
       if (!document.getElementById(fontId)) {
         const link = document.createElement("link");
@@ -362,13 +372,30 @@ export const useFontStore = create<FontState>((set, get) => ({
         link.rel = "stylesheet";
         const weights = [100, 200, 300, 400, 500, 600, 700, 800, 900].join(";");
         link.href = `https://fonts.googleapis.com/css2?family=${family.replace(/\s+/g, "+")}:wght@${weights}&display=swap`;
-        document.head.appendChild(link);
 
-        try {
-          await (document as any).fonts.load(`1em "${family}"`);
-        } catch (e) {
-          console.error(`Failed to load font ${family}`, e);
-        }
+        const loadPromise = new Promise<void>((resolve) => {
+          link.onload = () => resolve();
+          link.onerror = () => resolve();
+        });
+
+        document.head.appendChild(link);
+        await loadPromise;
+      }
+
+      // Always try to load the specific font face to ensure it's ready in the document
+      try {
+        const weightStr = weight ? weight.toString() : "400";
+        await (document as any).fonts.load(`${weightStr} 1em "${family}"`);
+      } catch (e) {
+        console.error(`Failed to load font ${family} (weight: ${weight})`, e);
+      }
+    } else {
+      // For system fonts, we still want to ensure the specific face is loaded/ready
+      try {
+        const weightStr = weight ? weight.toString() : "400";
+        await (document as any).fonts.load(`${weightStr} 1em "${family}"`);
+      } catch (_e) {
+        // System fonts should usually be ready, but this triggers browser discovery
       }
     }
   },

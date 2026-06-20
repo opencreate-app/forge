@@ -173,11 +173,26 @@ const Ruler: React.FC<RulerProps> = ({ orientation, size }) => {
     };
   }, [orientation]);
 
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Only left click starts a guide drag
+    if (e.button !== 0) return;
+
+    window.dispatchEvent(
+      new CustomEvent("forge:guide-drag-new", {
+        detail: {
+          type: orientation,
+          originalEvent: e.nativeEvent,
+        },
+      }),
+    );
+  };
+
   return (
     <canvas
       ref={canvasRef}
-      className="block w-full h-full"
+      className="block w-full h-full cursor-crosshair"
       style={{ imageRendering: "pixelated" }}
+      onMouseDown={handleMouseDown}
     />
   );
 };

@@ -92,7 +92,11 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
   }, []);
 
   return (
-    <div className="relative flex items-center gap-2" ref={containerRef} onWheel={handleWheel}>
+    <div
+      className="relative flex items-center gap-2 selection:bg-accent"
+      ref={containerRef}
+      onWheel={handleWheel}
+    >
       <label
         className="text-[0.75rem] text-[#999] cursor-col-resize select-none font-medium hover:text-white transition-colors"
         onMouseDown={handleMouseDown}
@@ -113,6 +117,8 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
             onChange(val / displayMultiplier);
           }}
           onKeyDown={(e) => {
+            // Prevent arrow keys from move the layer
+            e.stopPropagation();
             if (e.key === "Enter") setIsOpen(false);
           }}
           onClick={(e) => e.stopPropagation()}

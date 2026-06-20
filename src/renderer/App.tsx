@@ -3,7 +3,7 @@
  */
 import React from "react";
 import { useUIStore } from "@store/uiStore";
-import { useProjectStore } from "@store/projectStore";
+import { useProjectStore, Project } from "@store/projectStore";
 import CanvasViewport from "./components/CanvasViewport";
 import RightSidebar from "./components/Sidebar/RightSidebar";
 import Toolbar from "./components/Toolbar";
@@ -11,12 +11,41 @@ import ToolOptions from "./components/ToolOptions";
 import ProjectTabs from "./components/ProjectTabs";
 import HomeScreen from "./components/HomeScreen";
 import NewProject from "./components/modals/NewProject";
+import ExportModal from "./components/modals/ExportModal";
+import { PreferencesModal } from "./components/modals/PreferencesModal";
+import { LayerStylesModal } from "./components/modals/LayerStylesModal";
+import { ColorFillModal } from "./components/modals/ColorFillModal";
+import { ImageSizeModal } from "./components/modals/ImageSizeModal";
+import { AboutModal } from "./components/modals/AboutModal";
+import { usePreferencesStore } from "./store/preferencesStore";
+import { useAutosave } from "./hooks/useAutosave";
 import { useToolStore } from "@store/toolStore";
 import Toast from "./components/ui/Toast";
 import { useMenuHandler } from "./hooks/useMenuHandler";
 
+import { getClipboardImageDimensions } from "@utils/clipboardUtils";
+import { forgeEvents, FORGE_EVENTS } from "@utils/events";
+import { Box, X } from "lucide-react";
+
+// ... (imports remain)
+
+interface UpdateInfo {
+  version: string;
+  releaseUrl: string;
+  isPortable: boolean;
+  assetName: string | null;
+  isClosed: boolean;
+}
+
 function App() {
   useMenuHandler();
+  useAutosave();
+  const theme = usePreferencesStore((state) => state.theme);
+
+  React.useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
   const activeTab = useUIStore((state) => state.activeTab);
   const initializeStore = useProjectStore((state) => state.initialize);
   const projects = useProjectStore((state) => state.projects);
@@ -27,21 +56,80 @@ function App() {
   }, [initializeStore]);
 
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = React.useState(false);
+  const [newProjectInitialDimensions, setNewProjectInitialDimensions] = React.useState<
+    { width: number; height: number } | undefined
+  >(undefined);
+  const [isExportModalOpen, setIsExportModalOpen] = React.useState(false);
+  const [isPreferencesModalOpen, setIsPreferencesModalOpen] = React.useState(false);
+  const [isLayerStylesModalOpen, setIsLayerStylesModalOpen] = React.useState(false);
+  const [isColorFillModalOpen, setIsColorFillModalOpen] = React.useState(false);
+  const [isImageSizeModalOpen, setIsImageSizeModalOpen] = React.useState(false);
+  const [isAboutModalOpen, setIsAboutModalOpen] = React.useState(false);
+
+  // Auto-update state
+  const [isUpdateAvailable, setIsUpdateAvailable] = React.useState<UpdateInfo | null>(null);
+  const [updateDownloadProgress, setUpdateDownloadProgress] = React.useState<number | null>(null);
+
+  const showToast = useUIStore((state) => state.showToast);
+
+  // Auto-update IPC listeners
+  React.useEffect(() => {
+    const api = (window as any).electronAPI;
+    if (!api) return;
+
+    const cleanups = [
+      api.onUpdateAvailable((info: any) => {
+        setIsUpdateAvailable({ ...info, isClosed: false });
+      }),
+      api.onUpdateDownloadProgress(({ percent }: { percent: number }) => {
+        setUpdateDownloadProgress(percent);
+      }),
+      api.onUpdateDownloadComplete(({ filePath }: { filePath: string }) => {
+        setUpdateDownloadProgress(null);
+        api.installUpdate(filePath);
+      }),
+      api.onUpdateDownloadError(({ message }: { message: string }) => {
+        setUpdateDownloadProgress(null);
+        showToast(`Update failed: ${message}`, "error");
+      }),
+    ];
+
+    return () => {
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [showToast]);
+
+  const showRulers = useUIStore((state) => state.showRulers);
+  const showGuides = useUIStore((state) => state.showGuides);
+  const snapToGuides = useUIStore((state) => state.snapToGuides);
+  const snapToLayers = useUIStore((state) => state.snapToLayers);
 
   React.useEffect(() => {
     if (!(window as any).electronAPI) return;
     const hasProject = projects.length > 0 && activeProjectId !== null && activeTab !== "home";
-    (window as any).electronAPI.updateMenu({ hasProject });
-  }, [projects.length, activeProjectId, activeTab]);
+    (window as any).electronAPI.updateMenu({
+      hasProject,
+      showRulers,
+      showGuides,
+      snapToGuides,
+      snapToLayers,
+    });
+  }, [
+    projects.length,
+    activeProjectId,
+    activeTab,
+    showRulers,
+    showGuides,
+    snapToGuides,
+    snapToLayers,
+  ]);
   const setActiveTool = useToolStore((state) => state.setActiveTool);
   const activeToolId = useToolStore((state) => state.activeToolId);
   const toolSettings = useToolStore((state) => state.toolSettings);
   const updateToolSettings = useToolStore((state) => state.updateToolSettings);
   const transformSettings = useToolStore((state) => state.toolSettings.transform);
-  const showToast = useUIStore((state) => state.showToast);
   const isInteracting = useToolStore((state) => state.isInteracting);
   const setShowRulers = useUIStore((state) => state.setShowRulers);
-  const showRulers = useUIStore((state) => state.showRulers);
   const swapColors = useToolStore((state) => state.swapColors);
   const resetColors = useToolStore((state) => state.resetColors);
 
@@ -63,6 +151,7 @@ function App() {
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (useUIStore.getState().isAnyModalOpen()) return;
       if (e.key === "Alt") e.preventDefault(); // Prevent app menu focus
 
       // Handle SelectTool modifiers for visual feedback
@@ -144,6 +233,8 @@ function App() {
           if (checkDirty("crop")) setActiveTool("crop");
         } else if (e.key.toLowerCase() === "t") {
           if (checkDirty("text")) setActiveTool("text");
+        } else if (e.key.toLowerCase() === "g") {
+          if (checkDirty("paintBucket")) setActiveTool("paintBucket");
         } else if (e.key.toLowerCase() === "x") {
           swapColors();
         } else if (e.key.toLowerCase() === "d") {
@@ -153,6 +244,7 @@ function App() {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (useUIStore.getState().isAnyModalOpen()) return;
       if (activeToolId === "select" && originalModeRef.current) {
         if (!e.shiftKey && !e.altKey) {
           if (isInteracting) {
@@ -194,28 +286,190 @@ function App() {
     resetColors,
   ]);
 
+  const [exportProject, setExportProject] = React.useState<Project | null>(null);
+
   React.useEffect(() => {
-    const handleNewProject = () => setIsNewProjectModalOpen(true);
+    const handleNewProject = async () => {
+      const dimensions = await getClipboardImageDimensions();
+      setNewProjectInitialDimensions(dimensions || undefined);
+      setIsNewProjectModalOpen(true);
+    };
+    const handleOpenExportModal = (e: any) => {
+      setExportProject(e.detail?.project || null);
+      setIsExportModalOpen(true);
+    };
+    const handleOpenPreferences = () => setIsPreferencesModalOpen(true);
+    const handleOpenLayerStyles = () => setIsLayerStylesModalOpen(true);
+    const handleOpenColorFill = () => setIsColorFillModalOpen(true);
+    const handleOpenImageSize = () => setIsImageSizeModalOpen(true);
+    const handleOpenAbout = () => setIsAboutModalOpen(true);
+
     window.addEventListener("forge:new-project", handleNewProject);
-    return () => window.removeEventListener("forge:new-project", handleNewProject);
+    window.addEventListener("forge:open-export-modal", handleOpenExportModal as any);
+    window.addEventListener("forge:open-preferences", handleOpenPreferences);
+    window.addEventListener("forge:open-layer-styles", handleOpenLayerStyles);
+    window.addEventListener("forge:open-color-fill-modal", handleOpenColorFill);
+    window.addEventListener("forge:open-image-size-modal", handleOpenImageSize);
+    window.addEventListener("forge:open-about", handleOpenAbout);
+
+    return () => {
+      window.removeEventListener("forge:new-project", handleNewProject);
+      window.removeEventListener("forge:open-export-modal", handleOpenExportModal as any);
+      window.removeEventListener("forge:open-preferences", handleOpenPreferences);
+      window.removeEventListener("forge:open-layer-styles", handleOpenLayerStyles);
+      window.removeEventListener("forge:open-color-fill-modal", handleOpenColorFill);
+      window.removeEventListener("forge:open-image-size-modal", handleOpenImageSize);
+      window.removeEventListener("forge:open-about", handleOpenAbout);
+    };
   }, []);
+
+  const fileName = activeProject?.filePath
+    ? activeProject?.filePath.split(/[\\/]/).pop()
+    : activeProject?.name || "Unknown";
 
   return (
     <div className="flex flex-col h-screen bg-bg-primary text-text overflow-hidden relative">
       <Toast />
+      <NewProject
+        isOpen={isNewProjectModalOpen}
+        onClose={() => setIsNewProjectModalOpen(false)}
+        initialDimensions={newProjectInitialDimensions}
+      />
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => {
+          setIsExportModalOpen(false);
+          setExportProject(null);
+        }}
+        project={exportProject || undefined}
+      />{" "}
+      <PreferencesModal
+        isOpen={isPreferencesModalOpen}
+        onClose={() => setIsPreferencesModalOpen(false)}
+      />
+      <LayerStylesModal
+        isOpen={isLayerStylesModalOpen}
+        onClose={() => setIsLayerStylesModalOpen(false)}
+      />
+      <ColorFillModal
+        isOpen={isColorFillModalOpen}
+        onClose={() => setIsColorFillModalOpen(false)}
+      />
+      <ImageSizeModal
+        isOpen={isImageSizeModalOpen}
+        onClose={() => setIsImageSizeModalOpen(false)}
+      />
+      <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} />
+      {/* Update Notification */}
+      {isUpdateAvailable && !isUpdateAvailable.isClosed && (
+        <div
+          className="h-10 bg-accent overflow-hidden animate-banner-slide-down relative"
+          id="banner-update-notification"
+        >
+          {/* Progress Bar */}
+          {updateDownloadProgress !== null && updateDownloadProgress >= 0 && (
+            <div
+              className="absolute bottom-0 left-0 h-1 bg-white/40 transition-all duration-300 z-10"
+              style={{ width: `${updateDownloadProgress}%` }}
+            />
+          )}
 
-      <NewProject isOpen={isNewProjectModalOpen} onClose={() => setIsNewProjectModalOpen(false)} />
+          <style>
+            {`@keyframes banner-fade-in {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+            .animate-banner-fade-in {
+              animation: banner-fade-in 500ms 200ms ease forwards;
+            }
 
+            @keyframes banner-slide-down {
+              from { margin-top: -40px; }
+              to { margin-top: 0; }
+            }
+            @keyframes banner-slide-up {
+              from { margin-top: 0; }
+              to { margin-top: -40px; }
+            }
+            .animate-banner-slide-down {
+              animation: banner-slide-down 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+            }
+            .animate-banner-slide-up {
+              animation: banner-slide-up 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+            }
+          `}
+          </style>
+          <div className="w-full h-full flex gap-3 items-center justify-center px-4 text-[0.85rem] text-text relative opacity-0 animate-banner-fade-in">
+            <span className="mr-2">
+              New version <b>{isUpdateAvailable.version.trim()}</b> is available!
+            </span>
+
+            {!isUpdateAvailable.isPortable && (
+              <button
+                className="underline !cursor-pointer"
+                onClick={() => {
+                  (window as any).electronAPI.openExternal(isUpdateAvailable.releaseUrl);
+                }}
+              >
+                View Release Notes
+              </button>
+            )}
+            <button
+              className="bg-white/90 text-accent px-3 py-1 rounded !cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              disabled={updateDownloadProgress !== null}
+              onClick={() => {
+                if (isUpdateAvailable.isPortable) {
+                  (window as any).electronAPI.openReleasePage(isUpdateAvailable.releaseUrl);
+                } else {
+                  if (isUpdateAvailable.assetName) {
+                    (window as any).electronAPI.downloadUpdate({
+                      version: isUpdateAvailable.version,
+                      assetName: isUpdateAvailable.assetName,
+                    });
+                    setUpdateDownloadProgress(0);
+                  } else {
+                    (window as any).electronAPI.openReleasePage(isUpdateAvailable.releaseUrl);
+                  }
+                }
+              }}
+            >
+              {updateDownloadProgress !== null
+                ? `Downloading... ${updateDownloadProgress}%`
+                : isUpdateAvailable.isPortable
+                  ? "Go to Release Page"
+                  : "Update Now"}
+            </button>
+
+            <button
+              className="flex justify-center items-center text-sm text-text absolute right-3 top-0 bottom-0 my-auto w-6 h-6 rounded-full !cursor-pointer bg-transparent hover:bg-white/20 transition-all "
+              onClick={() => {
+                // Animate slide up before closing
+                const updateNotification = document.getElementById("banner-update-notification");
+                if (updateNotification) {
+                  updateNotification.classList.remove("animate-banner-slide-down");
+                  updateNotification.classList.add("animate-banner-slide-up");
+                  const timeout = setTimeout(() => {
+                    setIsUpdateAvailable({ ...isUpdateAvailable, isClosed: true });
+                    clearTimeout(timeout);
+                  }, 500); // Match the animation duration
+                } else {
+                  setIsUpdateAvailable({ ...isUpdateAvailable, isClosed: true });
+                }
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
       {/* 1. Project Tabs */}
       <ProjectTabs />
-
       {/* 2. Dynamic Header (Tool Options) */}
       {activeTab !== "home" && (
         <header className="bg-[#222] border-b border-bg-tertiary flex items-center">
           <ToolOptions />
         </header>
       )}
-
       {/* 3. Main Area */}
       <main className="flex-1 flex overflow-hidden">
         {activeTab === "home" ? (
@@ -226,28 +480,41 @@ function App() {
               <Toolbar />
             </aside>
 
-            <CanvasViewport />
+            <CanvasViewport key={activeProjectId || "empty"} />
 
             <RightSidebar />
           </>
         )}
       </main>
-
       {/* 4. Footer / Status Bar */}
       <footer className="h-[25px] px-4 bg-[#222] border-t border-bg-tertiary text-[0.75rem] flex items-center justify-between text-[#888]">
-        <div>
-          {activeTab === "home"
-            ? "Welcome to OpenCreate Forge"
-            : `Editing ${activeProject?.name || "Unknown"}.ocfd`}
+        <div
+          className={`flex items-center gap-1 ${activeProject?.parentProjectId ? "italic" : ""} ${activeProject?.isDirty ? "font-bold" : ""}`}
+        >
+          {activeTab === "home" ? (
+            "Welcome to OpenCreate Forge"
+          ) : (
+            <>
+              {activeProject?.parentProjectId ? (
+                <Box size={12} className="text-accent inline-block mb-[2px] mr-1" />
+              ) : null}
+              {`Editing ${fileName}`}
+            </>
+          )}
         </div>
-        {activeProject && (
+        {activeProject && activeTab !== "home" && (
           <div className="flex gap-4">
             <span>
               {activeProject.width} x {activeProject.height} px
             </span>
-            <span className="text-accent font-bold">
+            <button
+              className="text-accent font-bold"
+              onClick={() => {
+                forgeEvents.emit(FORGE_EVENTS.FIT_TO_SCREEN);
+              }}
+            >
               Zoom: {Math.round(activeProject.zoom * 100)}%
-            </span>
+            </button>
           </div>
         )}
       </footer>

@@ -5,7 +5,39 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useUIStore } from "@store/uiStore";
 import LayerList from "./LayerList";
 import HistoryPanel from "./HistoryPanel";
-import { Layers, History, ChevronRight, ChevronLeft, GripVertical } from "lucide-react";
+import {
+  Layers,
+  History,
+  // ChevronRight,
+  // ChevronLeft,
+  GripVertical,
+  ChevronLast,
+} from "lucide-react";
+
+export const ChevronLastInverse = ({
+  size = 24,
+  stroke = "currentColor", // Agora funciona dinamicamente!
+  strokeWidth = 2,
+  ...props
+}: React.SVGProps<SVGSVGElement> & { size?: number | string }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    fill="none"
+    stroke={stroke}
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    {/* Seta interna (Chevron) */}
+    <path d="m13 18l-6-6 6-6" />
+    {/* Linha vertical */}
+    <path d="m17 6v12" />
+  </svg>
+);
 
 const RightSidebar: React.FC = () => {
   const activeTab = useUIStore((state) => state.activeTab);
@@ -103,7 +135,7 @@ const RightSidebar: React.FC = () => {
           className="p-2 hover:bg-white/10 border-x border-transparent transition-colors text-[#888] hover:text-white"
           title={isSidebarExpanded ? "Collapse Sidebar" : "Expand Sidebar"}
         >
-          {isSidebarExpanded ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          {isSidebarExpanded ? <ChevronLast size={16} /> : <ChevronLastInverse size={16} />}
         </button>
 
         <div className="w-full h-[1px] bg-bg-tertiary" />

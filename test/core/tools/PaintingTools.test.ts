@@ -35,6 +35,14 @@ describe("Painting Tools", () => {
       tool.onMouseDown({ button: 0, offsetX: 10, offsetY: 10 } as MouseEvent, context);
       expect(tool.getEditingLayerId()).toBe("layer-1");
     });
+
+    it("should not change layer order during drawing", () => {
+      const tool = new BrushTool();
+      const initialLayers = [...context.project.layers];
+      tool.onMouseDown({ button: 0, offsetX: 10, offsetY: 10 } as MouseEvent, context);
+      tool.onMouseMove({ offsetX: 20, offsetY: 20 } as MouseEvent, context);
+      expect(context.project.layers).toEqual(initialLayers);
+    });
   });
 
   describe("PencilTool", () => {

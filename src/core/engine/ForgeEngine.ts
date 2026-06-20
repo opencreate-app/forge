@@ -1,7 +1,8 @@
 /**
  * Purpose: Core engine class responsible for project rendering, viewport management (zoom/pan), tool orchestration, and selection handling.
  */
-import { Layer, Project, useProjectStore } from "@/renderer/store/projectStore";
+import { Layer, Project, useProjectStore, Guide } from "@/renderer/store/projectStore";
+import { StrokeStyle, DropShadowStyle, InnerShadowStyle } from "@/renderer/store/layerStylesStore";
 import { BaseTool, ToolContext } from "../tools/BaseTool";
 import { MoveTool } from "../tools/MoveTool";
 import { BrushTool } from "../tools/BrushTool";
@@ -11,12 +12,22 @@ import { TransformTool } from "../tools/TransformTool";
 import { SelectTool } from "../tools/SelectTool";
 import { CropTool } from "../tools/CropTool";
 import { TextTool } from "../tools/TextTool";
+import { PaintBucketTool } from "../tools/PaintBucketTool";
 import { useToolStore } from "@/renderer/store/toolStore";
 import { useUIStore } from "@/renderer/store/uiStore";
-import { getOptimizedBoundingBox } from "../utils/imageUtils";
+import UPNG from "upng-js";
+import {
+  getOptimizedBoundingBox,
+  // quantizeImageData,
+  safeBase64FromBuffer,
+} from "../utils/imageUtils";
+import { FORGE_CLIPBOARD_METADATA_KEY, ClipboardMetadata } from "@/renderer/utils/clipboardUtils";
+import { getCombinedStyledBounds } from "@/renderer/utils/projectUtils";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TextLayer } from "../layers/TextLayer";
 import { GroupLayer } from "../layers/GroupLayer";
+import { SmartObjectLayer } from "../layers/SmartObjectLayer";
+import { ColorFillLayer } from "../layers/ColorFillLayer";
 
 /**
  * Represents the current state of the canvas viewport.
@@ -30,6 +41,10 @@ export interface ViewportState {
   originY: number;
 }
 
+export interface EngineOptions {
+  headless?: boolean;
+}
+
 /**
  * Core engine class responsible for project rendering, viewport management (zoom/pan),
  * tool orchestration, and selection handling. It manages the main rendering loop
@@ -39,6 +54,7 @@ export class ForgeEngine {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private project: Project | null = null;
+  private options: EngineOptions;
   private checkerPattern: CanvasPattern | null = null;
 
   private ZOOM_SENSITIVITY = 0.05;
@@ -68,22 +84,37 @@ export class ForgeEngine {
   private projectCtx: CanvasRenderingContext2D;
 
   private currentToolId: string | null = null;
-  private onViewportChange: (zoom: number, x: number, y: number) => void;
+  private onViewportChange?: (zoom: number, x: number, y: number) => void;
+
+  private draggingGuide: {
+    id?: string;
+    type: "horizontal" | "vertical";
+    position: number;
+    isNew: boolean;
+  } | null = null;
+  private snappedLayerGuide: {
+    type: "horizontal" | "vertical";
+    position: number;
+  } | null = null;
+  private hoveredGuide: { id: string; type: "horizontal" | "vertical" } | null = null;
 
   // private lastMouseEvent: MouseEvent | null = null;
 
   /**
-   * Initializes the engine with a target canvas and viewport change callback.
+   * Initializes the engine with a target canvas and optional settings.
    * @param canvas The HTML canvas element to render into.
-   * @param onViewportChange Callback fired when zoom or pan changes.
+   * @param onViewportChange Optional callback fired when zoom or pan changes.
+   * @param options Engine configuration options.
    */
   constructor(
     canvas: HTMLCanvasElement,
-    onViewportChange: (zoom: number, x: number, y: number) => void,
+    onViewportChange?: (zoom: number, x: number, y: number) => void,
+    options: EngineOptions = {},
   ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
     this.onViewportChange = onViewportChange;
+    this.options = options;
 
     this.selectionCanvas = document.createElement("canvas");
     this.selectionCtx = this.selectionCanvas.getContext("2d", {
@@ -99,6 +130,7 @@ export class ForgeEngine {
       brush: new BrushTool(),
       pencil: new PencilTool(),
       eraser: new EraserTool(),
+      paintBucket: new PaintBucketTool(),
       transform: new TransformTool(),
       crop: new CropTool(),
       text: new TextTool(),
@@ -110,9 +142,15 @@ export class ForgeEngine {
     this.handleMouseMove = this.handleMouseMove.bind(this);
     this.handleMouseUp = this.handleMouseUp.bind(this);
     this.handleKeyDown = this.handleKeyDown.bind(this);
+    this.handleFontsLoaded = this.handleFontsLoaded.bind(this);
 
-    this.setupEventListeners();
-    this.startRenderLoop();
+    if (!this.options.headless) {
+      this.setupEventListeners();
+      this.startRenderLoop();
+    }
+
+    // Export for DevTools access (for testing/debugging)
+    (window as any).ForgeEngine = this;
   }
 
   private unsubscribeToolStore: (() => void) | null = null;
@@ -127,18 +165,23 @@ export class ForgeEngine {
   };
 
   /**
-   * Exports the current project to a PNG file using the Electron API.
+   * Exports the current project with the specified options.
    */
-  private handleExportPNG = async () => {
+  private handleExport = async (e: any) => {
+    const { format = "image/png", quality = 1, filename, filters, width, height } = e.detail || {};
+
     if (this.project) {
-      const dataURL = await this.exportToPNG();
+      const dataURL = await this.exportProject(format, quality, width, height);
       if ((window as any).electronAPI) {
         const result = await (window as any).electronAPI.saveFile({
           dataURL,
-          defaultName: `${this.project.name}.png`,
+          defaultName: filename || `${this.project.name}.${format.split("/")[1]}`,
+          filters,
         });
         if (result.success) {
-          useUIStore.getState().showToast("Project exported as PNG", "info");
+          useUIStore
+            .getState()
+            .showToast(`Project exported as ${format.split("/")[1].toUpperCase()}`, "info");
         }
       }
     }
@@ -157,6 +200,28 @@ export class ForgeEngine {
   private handleDuplicate = () => {
     this.duplicateLayer();
   };
+
+  private handleFontsLoaded() {
+    this.invalidateAllTextLayers();
+  }
+
+  /**
+   * Invalidates the cache for all text layers in the current project.
+   * Useful when fonts finish loading in the background.
+   */
+  public invalidateAllTextLayers() {
+    if (!this.project) return;
+    let hasText = false;
+    for (const layer of this.project.layers) {
+      if (layer.type === "text") {
+        this.invalidateLayerCache(layer.id);
+        hasText = true;
+      }
+    }
+    if (hasText && !this.options.headless) {
+      this.render();
+    }
+  }
 
   /**
    * Handles zoom requests from external events.
@@ -245,8 +310,331 @@ export class ForgeEngine {
     window.addEventListener("forge:select-clear", this.handleClearSelection);
     window.addEventListener("forge:select-all", this.handleSelectAll);
     window.addEventListener("forge:duplicate-layer", this.handleDuplicate);
-    window.addEventListener("forge:export-png", this.handleExportPNG);
+    window.addEventListener("forge:export-project", this.handleExport as any);
+    window.addEventListener("forge:save-image", this.handleSaveImage as any);
+    window.addEventListener("forge:request-export-preview", this.handleRequestExportPreview as any);
+    window.addEventListener("forge:request-thumbnail", this.handleRequestThumbnail as any);
     window.addEventListener("forge:zoom-to", this.handleZoomTo as any);
+    window.addEventListener("forge:export-to-clipboard", this.handleExportToClipboard as any);
+    window.addEventListener("forge:guide-drag-new", this.handleGuideDragNew as any);
+
+    if ((document as any).fonts) {
+      (document as any).fonts.addEventListener("loadingdone", this.handleFontsLoaded);
+    }
+  }
+
+  /**
+   * Handles starting a new guide drag initiated from a ruler.
+   */
+  private handleGuideDragNew = (e: CustomEvent) => {
+    if (!this.project) return;
+    const { type, originalEvent } = e.detail;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const projPos = this.screenToProject(
+      originalEvent.clientX - rect.left,
+      originalEvent.clientY - rect.top,
+    );
+    const position = type === "horizontal" ? projPos.y : projPos.x;
+
+    this.draggingGuide = {
+      type,
+      position: Math.round(position),
+      isNew: true,
+    };
+  };
+
+  /**
+   * Preloads all images and fonts for the project layers.
+   * This is essential for headless mode to ensure everything is ready before rendering.
+   */
+  public async preloadImages(): Promise<void> {
+    if (!this.project) return;
+
+    // 1. Wait for fonts to be ready
+    try {
+      // Find all unique font/weight combinations used in text layers (including inside textSpans)
+      const uniqueFonts = new Map<string, Set<string | number>>();
+      const textLayerIds: string[] = [];
+
+      for (const layer of this.project.layers) {
+        if (layer.type === "text") {
+          textLayerIds.push(layer.id);
+          const family = layer.fontFamily || "Arial";
+          const weight = layer.fontWeight || "400";
+
+          if (!uniqueFonts.has(family)) uniqueFonts.set(family, new Set());
+          uniqueFonts.get(family)!.add(weight);
+
+          if (layer.textSpans) {
+            for (const span of layer.textSpans) {
+              const spanFamily = span.fontFamily || family;
+              const spanWeight = span.fontWeight || weight;
+              if (!uniqueFonts.has(spanFamily)) uniqueFonts.set(spanFamily, new Set());
+              uniqueFonts.get(spanFamily)!.add(spanWeight);
+            }
+          }
+        }
+      }
+
+      // Import useFontStore dynamically to avoid circular dependency or import issues in headless canvas contexts
+      const { useFontStore } = await import("@/renderer/store/fontStore");
+      const fontStore = useFontStore.getState();
+
+      // Ensure all google fonts are initialized in the store
+      await fontStore.loadGoogleFonts();
+
+      // Load each unique font face (family + weight)
+      const fontPromises: Promise<any>[] = [];
+      for (const [family, weights] of uniqueFonts.entries()) {
+        for (const weight of weights) {
+          fontPromises.push(fontStore.ensureFontLoaded(family, weight));
+        }
+      }
+      await Promise.all(fontPromises);
+
+      if ((document as any).fonts) {
+        // Wait for all loaded fonts to be fully loaded/ready in document.fonts
+        const loadWaitPromises: Promise<any>[] = [];
+        for (const [family, weights] of uniqueFonts.entries()) {
+          for (const weight of weights) {
+            try {
+              loadWaitPromises.push((document as any).fonts.load(`${weight} 1em "${family}"`));
+            } catch (e) {
+              console.warn(`Failed waiting for font ready: ${family} (${weight})`, e);
+            }
+          }
+        }
+        await Promise.allSettled(loadWaitPromises);
+        await (document as any).fonts.ready;
+      }
+
+      // Give a tiny safety window (e.g., 50ms) for the browser to register the font face in the drawing context
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // CRITICAL: Invalidate all text layer caches now that fonts are definitively loaded and registered.
+      // This is done AFTER the safety window to ensure the render loop doesn't re-cache a fallback font
+      // during the registration period.
+      for (const id of textLayerIds) {
+        this.invalidateLayerCache(id);
+      }
+    } catch (e) {
+      console.warn("Font preloading failed", e);
+    }
+
+    // 2. Wait for all raster, smart object images, and masks to be loaded and decoded
+    const promises = this.project.layers.map(async (layer) => {
+      const sourceData = (
+        layer.type === "smart_object" ? layer.dataOriginal || layer.data : layer.data
+      ) as string | undefined;
+
+      const maskData = layer.mask?.data;
+
+      const tasks: Promise<void>[] = [];
+
+      if ((layer.type === "raster" || layer.type === "smart_object") && sourceData) {
+        tasks.push(this.preloadImage(sourceData));
+      }
+
+      if (maskData) {
+        tasks.push(this.preloadImage(maskData));
+      }
+
+      await Promise.all(tasks);
+    });
+
+    await Promise.all(promises);
+  }
+
+  /**
+   * Internal helper to load and decode an image for caching.
+   * @param src The image source (DataURL or URL).
+   */
+  private preloadImage(src: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let img = this.imageCache.get(src);
+      if (!img) {
+        img = new Image();
+        img.src = src;
+        this.imageCache.set(src, img);
+      }
+
+      const onDone = async () => {
+        img?.removeEventListener("load", onDone);
+        img?.removeEventListener("error", onDone);
+
+        // Wait for decoding to ensure it's ready for canvas drawing
+        try {
+          if (img?.decode) await img.decode();
+        } catch (e) {
+          console.warn("Image decode failed", e);
+        }
+        resolve();
+      };
+
+      if (img.complete && img.naturalWidth > 0) {
+        onDone();
+      } else {
+        img.addEventListener("load", onDone);
+        img.addEventListener("error", onDone);
+        // Safety: if it failed and is complete, naturalWidth will be 0
+        if (img.complete && img.naturalWidth === 0) resolve();
+      }
+    });
+  }
+
+  /**
+   * Handles exporting the full project to the clipboard.
+   */
+  private handleExportToClipboard = async () => {
+    if (!this.project) return;
+    await this.exportToClipboard();
+  };
+
+  /**
+   * Copies the entire project to the system clipboard.
+   */
+  public async exportToClipboard() {
+    if (!this.project) return;
+
+    await this.preloadImages();
+
+    // We avoid fetch(dataURL) due to CSP restrictions in some environments.
+    // Instead, we'll manually render the project to a blob.
+    const finalWidth = this.project.width;
+    const finalHeight = this.project.height;
+
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = finalWidth;
+    exportCanvas.height = finalHeight;
+    const exportCtx = exportCanvas.getContext("2d")!;
+    exportCtx.imageSmoothingEnabled = false;
+
+    for (const layer of this.project.layers) {
+      if (layer.visible && !layer.parentId) {
+        this.renderLayer(exportCtx, layer);
+      }
+    }
+
+    try {
+      const blob = await new Promise<Blob | null>((resolve) =>
+        exportCanvas.toBlob(resolve, "image/png"),
+      );
+
+      if (!blob) throw new Error("Failed to create blob");
+
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "image/png": blob,
+        }),
+      ]);
+      useUIStore.getState().showToast("Project copied to clipboard", "info");
+    } catch (err) {
+      console.error("Failed to export to clipboard:", err);
+      useUIStore.getState().showToast("Failed to copy to clipboard", "error");
+    }
+  }
+
+  /**
+   * Handles direct image saving (Ctrl+S) for image-based projects.
+   */
+  private handleSaveImage = async (e: any) => {
+    const { filePath } = e.detail || {};
+
+    if (this.project && filePath) {
+      const ext = filePath.split(".").pop().toLowerCase() || "";
+      const formatMap: Record<string, string> = {
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        webp: "image/webp",
+        bmp: "image/bmp",
+      };
+      const format = formatMap[ext] || "image/png";
+
+      const dataURL = await this.exportProject(
+        format,
+        1.0,
+        this.project.width,
+        this.project.height,
+      );
+
+      if ((window as any).electronAPI) {
+        const result = await (window as any).electronAPI.saveImage({
+          dataURL,
+          filePath,
+        });
+
+        if (result.success) {
+          useProjectStore.getState().updateProject(this.project.id, { isDirty: false });
+          useUIStore.getState().showToast("Image saved successfully", "info");
+        } else {
+          useUIStore.getState().showToast(`Failed to save image: ${result.error}`, "error");
+        }
+      }
+    }
+  };
+
+  /**
+   * Handles a request for an export preview, generating a dataURL and calling the provided callback.
+   */
+  private handleRequestExportPreview = async (e: any) => {
+    const { format, quality, callback, width, height } = e.detail;
+    if (this.project) {
+      const dataURL = await this.exportProject(format, quality, width, height);
+      callback(dataURL);
+    }
+  };
+
+  /**
+   * Handles a request for a project thumbnail.
+   */
+  private handleRequestThumbnail = async (e: any) => {
+    const { callback, size = 200 } = e.detail;
+    if (this.project) {
+      const dataURL = await this.generateThumbnail(size);
+      callback(dataURL);
+    }
+  };
+
+  /**
+   * Generates a square thumbnail of the current project.
+   */
+  public async generateThumbnail(size: number = 200): Promise<string> {
+    if (!this.project) return "";
+
+    await this.preloadImages();
+    this.render();
+
+    const thumbCanvas = document.createElement("canvas");
+    thumbCanvas.width = size;
+    thumbCanvas.height = size;
+    const thumbCtx = thumbCanvas.getContext("2d")!;
+    thumbCtx.imageSmoothingEnabled = true;
+
+    // Dark background for the square
+    thumbCtx.fillStyle = "#1a1a1a";
+    thumbCtx.fillRect(0, 0, size, size);
+
+    const projectRatio = this.project.width / this.project.height;
+    let drawW, drawH, drawX, drawY;
+
+    if (projectRatio > 1) {
+      // Landscape: fit to height, crop horizontal
+      drawH = size;
+      drawW = size * projectRatio;
+      drawX = (size - drawW) / 2;
+      drawY = 0;
+    } else {
+      // Portrait or square: fit to width, crop vertical
+      drawW = size;
+      drawH = size / projectRatio;
+      drawX = 0;
+      drawY = (size - drawH) / 2;
+    }
+
+    thumbCtx.drawImage(this.projectBuffer, drawX, drawY, drawW, drawH);
+
+    return thumbCanvas.toDataURL("image/jpeg", 0.9);
   }
 
   /**
@@ -280,6 +668,14 @@ export class ForgeEngine {
    * Handles keyboard press events for shortcuts and tool interactions.
    */
   private handleKeyDown = (e: KeyboardEvent) => {
+    // Check if any modal is open before processing global shortcuts
+    if (useUIStore.getState().isAnyModalOpen()) return;
+
+    // Do not trigger global shortcuts if the user is typing in an input
+    // const target = e.target as HTMLElement;
+    // if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+    //   return;
+
     this.isCtrlPressed = e.ctrlKey || e.metaKey;
 
     const tool = this.getActiveTool();
@@ -430,21 +826,22 @@ export class ForgeEngine {
       );
       if (!blob) return;
 
-      const metadata = {
+      const metadata: ClipboardMetadata = {
         source: "forge-editor",
         projectId: this.project.id,
         x: finalX,
         y: finalY,
+        width: sourceCanvas.width,
+        height: sourceCanvas.height,
+        // blobSize: blob.size,
+        timestamp: Date.now(),
       };
 
-      const metadataBlob = new Blob([JSON.stringify(metadata)], {
-        type: "text/plain",
-      });
+      localStorage.setItem(FORGE_CLIPBOARD_METADATA_KEY, JSON.stringify(metadata));
 
       await navigator.clipboard.write([
         new ClipboardItem({
           "image/png": blob,
-          "text/plain": metadataBlob,
         }),
       ]);
     } catch (err) {
@@ -479,26 +876,47 @@ export class ForgeEngine {
         let pasteX: number | null = null;
         let pasteY: number | null = null;
 
-        if (item.types.includes("text/plain")) {
-          const textBlob = await item.getType("text/plain");
-          const text = await textBlob.text();
+        const imageBlob = await item.getType(imageType);
+
+        // Try to retrieve and verify metadata from localStorage
+        const storedMetadata = localStorage.getItem(FORGE_CLIPBOARD_METADATA_KEY);
+        if (storedMetadata) {
           try {
-            const metadata = JSON.parse(text);
-            if (metadata.source === "forge-editor") {
+            const metadata = JSON.parse(storedMetadata) as ClipboardMetadata;
+            // Verify source and project (dimensions will be verified in img.onload)
+            if (metadata.source === "forge-editor" && metadata.projectId === this.project.id) {
               pasteX = metadata.x;
               pasteY = metadata.y;
             }
           } catch (_) {
-            // Not our metadata
+            // Invalid metadata
           }
         }
 
-        const imageBlob = await item.getType(imageType);
         const reader = new FileReader();
         reader.onload = (e) => {
           const dataUrl = e.target?.result as string;
           const img = new Image();
           img.onload = () => {
+            // Final verification with dimensions and relaxed blob size
+            const metadata = storedMetadata
+              ? (JSON.parse(storedMetadata) as ClipboardMetadata)
+              : null;
+            const isVerified =
+              metadata &&
+              pasteX !== null &&
+              pasteY !== null &&
+              metadata.width === img.naturalWidth &&
+              metadata.height === img.naturalHeight; // &&
+            // Relaxed blob size: allow up to 2KB difference for re-encoding/metadata
+            // Math.abs(metadata.blobSize - imageBlob.size) < 2048;
+
+            if (!isVerified) {
+              // Reset coordinates if verification fails
+              pasteX = null;
+              pasteY = null;
+            }
+
             if (pasteX === null || pasteY === null) {
               // Center in viewport
               const viewportWidth = this.canvas.width;
@@ -536,6 +954,37 @@ export class ForgeEngine {
     if (this.isPanning) {
       this.isPanning = false;
       this.canvas.style.cursor = "default";
+      return;
+    }
+
+    if (this.draggingGuide && this.project) {
+      const rect = this.canvas.getBoundingClientRect();
+      // We consider it "deleted" if dragged back to the ruler area (outside the canvas in its orientation)
+      const isOutside =
+        this.draggingGuide.type === "horizontal"
+          ? e.clientY < rect.top || e.clientY > rect.bottom
+          : e.clientX < rect.left || e.clientX > rect.right;
+
+      if (isOutside) {
+        if (!this.draggingGuide.isNew && this.draggingGuide.id) {
+          useProjectStore.getState().removeGuide(this.project.id, this.draggingGuide.id);
+        }
+      } else {
+        if (this.draggingGuide.isNew) {
+          useProjectStore.getState().addGuide(this.project.id, {
+            id: Math.random().toString(36).substr(2, 9),
+            type: this.draggingGuide.type,
+            position: this.draggingGuide.position,
+          });
+        } else if (this.draggingGuide.id) {
+          useProjectStore.getState().updateGuide(this.project.id, this.draggingGuide.id, {
+            position: this.draggingGuide.position,
+          });
+        }
+      }
+
+      this.draggingGuide = null;
+      this.snappedLayerGuide = null;
       return;
     }
 
@@ -620,6 +1069,16 @@ export class ForgeEngine {
       },
       ensureLayerCanvas: (layer: Layer) => this.ensureLayerCanvas(layer),
       animateFitToScreen: (ow?: number, oh?: number) => this.animateFitToScreen(ow, oh),
+      isLayerLocked: (layerId: string) => {
+        const layer = this.project?.layers.find((l) => l.id === layerId);
+        if (!layer) return false;
+        return layer.locked || this.isAncestorLocked(layer);
+      },
+      isLayerVisible: (layerId: string) => {
+        const layer = this.project?.layers.find((l) => l.id === layerId);
+        if (!layer) return false;
+        return layer.visible && this.isAncestorVisible(layer);
+      },
     };
 
     Object.defineProperty(context, "project", {
@@ -720,7 +1179,7 @@ export class ForgeEngine {
     this.project.panX = newOriginX;
     this.project.panY = newOriginY;
 
-    this.onViewportChange(newScale, newOriginX, newOriginY);
+    this.onViewportChange?.(newScale, newOriginX, newOriginY);
   }
 
   /**
@@ -737,6 +1196,17 @@ export class ForgeEngine {
       this.canvas.style.cursor = "grabbing";
       e.preventDefault();
       return;
+    }
+
+    if (this.hoveredGuide && e.button === 0) {
+      const guide = this.project.guides.find((g) => g.id === this.hoveredGuide!.id);
+      if (guide) {
+        this.draggingGuide = {
+          ...guide,
+          isNew: false,
+        };
+        return;
+      }
     }
 
     const tool = this.getActiveTool();
@@ -791,8 +1261,87 @@ export class ForgeEngine {
       this.project.panX = newPanX;
       this.project.panY = newPanY;
 
-      this.onViewportChange(this.project.zoom, newPanX, newPanY);
+      this.onViewportChange?.(this.project.zoom, newPanX, newPanY);
       return;
+    }
+
+    if (this.draggingGuide) {
+      const projPos = this.screenToProject(offsetX, offsetY);
+      let position = this.draggingGuide.type === "horizontal" ? projPos.y : projPos.x;
+
+      // --- SNAP GUIDE TO LAYERS ---
+      const snapMargin = 4 / this.project.zoom;
+      let snapped = false;
+      this.snappedLayerGuide = null;
+
+      for (const layer of this.project.layers) {
+        if (!this.isAncestorVisible(layer)) continue;
+
+        if (this.draggingGuide.type === "vertical") {
+          const points = [layer.x, layer.x + layer.width, layer.x + layer.width / 2];
+          for (const pt of points) {
+            if (Math.abs(position - pt) < snapMargin) {
+              position = pt;
+              snapped = true;
+              this.snappedLayerGuide = { type: "vertical", position: pt };
+              break;
+            }
+          }
+        } else {
+          const points = [layer.y, layer.y + layer.height, layer.y + layer.height / 2];
+          for (const pt of points) {
+            if (Math.abs(position - pt) < snapMargin) {
+              position = pt;
+              snapped = true;
+              this.snappedLayerGuide = { type: "horizontal", position: pt };
+              break;
+            }
+          }
+        }
+        if (snapped) break;
+      }
+
+      if (!snapped) {
+        position = Math.round(position);
+      }
+      // --- END SNAP GUIDE TO LAYERS ---
+
+      this.draggingGuide.position = position;
+      this.canvas.style.cursor =
+        this.draggingGuide.type === "horizontal" ? "ns-resize" : "ew-resize";
+      return;
+    }
+
+    // Guide Hover Detection
+    const showGuides = useUIStore.getState().showGuides;
+    const projPos = this.screenToProject(offsetX, offsetY);
+    const threshold = 5 / this.project.zoom; // 5 screen pixels tolerance
+    let foundHover: { id: string; type: "horizontal" | "vertical" } | null = null;
+
+    // Only check for hover if we're not dragging a guide and guides are enabled
+    // And only if MoveTool is active to prevent interference with other tools that require precise mouse movement
+    if (showGuides && this.project.guides.length > 0 && this.getActiveTool()?.id === "move") {
+      for (const guide of this.project.guides) {
+        if (guide.type === "horizontal") {
+          if (Math.abs(projPos.y - guide.position) < threshold) {
+            foundHover = { id: guide.id, type: "horizontal" };
+            break;
+          }
+        } else {
+          if (Math.abs(projPos.x - guide.position) < threshold) {
+            foundHover = { id: guide.id, type: "vertical" };
+            break;
+          }
+        }
+      }
+    }
+
+    this.hoveredGuide = foundHover;
+    if (this.hoveredGuide) {
+      this.canvas.style.cursor = foundHover?.type === "horizontal" ? "ns-resize" : "ew-resize";
+    } else {
+      // Default tool cursor will be handled later if not hovered
+      this.canvas.style.cursor = "default";
     }
 
     const tool = this.getActiveTool();
@@ -824,11 +1373,21 @@ export class ForgeEngine {
   }
 
   /**
-   * Stops the main rendering loop and removes all event listeners.
+   * Completely stops the engine and removes all event listeners.
+   */
+  public destroy() {
+    this.stopRenderLoop();
+  }
+
+  /**
+   * Stops the animation loop and removes event listeners from the canvas and window.
    */
   public stopRenderLoop() {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
+    }
+    if ((document as any).fonts) {
+      (document as any).fonts.removeEventListener("loadingdone", this.handleFontsLoaded);
     }
     this.canvas.removeEventListener("wheel", this.handleWheel);
     this.canvas.removeEventListener("mousedown", this.handleMouseDown);
@@ -839,8 +1398,15 @@ export class ForgeEngine {
     window.removeEventListener("forge:select-clear", this.handleClearSelection);
     window.removeEventListener("forge:select-all", this.handleSelectAll);
     window.removeEventListener("forge:duplicate-layer", this.handleDuplicate);
-    window.removeEventListener("forge:export-png", this.handleExportPNG);
+    window.removeEventListener("forge:export-project", this.handleExport as any);
+    window.removeEventListener("forge:save-image", this.handleSaveImage as any);
+    window.removeEventListener(
+      "forge:request-export-preview",
+      this.handleRequestExportPreview as any,
+    );
     window.removeEventListener("forge:zoom-to", this.handleZoomTo as any);
+    window.removeEventListener("forge:export-to-clipboard", this.handleExportToClipboard as any);
+    window.removeEventListener("forge:guide-drag-new", this.handleGuideDragNew as any);
 
     // if (this.unsubscribeToolStore) {
     //   this.unsubscribeToolStore();
@@ -882,6 +1448,9 @@ export class ForgeEngine {
       this.layerCanvasCache.clear();
       this.layerReadyCache.clear();
       this.imageCache.clear();
+      this.draggingGuide = null;
+      this.snappedLayerGuide = null;
+      this.hoveredGuide = null;
     } else if (prevLayers !== project.layers) {
       // Invalidate specific layer caches only if data/size changed
       for (const layer of project.layers) {
@@ -1077,6 +1646,91 @@ export class ForgeEngine {
   }
 
   /**
+   * Renders the project's guides and any currently being dragged.
+   */
+  private renderGuides() {
+    if (!this.project) return;
+
+    const showGuides = useUIStore.getState().showGuides;
+    if (!showGuides && !this.draggingGuide) return;
+
+    this.ctx.save();
+    this.ctx.setTransform(
+      this.project.zoom,
+      0,
+      0,
+      this.project.zoom,
+      this.project.panX,
+      this.project.panY,
+    );
+
+    this.ctx.lineWidth = 1 / this.project.zoom;
+    this.ctx.strokeStyle = "#00ffff"; // Cyan guides
+
+    const guides: Guide[] = [];
+
+    if (showGuides) {
+      guides.push(...(this.project.guides || []));
+    }
+
+    if (this.draggingGuide) {
+      if (!this.draggingGuide.isNew) {
+        const index = guides.findIndex((g) => g.id === this.draggingGuide!.id);
+        if (index !== -1) {
+          guides[index] = { ...guides[index], position: this.draggingGuide.position };
+        } else {
+          // If hidden but dragging existing, add it back to render
+          guides.push({
+            id: this.draggingGuide.id!,
+            type: this.draggingGuide.type,
+            position: this.draggingGuide.position,
+          });
+        }
+      } else {
+        guides.push({
+          id: "ghost",
+          type: this.draggingGuide.type,
+          position: this.draggingGuide.position,
+        });
+      }
+    }
+
+    // Viewport bounds in project space
+    const viewportWidth = this.canvas.width / this.project.zoom;
+    const viewportHeight = this.canvas.height / this.project.zoom;
+    const startX = -this.project.panX / this.project.zoom;
+    const startY = -this.project.panY / this.project.zoom;
+
+    for (const guide of guides) {
+      this.ctx.beginPath();
+      if (guide.type === "horizontal") {
+        this.ctx.moveTo(startX, guide.position);
+        this.ctx.lineTo(startX + viewportWidth, guide.position);
+      } else {
+        this.ctx.moveTo(guide.position, startY);
+        this.ctx.lineTo(guide.position, startY + viewportHeight);
+      }
+      this.ctx.stroke();
+    }
+
+    // Render red snap line if guide is snapped to a layer
+    if (this.snappedLayerGuide) {
+      this.ctx.beginPath();
+      this.ctx.strokeStyle = "red";
+      if (this.snappedLayerGuide.type === "horizontal") {
+        this.ctx.moveTo(startX, this.snappedLayerGuide.position);
+        this.ctx.lineTo(startX + viewportWidth, this.snappedLayerGuide.position);
+      } else {
+        this.ctx.moveTo(this.snappedLayerGuide.position, startY);
+        this.ctx.lineTo(this.snappedLayerGuide.position, startY + viewportHeight);
+      }
+      this.ctx.stroke();
+    }
+
+    this.ctx.restore();
+  }
+
+  /**
    * Resizes the viewport to fit the project on screen.
    */
   public fitToScreen() {
@@ -1096,7 +1750,7 @@ export class ForgeEngine {
     this.project.zoom = scale;
     this.project.panX = originX;
     this.project.panY = originY;
-    this.onViewportChange(scale, originX, originY);
+    this.onViewportChange?.(scale, originX, originY);
   }
 
   /**
@@ -1174,7 +1828,7 @@ export class ForgeEngine {
       this.project.zoom = currentZoom;
       this.project.panX = currentPanX;
       this.project.panY = currentPanY;
-      this.onViewportChange(currentZoom, currentPanX, currentPanY);
+      this.onViewportChange?.(currentZoom, currentPanX, currentPanY);
 
       if (progress < 1) {
         this.viewportAnimationId = requestAnimationFrame(animate);
@@ -1197,6 +1851,28 @@ export class ForgeEngine {
       layer.y >= projectHeight ||
       layer.y + layer.height <= 0
     );
+  }
+
+  /**
+   * Checks if all ancestors of a layer are visible.
+   */
+  private isAncestorVisible(layer: Layer): boolean {
+    if (!this.project || !layer.parentId) return true;
+    const parent = this.project.layers.find((l) => l.id === layer.parentId);
+    if (!parent) return true;
+    if (!parent.visible) return false;
+    return this.isAncestorVisible(parent);
+  }
+
+  /**
+   * Checks if any ancestor of a layer is locked.
+   */
+  private isAncestorLocked(layer: Layer): boolean {
+    if (!this.project || !layer.parentId) return false;
+    const parent = this.project.layers.find((l) => l.id === layer.parentId);
+    if (!parent) return false;
+    if (parent.locked) return true;
+    return this.isAncestorLocked(parent);
   }
 
   /**
@@ -1237,8 +1913,13 @@ export class ForgeEngine {
     this.projectCtx.imageSmoothingEnabled = false;
 
     for (const layer of this.project.layers) {
-      if (layer.visible) {
-        if (this.intersects(layer, this.project.width, this.project.height)) {
+      if (layer.visible && !layer.parentId && this.isAncestorVisible(layer)) {
+        // Groups should always be rendered to the buffer if they are top-level,
+        // as they act as containers and their 0-dimension bounds shouldn't cause them to be skipped.
+        if (
+          layer.type === "group" ||
+          this.intersects(layer, this.project.width, this.project.height)
+        ) {
           this.renderLayer(this.projectCtx, layer);
         }
       }
@@ -1269,7 +1950,13 @@ export class ForgeEngine {
 
     // Render layers that are outside the project (no clipping)
     for (const layer of this.project.layers) {
-      if (layer.visible && !this.intersects(layer, this.project.width, this.project.height)) {
+      if (
+        layer.visible &&
+        !layer.parentId &&
+        layer.type !== "group" && // Groups are already handled in the buffer loop
+        this.isAncestorVisible(layer) &&
+        !this.intersects(layer, this.project.width, this.project.height)
+      ) {
         this.renderLayer(this.ctx, layer);
       }
     }
@@ -1277,6 +1964,8 @@ export class ForgeEngine {
     if (this.project.zoom >= 10) {
       this.renderPixelGrid();
     }
+
+    this.renderGuides();
 
     // --- STEP 3: RENDER TOOLS AND UI ---
     const tool = this.getActiveTool();
@@ -1290,9 +1979,12 @@ export class ForgeEngine {
       if (activeLayer && activeLayer.id !== editingLayerId) {
         this.ctx.save();
 
-        if (!activeLayer.visible) {
+        const effectivelyVisible = activeLayer.visible && this.isAncestorVisible(activeLayer);
+        const effectivelyLocked = activeLayer.locked || this.isAncestorLocked(activeLayer);
+
+        if (!effectivelyVisible) {
           this.ctx.strokeStyle = "rgba(150, 150, 150, 0.7)";
-        } else if (activeLayer.locked) {
+        } else if (effectivelyLocked) {
           this.ctx.strokeStyle = "rgba(255, 204, 0, 0.9)";
         } else {
           this.ctx.strokeStyle = "rgba(0, 120, 255, 0.9)";
@@ -1332,14 +2024,6 @@ export class ForgeEngine {
     ctx.globalAlpha = layer.opacity / 100;
     ctx.globalCompositeOperation = layer.blendMode;
 
-    if (layer.rotation) {
-      const centerX = layer.x + layer.width / 2;
-      const centerY = layer.y + layer.height / 2;
-      ctx.translate(centerX, centerY);
-      ctx.rotate((layer.rotation * Math.PI) / 180);
-      ctx.translate(-centerX, -centerY);
-    }
-
     const tool = this.getActiveTool();
     const isEditing = tool?.getEditingLayerId() === layer.id;
     const editingState = isEditing ? (tool as any).getEditingState?.() : undefined;
@@ -1348,6 +2032,119 @@ export class ForgeEngine {
       editingState.isCtrlPressed = this.isCtrlPressed;
     }
 
+    let renderLayerTarget = layer;
+
+    if (isEditing && tool?.id === "transform") {
+      const transform = useToolStore.getState().toolSettings.transform;
+      const isRotated = Math.abs(transform.rotation % 360) >= 0.01;
+
+      if (!isRotated) {
+        // Pixel-perfect rendering when not rotated
+        const targetWidth = Math.round(transform.width * Math.abs(transform.scaleX));
+        const targetHeight = Math.round(transform.height * Math.abs(transform.scaleY));
+        const finalX = Math.round(transform.x - targetWidth * transform.anchor.x);
+        const finalY = Math.round(transform.y - targetHeight * transform.anchor.y);
+
+        if (layer.type === "smart_object") {
+          renderLayerTarget = {
+            ...layer,
+            width: targetWidth,
+            height: targetHeight,
+            data: layer.dataOriginal || layer.data,
+            x: finalX,
+            y: finalY,
+            rotation: 0,
+          };
+        } else {
+          const canvas = this.layerCanvasCache.get(layer.id);
+          const ready = this.layerReadyCache.get(layer.id);
+          if (canvas && ready) {
+            ctx.save();
+            ctx.scale(transform.scaleX < 0 ? -1 : 1, transform.scaleY < 0 ? -1 : 1);
+            const drawX = transform.scaleX < 0 ? -(finalX + targetWidth) : finalX;
+            const drawY = transform.scaleY < 0 ? -(finalY + targetHeight) : finalY;
+
+            ctx.drawImage(canvas, drawX, drawY, targetWidth, targetHeight);
+            ctx.restore();
+            ctx.restore(); // Restore layer global state
+            return;
+          }
+        }
+      } else {
+        // Rotated preview
+        ctx.translate(transform.x, transform.y);
+        ctx.rotate((transform.rotation * Math.PI) / 180);
+
+        if (layer.type === "smart_object") {
+          const targetWidth = Math.round(transform.width * Math.abs(transform.scaleX));
+          const targetHeight = Math.round(transform.height * Math.abs(transform.scaleY));
+          ctx.scale(transform.scaleX < 0 ? -1 : 1, transform.scaleY < 0 ? -1 : 1);
+          renderLayerTarget = {
+            ...layer,
+            width: targetWidth,
+            height: targetHeight,
+            data: layer.dataOriginal || layer.data,
+            x: -targetWidth * transform.anchor.x,
+            y: -targetHeight * transform.anchor.y,
+            rotation: 0,
+          };
+        } else {
+          ctx.scale(transform.scaleX, transform.scaleY);
+          const lx = -transform.width * transform.anchor.x;
+          const ly = -transform.height * transform.anchor.y;
+          renderLayerTarget = {
+            ...layer,
+            x: lx,
+            y: ly,
+            rotation: 0,
+          };
+        }
+      }
+    } else if (layer.rotation) {
+      const centerX = Math.round(layer.x + layer.width / 2);
+      const centerY = Math.round(layer.y + layer.height / 2);
+      ctx.translate(centerX, centerY);
+      ctx.rotate((layer.rotation * Math.PI) / 180);
+      ctx.translate(-centerX, -centerY);
+    }
+
+    const drawingCanvas = isEditing ? tool?.getDrawingCanvas() : null;
+    const isEditingMask = isEditing && this.project?.activeMaskId === layer.id;
+
+    const hasStyles = layer.styles
+      ? Object.values(layer.styles).some((s: any) => s?.enabled)
+      : false;
+    const hasMask = layer.mask?.enabled || isEditingMask;
+
+    if (drawingCanvas && !isEditingMask) {
+      ctx.save();
+      ctx.globalAlpha *= (layer.fill ?? 100) / 100;
+      ctx.drawImage(drawingCanvas.canvas, drawingCanvas.x, drawingCanvas.y);
+      ctx.restore();
+    } else if (hasStyles || hasMask) {
+      // Generic styles and mask implementation for all layer types (Raster, Text, Group, Smart Object)
+      this.renderLayerWithStyles(
+        ctx,
+        renderLayerTarget,
+        editingState,
+        isEditingMask ? drawingCanvas : undefined,
+      );
+    } else {
+      ctx.globalAlpha *= (layer.fill ?? 100) / 100;
+      this.renderLayerToContext(ctx, renderLayerTarget, editingState);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Helper to render the core content of a layer to a specific context.
+   */
+  private renderLayerToContext(
+    ctx: CanvasRenderingContext2D,
+    layer: Layer,
+    editingState?: any,
+    options?: { skipStyles?: boolean },
+  ) {
     switch (layer.type) {
       case "raster":
         RasterLayer.render(
@@ -1360,13 +2157,634 @@ export class ForgeEngine {
         );
         break;
       case "text":
-        TextLayer.render(ctx, layer, this.layerCanvasCache, this.layerReadyCache, editingState);
+        TextLayer.render(
+          ctx,
+          layer,
+          this.layerCanvasCache,
+          this.layerReadyCache,
+          editingState,
+          options,
+        );
         break;
       case "group":
-        GroupLayer.render(ctx, layer);
+        GroupLayer.render(
+          ctx,
+          layer,
+          this.project!.layers,
+          (c, l) => this.renderLayer(c, l),
+          this.project!.width,
+          this.project!.height,
+        );
+        break;
+      case "smart_object":
+        SmartObjectLayer.render(
+          ctx,
+          layer,
+          this.layerCanvasCache,
+          this.layerReadyCache,
+          this.imageCache,
+          () => this.render(),
+        );
+        break;
+      case "color_fill":
+        ColorFillLayer.render(ctx, layer);
         break;
     }
+  }
+
+  /**
+   * Helper to render a layer with multiple styles (Stroke, Drop Shadow, etc.)
+   */
+  private renderLayerWithStyles(
+    ctx: CanvasRenderingContext2D,
+    layer: Layer,
+    editingState?: any,
+    maskPreview?: { canvas: HTMLCanvasElement; x: number; y: number } | null,
+  ) {
+    const stroke = layer.styles?.stroke;
+    const dropShadow = layer.styles?.dropShadow;
+    const innerShadow = layer.styles?.innerShadow;
+
+    let { x, y, width, height } = layer;
+
+    // Groups in our engine often have 0 size. If they have styles, we must find their content bounds.
+    if (layer.type === "group" && (width === 0 || height === 0)) {
+      const allDescendantIds = this.getGroupDescendants(layer.id);
+      const visibleDescendants = this.project!.layers.filter(
+        (l) => allDescendantIds.has(l.id) && l.visible,
+      );
+
+      if (visibleDescendants.length > 0) {
+        const bounds = getCombinedStyledBounds(visibleDescendants);
+        x = bounds.x;
+        y = bounds.y;
+        width = bounds.width;
+        height = bounds.height;
+      }
+    }
+
+    // Calculate padding needed for all effects
+    let padding = 0;
+    if (stroke?.enabled) padding = Math.max(padding, Math.ceil(stroke.size) + 2);
+    if (dropShadow?.enabled) {
+      const shadowPadding = Math.ceil(dropShadow.distance + dropShadow.size) + 10;
+      padding = Math.max(padding, shadowPadding);
+    }
+    // Inner shadow doesn't usually need padding outside the layer, but we use the same buffer logic.
+
+    // 1. Render layer content into an offscreen buffer
+    const buffer = document.createElement("canvas");
+    buffer.width = Math.ceil(width + padding * 2);
+    buffer.height = Math.ceil(height + padding * 2);
+    const bctx = buffer.getContext("2d")!;
+    bctx.imageSmoothingEnabled = false;
+
+    // Adjust layer coordinates for the buffer
+    // We need to translate the context so that the group's "content origin"
+    // aligns with 'padding, padding' in the buffer.
+    bctx.save();
+    bctx.translate(padding - x, padding - y);
+    this.renderLayerToContext(bctx, layer, editingState, { skipStyles: true });
+    bctx.restore();
+
+    // --- LAYER MASK (Applied to content before styles so styles adapt) ---
+    if (layer.mask?.enabled || maskPreview) {
+      this.applyLayerMask(
+        bctx,
+        layer.mask,
+        buffer.width,
+        buffer.height,
+        padding,
+        x,
+        y,
+        maskPreview,
+      );
+    }
+
+    // 2. Prepare Composition Buffer
+    // We render everything into a single offscreen buffer to avoid sub-pixel gaps (halos)
+    // when multiple semi-transparent pieces are drawn to the main context.
+    const compCanvas = document.createElement("canvas");
+    compCanvas.width = buffer.width;
+    compCanvas.height = buffer.height;
+    const compCtx = compCanvas.getContext("2d")!;
+    compCtx.imageSmoothingEnabled = true;
+
+    const destX = Math.round(x - padding);
+    const destY = Math.round(y - padding);
+    const fillAlpha = (layer.fill ?? 100) / 100;
+
+    // Render order (bottom to top): Drop Shadow -> Content (Fill) -> Inner Shadow -> Stroke
+
+    // --- DROP SHADOW ---
+    if (dropShadow?.enabled) {
+      // Use a temporary canvas for the shadow so we can mask it (Knock out)
+      const dsCanvas = document.createElement("canvas");
+      dsCanvas.width = buffer.width;
+      dsCanvas.height = buffer.height;
+      const dsCtx = dsCanvas.getContext("2d")!;
+
+      this.renderDropShadow(dsCtx, buffer, dropShadow, 0, 0, layer.id, padding, padding);
+
+      // MASKING: "Layer Knocks Out Drop Shadow"
+      // Optimization: If Fill is 100%, we draw shadow behind without a hole to avoid anti-aliasing gaps (halos)
+      if (fillAlpha < 0.99) {
+        dsCtx.save();
+        dsCtx.globalCompositeOperation = "destination-out";
+        // Use a single draw for the mask to avoid over-erasing (halos)
+        dsCtx.drawImage(buffer, 0, 0);
+        dsCtx.restore();
+      }
+
+      compCtx.drawImage(dsCanvas, 0, 0);
+    }
+
+    // --- STROKE (OUTSIDE) ---
+    if (stroke?.enabled && stroke.size > 0 && stroke.position === "outside") {
+      this.renderStroke(compCtx, buffer, stroke, layer.type === "text", fillAlpha);
+    }
+
+    // --- CONTENT (FILL) ---
+    compCtx.save();
+    compCtx.globalAlpha = fillAlpha;
+    compCtx.drawImage(buffer, 0, 0);
+    compCtx.restore();
+
+    // --- INNER SHADOW ---
+    if (innerShadow?.enabled) {
+      this.renderInnerShadow(compCtx, buffer, innerShadow, 0, 0, layer.id, padding, padding);
+    }
+
+    // --- STROKE (CENTER / INSIDE) ---
+    if (stroke?.enabled && stroke.size > 0 && stroke.position !== "outside") {
+      this.renderStroke(compCtx, buffer, stroke, layer.type === "text", fillAlpha);
+    }
+
+    // 3. Final Draw to main context
+    ctx.drawImage(compCanvas, destX, destY);
+  }
+
+  /**
+   * Applies a layer mask to a context.
+   */
+  private applyLayerMask(
+    ctx: CanvasRenderingContext2D,
+    mask: any,
+    width: number,
+    height: number,
+    padding: number,
+    layerX: number,
+    layerY: number,
+    maskPreview?: { canvas: HTMLCanvasElement; x: number; y: number } | null,
+  ) {
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = width;
+    maskCanvas.height = height;
+    const mctx = maskCanvas.getContext("2d")!;
+
+    // 1. Draw base mask data
+    if (mask?.enabled) {
+      const img = this.imageCache.get(mask.data);
+      if (img) {
+        // Align mask with the layer content in buffer space
+        // mask.x, mask.y are in project coordinates
+        // layerX, layerY are also project coordinates
+        const drawX = padding + (mask.x - layerX);
+        const drawY = padding + (mask.y - layerY);
+        mctx.drawImage(img, drawX, drawY, mask.width, mask.height);
+      } else {
+        // Load it for next time
+        const newImg = new Image();
+        newImg.onload = () => {
+          this.imageCache.set(mask.data, newImg);
+          this.render();
+        };
+        newImg.src = mask.data;
+        // While loading, treat as fully opaque (white)
+        mctx.fillStyle = "white";
+        mctx.fillRect(0, 0, width, height);
+      }
+    } else {
+      // If mask is disabled or missing but we have a preview, start with white
+      mctx.fillStyle = "white";
+      mctx.fillRect(0, 0, width, height);
+    }
+
+    // 2. Overlay real-time mask painting if available
+    if (maskPreview) {
+      // maskPreview.x/y are project coordinates
+      const drawX = padding + (maskPreview.x - layerX);
+      const drawY = padding + (maskPreview.y - layerY);
+      mctx.drawImage(maskPreview.canvas, drawX, drawY);
+    }
+
+    // 3. Convert grayscale luminosity to alpha
+    const imgData = mctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      // luminosity = (R + G + B) / 3
+      const luminosity = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      // data[i+3] is the original alpha of the mask pixel
+      data[i + 3] = (data[i + 3] * luminosity) / 255;
+    }
+    mctx.putImageData(imgData, 0, 0);
+
+    // 4. Apply to target context
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.drawImage(maskCanvas, 0, 0);
     ctx.restore();
+  }
+
+  /**
+   * Internal helper to apply stroke logic to a buffer.
+   */
+  private renderStroke(
+    ctx: CanvasRenderingContext2D,
+    contentBuffer: HTMLCanvasElement,
+    stroke: StrokeStyle,
+    isText: boolean,
+    fillAlpha: number = 1,
+  ) {
+    const { size, position, rounded, color, opacity, antiAlias } = stroke;
+
+    const strokeBuffer = document.createElement("canvas");
+    strokeBuffer.width = contentBuffer.width;
+    strokeBuffer.height = contentBuffer.height;
+    const sctx = strokeBuffer.getContext("2d")!;
+    sctx.imageSmoothingEnabled = true;
+
+    // Unified logic for all positions:
+    // 1. Calculate dilation and erosion values
+    const dilation = position === "outside" ? size : position === "center" ? size / 2 : 0;
+    const erosion = position === "inside" ? size : position === "center" ? size / 2 : 0;
+
+    // 2. Build the base mask (Content + Dilation)
+    if (dilation > 0) {
+      this.drawDilation(sctx, contentBuffer, dilation, rounded);
+    } else {
+      sctx.drawImage(contentBuffer, 0, 0);
+    }
+
+    // 3. Subtract the "hole" (Content - Erosion)
+    if (erosion > 0) {
+      const erosionCanvas = document.createElement("canvas");
+      erosionCanvas.width = contentBuffer.width;
+      erosionCanvas.height = contentBuffer.height;
+      const ectx = erosionCanvas.getContext("2d")!;
+      this.drawErosion(ectx, contentBuffer, erosion, rounded);
+
+      sctx.save();
+      sctx.globalCompositeOperation = "destination-out";
+      sctx.drawImage(erosionCanvas, 0, 0);
+      sctx.restore();
+    } else if (fillAlpha < 0.99) {
+      // For Outside strokes, if Fill is semi-transparent, we knock out the center
+      // so the fill doesn't blend with the stroke behind it.
+      sctx.save();
+      sctx.globalCompositeOperation = "destination-out";
+      sctx.drawImage(contentBuffer, 0, 0);
+      sctx.restore();
+    }
+
+    // 4. Colorize the resulting mask
+    sctx.globalCompositeOperation = "source-in";
+    sctx.fillStyle = color;
+    sctx.globalAlpha = opacity / 100;
+
+    if (antiAlias && !isText) {
+      sctx.shadowColor = color;
+      sctx.shadowBlur = 0.5;
+    }
+
+    sctx.fillRect(0, 0, contentBuffer.width, contentBuffer.height);
+
+    // 5. Final Draw to the target context
+    ctx.drawImage(strokeBuffer, 0, 0);
+  }
+
+  private drawDilation(
+    ctx: CanvasRenderingContext2D,
+    source: HTMLCanvasElement,
+    dilation: number,
+    rounded: boolean,
+  ) {
+    if (rounded) {
+      const radii = [dilation];
+      if (dilation > 2) radii.push(dilation * 0.5);
+      if (dilation > 6) radii.push(dilation * 0.75, dilation * 0.25);
+
+      radii.forEach((r) => {
+        const steps = Math.max(16, Math.min(128, Math.ceil(r * 6)));
+        for (let i = 0; i < steps; i++) {
+          const angle = (i / steps) * Math.PI * 2;
+          ctx.drawImage(source, Math.cos(angle) * r, Math.sin(angle) * r);
+        }
+      });
+    } else {
+      const tempBuffer = document.createElement("canvas");
+      tempBuffer.width = source.width;
+      tempBuffer.height = source.height;
+      const tctx = tempBuffer.getContext("2d")!;
+      for (let x = -dilation; x <= dilation; x++) tctx.drawImage(source, x, 0);
+      for (let y = -dilation; y <= dilation; y++) ctx.drawImage(tempBuffer, 0, y);
+    }
+  }
+
+  private drawErosion(
+    ctx: CanvasRenderingContext2D,
+    source: HTMLCanvasElement,
+    erosion: number,
+    rounded: boolean,
+  ) {
+    ctx.save();
+    if (rounded) {
+      const steps = Math.max(16, Math.min(128, Math.ceil(erosion * 6)));
+      ctx.drawImage(source, 0, 0);
+      ctx.globalCompositeOperation = "destination-in";
+      for (let i = 0; i < steps; i++) {
+        const angle = (i / steps) * Math.PI * 2;
+        ctx.drawImage(source, Math.cos(angle) * erosion, Math.sin(angle) * erosion);
+      }
+    } else {
+      const tempErosionBuffer = document.createElement("canvas");
+      tempErosionBuffer.width = source.width;
+      tempErosionBuffer.height = source.height;
+      const tetctx = tempErosionBuffer.getContext("2d")!;
+      tetctx.drawImage(source, 0, 0);
+      tetctx.globalCompositeOperation = "destination-in";
+      for (let x = -erosion; x <= erosion; x++) tetctx.drawImage(source, x, 0);
+      ctx.drawImage(tempErosionBuffer, 0, 0);
+      ctx.globalCompositeOperation = "destination-in";
+      for (let y = -erosion; y <= erosion; y++) ctx.drawImage(tempErosionBuffer, 0, y);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Renders Drop Shadow effect using native canvas shadow and buffer manipulation.
+   */
+  private renderDropShadow(
+    ctx: CanvasRenderingContext2D,
+    contentBuffer: HTMLCanvasElement,
+    style: DropShadowStyle,
+    x: number,
+    y: number,
+    layerId: string,
+    layerBufferX: number = 0,
+    layerBufferY: number = 0,
+  ) {
+    const { color, opacity, angle, distance, size, spread, noise } = style;
+
+    // Calculate offsets based on angle and distance
+    const rad = (angle * Math.PI) / 180;
+    const rawOffsetX = Math.cos(rad) * distance;
+    const rawOffsetY = Math.sin(rad) * distance;
+
+    // We MUST round these to integers if noise is enabled (or always for parity)
+    // to prevent "sub-pixel swimming" and blurring of the 1px noise pattern.
+    const offsetX = Math.round(rawOffsetX);
+    const offsetY = Math.round(rawOffsetY);
+
+    // Photoshop/Photopea parity logic:
+    // Size = total influence.
+    // Spread = percentage of that influence that is solid (dilated).
+    // Remaining = softness (blur).
+    const spreadSize = (size * spread) / 100;
+    const blurSize = size - spreadSize;
+
+    ctx.save();
+
+    // 1. Create a shadow mask buffer (black mask of the expanded shape)
+    const shadowCanvas = document.createElement("canvas");
+    shadowCanvas.width = contentBuffer.width;
+    shadowCanvas.height = contentBuffer.height;
+    const sctx = shadowCanvas.getContext("2d", { willReadFrequently: noise > 0 })!;
+
+    // 2. Expand the shape (Spread)
+    // We dilate the original shape to create a smooth, solid core.
+    if (spreadSize > 0) {
+      // Circular dilation for smooth expansion
+      const steps = Math.min(128, Math.max(12, Math.ceil(spreadSize * 4)));
+      for (let i = 0; i < steps; i++) {
+        const a = (i / steps) * Math.PI * 2;
+        sctx.drawImage(contentBuffer, Math.cos(a) * spreadSize, Math.sin(a) * spreadSize);
+      }
+      sctx.drawImage(contentBuffer, 0, 0); // Fill center
+    } else {
+      sctx.drawImage(contentBuffer, 0, 0);
+    }
+
+    // 3. Fill the expanded mask with the shadow color
+    sctx.globalCompositeOperation = "source-in";
+    sctx.fillStyle = color;
+    sctx.fillRect(0, 0, shadowCanvas.width, shadowCanvas.height);
+
+    // 4. Render the blurred shadow into an intermediate buffer
+    // This is necessary so we can apply noise AFTER the blur.
+    const blurCanvas = document.createElement("canvas");
+    blurCanvas.width = shadowCanvas.width;
+    blurCanvas.height = shadowCanvas.height;
+    const bctx = blurCanvas.getContext("2d", { willReadFrequently: noise > 0 })!;
+
+    if (blurSize > 0) {
+      bctx.shadowColor = color;
+      bctx.shadowBlur = blurSize;
+      bctx.shadowOffsetX = 20000;
+      bctx.shadowOffsetY = 0;
+      bctx.drawImage(shadowCanvas, -20000, 0);
+    } else {
+      bctx.drawImage(shadowCanvas, 0, 0);
+    }
+
+    // 5. Apply Noise (if any) - Applied to the blurred result
+    if (noise > 0) {
+      const imageData = bctx.getImageData(0, 0, blurCanvas.width, blurCanvas.height);
+      const data = imageData.data;
+      const noiseFactor = noise / 100;
+      const width = blurCanvas.width;
+
+      // Seed based on layer ID for deterministic noise (static patterns)
+      const seedBase = this.hashString(layerId);
+
+      for (let i = 0; i < data.length; i += 4) {
+        const originalAlpha = data[i + 3];
+        if (originalAlpha > 0) {
+          const pixelIndex = i / 4;
+          const px = pixelIndex % width;
+          const py = Math.floor(pixelIndex / width);
+
+          // FIX: To keep noise fixed relative to the layer, we anchor the
+          // seeding coordinates to the layer's origin by:
+          // 1. Adding the shadow offset (since px/py are in shadow-space and will be shifted by offsetX/Y later)
+          // 2. Subtracting the buffer padding (layerBufferX/Y)
+          const anchoredX = px + offsetX - layerBufferX;
+          const anchoredY = py + offsetY - layerBufferY;
+
+          // Robust 2D seeding for better entropy and to avoid patterns
+          const rand = this.seededRandom(seedBase + anchoredX * 31337 + anchoredY * 13331);
+
+          // Weighted Noise Model:
+          // We perturb the alpha channel, but scale the intensity by the original alpha.
+          // This ensures that the noise follows the shadow's density and never
+          // expands beyond its original footprint (no halos/contours).
+          // 100% noise allows a swing from 0 to 2x the original alpha.
+          const variation = (rand * 2 - 1) * noiseFactor;
+
+          // Clamp the result to [0, 255]
+          data[i + 3] = Math.max(0, Math.min(255, originalAlpha * (1 + variation)));
+        }
+      }
+      bctx.putImageData(imageData, 0, 0);
+    }
+
+    // 6. Final draw to the target context
+    ctx.save();
+    ctx.globalAlpha = opacity / 100;
+    ctx.drawImage(blurCanvas, x + offsetX, y + offsetY);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  /**
+   * Renders Inner Shadow effect.
+   * Logic: We create an inverted mask (hole) of the layer, draw a shadow from that hole,
+   * and clip it to the original layer content.
+   */
+  private renderInnerShadow(
+    ctx: CanvasRenderingContext2D,
+    contentBuffer: HTMLCanvasElement,
+    style: InnerShadowStyle,
+    x: number,
+    y: number,
+    layerId: string,
+    layerBufferX: number = 0,
+    layerBufferY: number = 0,
+  ) {
+    const { color, opacity, angle, distance, size, spread, noise } = style;
+
+    // Calculate offsets based on angle and distance
+    // NOTE: For Inner Shadow, positive distance moves the shadow INSIDE the shape.
+    // Photoshop behavior: distance 10 at 90 deg moves shadow 10px DOWN,
+    // effectively showing the TOP inner edge.
+    const rad = (angle * Math.PI) / 180;
+    const rawOffsetX = Math.cos(rad) * distance;
+    const rawOffsetY = Math.sin(rad) * distance;
+    const offsetX = Math.round(rawOffsetX);
+    const offsetY = Math.round(rawOffsetY);
+
+    const spreadSize = (size * spread) / 100;
+    const blurSize = size - spreadSize;
+
+    // 1. Create Inverted Mask (The "Hole")
+    // We need a canvas that is solid everywhere EXCEPT where the layer is.
+    // We add extra margin to ensure the shadow can bleed in from far away if distance is high.
+    const margin = Math.ceil(distance + size + 20);
+    const holeCanvas = document.createElement("canvas");
+    holeCanvas.width = contentBuffer.width + margin * 2;
+    holeCanvas.height = contentBuffer.height + margin * 2;
+    const hctx = holeCanvas.getContext("2d")!;
+
+    // Fill with solid color
+    hctx.fillStyle = "black";
+    hctx.fillRect(0, 0, holeCanvas.width, holeCanvas.height);
+
+    // Cut the layer shape out
+    hctx.globalCompositeOperation = "destination-out";
+    hctx.drawImage(contentBuffer, margin, margin);
+
+    // 2. Render Shadow from the hole
+    const shadowCanvas = document.createElement("canvas");
+    shadowCanvas.width = holeCanvas.width;
+    shadowCanvas.height = holeCanvas.height;
+    const sctx = shadowCanvas.getContext("2d", { willReadFrequently: noise > 0 })!;
+
+    if (spreadSize > 0) {
+      const steps = Math.min(128, Math.max(12, Math.ceil(spreadSize * 4)));
+      for (let i = 0; i < steps; i++) {
+        const a = (i / steps) * Math.PI * 2;
+        sctx.drawImage(holeCanvas, Math.cos(a) * spreadSize, Math.sin(a) * spreadSize);
+      }
+      sctx.drawImage(holeCanvas, 0, 0);
+    } else {
+      sctx.drawImage(holeCanvas, 0, 0);
+    }
+
+    sctx.globalCompositeOperation = "source-in";
+    sctx.fillStyle = color;
+    sctx.fillRect(0, 0, shadowCanvas.width, shadowCanvas.height);
+
+    // 3. Blur the shadow
+    const blurCanvas = document.createElement("canvas");
+    blurCanvas.width = shadowCanvas.width;
+    blurCanvas.height = shadowCanvas.height;
+    const bctx = blurCanvas.getContext("2d", { willReadFrequently: noise > 0 })!;
+
+    if (blurSize > 0) {
+      bctx.shadowColor = color;
+      bctx.shadowBlur = blurSize;
+      bctx.shadowOffsetX = 20000;
+      bctx.shadowOffsetY = 0;
+      bctx.drawImage(shadowCanvas, -20000, 0);
+    } else {
+      bctx.drawImage(shadowCanvas, 0, 0);
+    }
+
+    // 4. Apply Noise (Anchored to layer origin)
+    if (noise > 0) {
+      const imageData = bctx.getImageData(0, 0, blurCanvas.width, blurCanvas.height);
+      const data = imageData.data;
+      const noiseFactor = noise / 100;
+      const width = blurCanvas.width;
+      const seedBase = this.hashString(layerId);
+
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] > 0) {
+          const pixelIndex = i / 4;
+          const px = pixelIndex % width;
+          const py = Math.floor(pixelIndex / width);
+
+          // For Inner Shadow, the holeCanvas is shifted by 'margin'.
+          // So (px, py) in blurCanvas corresponds to (px-margin, py-margin) in contentBuffer space.
+          // We anchor to layer origin by adding offset and subtracting padding and margin.
+          const anchoredX = px - margin + offsetX - layerBufferX;
+          const anchoredY = py - margin + offsetY - layerBufferY;
+
+          const rand = this.seededRandom(seedBase + anchoredX * 31337 + anchoredY * 13331);
+          const variation = (rand * 2 - 1) * noiseFactor;
+          data[i + 3] = Math.max(0, Math.min(255, data[i + 3] * (1 + variation)));
+        }
+      }
+      bctx.putImageData(imageData, 0, 0);
+    }
+
+    // 5. Final Clip and Draw
+    // We only want the shadow parts that overlap with the original layer
+    ctx.save();
+    ctx.globalAlpha = opacity / 100;
+
+    // Use the original content as a mask
+    const finalCanvas = document.createElement("canvas");
+    finalCanvas.width = contentBuffer.width;
+    finalCanvas.height = contentBuffer.height;
+    const fctx = finalCanvas.getContext("2d")!;
+
+    fctx.drawImage(contentBuffer, 0, 0);
+    fctx.globalCompositeOperation = "source-in";
+    // Draw the shadow with offset
+    fctx.drawImage(blurCanvas, -margin + offsetX, -margin + offsetY);
+
+    ctx.drawImage(finalCanvas, x, y);
+    ctx.restore();
+  }
+
+  /**
+   * Helper to render a layer with a stroke effect using a generic buffer approach.
+   * @deprecated Use renderLayerWithStyles instead
+   */
+  private renderLayerWithStroke(ctx: CanvasRenderingContext2D, layer: Layer, editingState?: any) {
+    this.renderLayerWithStyles(ctx, layer, editingState);
   }
 
   /**
@@ -1447,6 +2865,7 @@ export class ForgeEngine {
       visible: true,
       locked: false,
       opacity: 100,
+      fill: 100,
       x: bounds.x,
       y: bounds.y,
       width: bounds.width,
@@ -1576,19 +2995,19 @@ export class ForgeEngine {
   }
 
   /**
-   * Duplicates the active layer or the selection within it.
+   * Duplicates the active layers or the selection within the active layer.
    */
   public async duplicateLayer() {
     if (!this.project || !this.project.activeLayerId) return;
 
-    const activeLayer = this.project.layers.find((l) => l.id === this.project?.activeLayerId);
-    if (!activeLayer) return;
-
-    // If there is NO selection, duplicate the entire layer via Store
+    // If there is NO selection, duplicate all selected layers via Store
     if (!this.project.selection.hasSelection || !this.project.selection.bounds) {
-      useProjectStore.getState().duplicateLayer(this.project.id, activeLayer.id);
+      useProjectStore.getState().duplicateLayers(this.project.id, this.project.selectedLayerIds);
       return;
     }
+
+    const activeLayer = this.project.layers.find((l) => l.id === this.project?.activeLayerId);
+    if (!activeLayer) return;
 
     // If there IS a selection, perform "Layer via Copy" (Photoshop style)
     if (activeLayer.type !== "raster" || !activeLayer.data) {
@@ -1660,26 +3079,113 @@ export class ForgeEngine {
   }
 
   /**
-   * Exports the project to a PNG data URL.
+   * Exports the project to a data URL with specific format and quality.
    */
-  public async exportToPNG(): Promise<string> {
+  public async exportProject(
+    format: string = "image/png",
+    quality: number = 1,
+    targetWidth?: number,
+    targetHeight?: number,
+  ): Promise<string> {
     if (!this.project) return "";
 
+    await this.preloadImages();
+
+    const finalWidth = targetWidth || this.project.width;
+    const finalHeight = targetHeight || this.project.height;
+
     const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = this.project.width;
-    exportCanvas.height = this.project.height;
+    exportCanvas.width = finalWidth;
+    exportCanvas.height = finalHeight;
     const exportCtx = exportCanvas.getContext("2d")!;
     exportCtx.imageSmoothingEnabled = false;
 
-    // Background white (optional, but requested format is PNG which supports transparency)
-    // If user wants transparency, we just leave it.
+    // Scale to target dimensions if provided
+    if (targetWidth || targetHeight) {
+      exportCtx.scale(finalWidth / this.project.width, finalHeight / this.project.height);
+    }
+
+    // Fill background with white for JPEG exports if they don't have a background layer
+    // (JPEG doesn't support transparency)
+    if (format === "image/jpeg") {
+      exportCtx.fillStyle = "#FFFFFF";
+      exportCtx.fillRect(0, 0, this.project.width, this.project.height);
+    }
 
     for (const layer of this.project.layers) {
-      if (layer.visible) {
+      if (layer.visible && !layer.parentId) {
         this.renderLayer(exportCtx, layer);
       }
     }
 
-    return exportCanvas.toDataURL("image/png");
+    if (format === "image/png" && quality < 1) {
+      // 1. Pega os pixels originais e INTACTOS
+      const imageData = exportCtx.getImageData(0, 0, exportCanvas.width, exportCanvas.height);
+
+      // 2. Calcula o número de cores usando uma curva exponencial.
+      // - 1: 3 cores (muito agressivo, quase posterização)
+      // - 0.5: ~50 cores (redução significativa, mas ainda reconhecível)
+      // - 0.25: ~150 cores (redução leve, boa para fotos)
+      const numColors = 3 + Math.floor(253 * Math.pow(quality, 1));
+
+      // 3. Deixa o UPNG fazer a magia dele com os dados puros
+      const encoded = UPNG.encode(
+        [imageData.data.buffer],
+        imageData.width,
+        imageData.height,
+        numColors,
+      );
+
+      const base64 = safeBase64FromBuffer(encoded);
+      return `data:image/png;base64,${base64}`;
+    }
+
+    return exportCanvas.toDataURL(format, quality);
+  }
+
+  /**
+   * Simple string hashing function.
+   */
+  private hashString(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+    return hash;
+  }
+
+  /**
+   * Recursively finds all descendant layer IDs of a group.
+   */
+  private getGroupDescendants(groupId: string): Set<string> {
+    const descendants = new Set<string>();
+    if (!this.project) return descendants;
+
+    const findChildren = (parentId: string) => {
+      const children = this.project!.layers.filter((l) => l.parentId === parentId);
+      for (const child of children) {
+        descendants.add(child.id);
+        if (child.type === "group") {
+          findChildren(child.id);
+        }
+      }
+    };
+
+    findChildren(groupId);
+    return descendants;
+  }
+
+  /**
+   * Fast seeded random generator using 32-bit MurmurHash3-style mixing.
+   */
+  private seededRandom(seed: number): number {
+    seed |= 0;
+    seed = (seed ^ (seed >>> 16)) * 0x85ebca6b;
+    seed |= 0;
+    seed = (seed ^ (seed >>> 13)) * 0xc2b2ae35;
+    seed |= 0;
+    seed = (seed ^ (seed >>> 16)) >>> 0;
+    return seed / 4294967296;
   }
 }

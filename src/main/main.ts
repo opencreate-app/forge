@@ -1,10 +1,11 @@
 /**
  * Purpose: Electron main process script that handles window management, native menus, and IPC handlers for file operations and system dialogs.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { checkForUpdates, downloadUpdate } from "./autoUpdater.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -29,6 +30,14 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(APP_ROOT, "public") : 
 
 let win: BrowserWindow | null;
 let splash: BrowserWindow | null;
+let menuState = {
+  hasProject: false,
+  showRulers: true,
+  showGuides: true,
+  snapToGuides: true,
+  snapToLayers: true,
+  updateStatus: "",
+};
 
 app.commandLine.appendSwitch("ignore-gpu-blacklist"); // Ensures GPU usage on more machines
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // Improves rendering of vector shapes and drawings
@@ -57,7 +66,14 @@ function createSplashWindow() {
   splash.loadFile(splashPath);
 }
 
-function createMenu(hasProject = false) {
+function createMenu(
+  hasProject = false,
+  showRulers = true,
+  showGuides = true,
+  snapToGuides = true,
+  snapToLayers = true,
+  updateStatus = "",
+) {
   const isDev = !!VITE_DEV_SERVER_URL;
 
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -90,10 +106,16 @@ function createMenu(hasProject = false) {
         },
         { type: "separator" },
         {
-          label: "Export as PNG...",
+          label: "Export...",
           accelerator: "CmdOrCtrl+E",
           enabled: hasProject,
-          click: () => win?.webContents.send("menu:action", "export-png"),
+          click: () => win?.webContents.send("menu:action", "open-export-modal"),
+        },
+        {
+          label: "Export to Clipboard",
+          accelerator: "CmdOrCtrl+Shift+C",
+          enabled: hasProject,
+          click: () => win?.webContents.send("menu:action", "export-to-clipboard"),
         },
         { type: "separator" },
         {
@@ -112,13 +134,13 @@ function createMenu(hasProject = false) {
         {
           label: "Undo",
           accelerator: "CmdOrCtrl+Z",
-          enabled: hasProject,
+          enabled: true,
           click: () => win?.webContents.send("menu:action", "undo"),
         },
         {
           label: "Redo",
           accelerator: "CmdOrCtrl+Shift+Z",
-          enabled: hasProject,
+          enabled: true,
           click: () => win?.webContents.send("menu:action", "redo"),
         },
         { type: "separator" },
@@ -133,7 +155,50 @@ function createMenu(hasProject = false) {
         },
       ],
     },
-    { label: "Image", submenu: [{ label: "Canvas Size...", enabled: false }] },
+    {
+      label: "Image",
+      submenu: [
+        {
+          label: "Image Size...",
+          accelerator: "CmdOrCtrl+Alt+I",
+          enabled: hasProject,
+          click: () => win?.webContents.send("menu:action", "open-image-size-modal"),
+        },
+        { type: "separator" },
+        {
+          label: "Rotate Image",
+          enabled: hasProject,
+          submenu: [
+            {
+              label: "90° Clockwise",
+              click: () => win?.webContents.send("menu:action", "rotate-90-cw"),
+            },
+            {
+              label: "90° Counter-Clockwise",
+              click: () => win?.webContents.send("menu:action", "rotate-90-ccw"),
+            },
+            {
+              label: "180°",
+              click: () => win?.webContents.send("menu:action", "rotate-180"),
+            },
+          ],
+        },
+        {
+          label: "Flip Image",
+          enabled: hasProject,
+          submenu: [
+            {
+              label: "Horizontal",
+              click: () => win?.webContents.send("menu:action", "flip-horizontal"),
+            },
+            {
+              label: "Vertical",
+              click: () => win?.webContents.send("menu:action", "flip-vertical"),
+            },
+          ],
+        },
+      ],
+    },
     {
       label: "Layer",
       submenu: [
@@ -164,7 +229,7 @@ function createMenu(hasProject = false) {
         {
           label: "All",
           accelerator: "CmdOrCtrl+A",
-          enabled: hasProject,
+          enabled: true,
           click: () => win?.webContents.send("menu:action", "select-all"),
         },
         {
@@ -181,15 +246,43 @@ function createMenu(hasProject = false) {
       submenu: [
         ...(isDev
           ? ([
-              { role: "toggleDevTools" },
+              { role: "toggleDevTools", accelerator: "CmdOrCtrl+Alt+Shift+I" },
               { type: "separator" },
             ] as Electron.MenuItemConstructorOptions[])
           : []),
         {
           label: "Rulers",
           accelerator: "CmdOrCtrl+R",
+          type: "checkbox",
+          checked: showRulers,
           enabled: hasProject,
           click: () => win?.webContents.send("menu:action", "toggle-rulers"),
+        },
+        {
+          label: "Guides",
+          accelerator: "CmdOrCtrl+;",
+          type: "checkbox",
+          checked: showGuides,
+          enabled: hasProject,
+          click: () => win?.webContents.send("menu:action", "toggle-guides"),
+        },
+        {
+          label: "Snap to",
+          enabled: hasProject,
+          submenu: [
+            {
+              label: "Guides",
+              type: "checkbox",
+              checked: snapToGuides,
+              click: () => win?.webContents.send("menu:action", "toggle-snap-guides"),
+            },
+            {
+              label: "Layers",
+              type: "checkbox",
+              checked: snapToLayers,
+              click: () => win?.webContents.send("menu:action", "toggle-snap-layers"),
+            },
+          ],
         },
         { type: "separator" },
         {
@@ -220,7 +313,42 @@ function createMenu(hasProject = false) {
       ],
     },
     { label: "Window", submenu: [{ role: "minimize" }] },
-    { label: "Help", submenu: [{ label: "About OpenCreate Forge", enabled: false }] },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "About OpenCreate Forge",
+          click: () => win?.webContents.send("menu:action", "about"),
+        },
+        {
+          label: "Check for Updates...",
+          enabled:
+            updateStatus === "" ||
+            updateStatus === "done" ||
+            updateStatus === "up-to-date" ||
+            updateStatus.startsWith("error:")
+              ? true
+              : false,
+          click: () => {
+            if (win) checkForUpdates(win);
+          },
+        },
+        { type: "separator" },
+        {
+          label: "View on GitHub",
+          click: () => shell.openExternal("https://github.com/opencreate-app/forge"),
+        },
+        {
+          label: "Report an Issue",
+          click: () => shell.openExternal("https://github.com/opencreate-app/forge/issues"),
+        },
+        {
+          label: "Latest Release",
+          click: () =>
+            shell.openExternal("https://github.com/opencreate-app/forge/releases/latest"),
+        },
+      ],
+    },
   ];
 
   const menu = Menu.buildFromTemplate(template);
@@ -277,6 +405,11 @@ function createWindow() {
   // Test active push message to Renderer-process.
   win.webContents.on("did-finish-load", () => {
     win?.webContents.send("main-process-message", new Date().toLocaleString());
+
+    // Auto-update check (with delay to avoid competing with splash/load)
+    setTimeout(() => {
+      if (win) checkForUpdates(win);
+    }, 5000);
   });
 
   if (VITE_DEV_SERVER_URL) {
@@ -313,15 +446,36 @@ app.whenReady().then(() => {
     return filePaths[0];
   });
 
-  ipcMain.handle("app:updateMenu", (_event, { hasProject }) => {
-    createMenu(hasProject);
+  ipcMain.handle("app:updateMenu", (_event, state) => {
+    menuState = { ...menuState, ...state };
+
+    createMenu(
+      menuState.hasProject,
+      menuState.showRulers,
+      menuState.showGuides,
+      menuState.snapToGuides,
+      menuState.snapToLayers,
+    );
   });
 
-  ipcMain.handle("dialog:saveFile", async (_event, { dataURL, defaultName }) => {
+  ipcMain.on("main:update-status-changed", (_event, newStatus: string) => {
+    menuState.updateStatus = newStatus;
+
+    createMenu(
+      menuState.hasProject,
+      menuState.showRulers,
+      menuState.showGuides,
+      menuState.snapToGuides,
+      menuState.snapToLayers,
+      menuState.updateStatus,
+    );
+  });
+
+  ipcMain.handle("dialog:saveFile", async (_event, { dataURL, defaultName, filters }) => {
     const { canceled, filePath } = await dialog.showSaveDialog({
       title: "Export image",
       defaultPath: defaultName || "export.png",
-      filters: [
+      filters: filters || [
         { name: "PNG", extensions: ["png"] },
         { name: "JPEG", extensions: ["jpg", "jpeg"] },
       ],
@@ -341,6 +495,13 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("app:getVersion", () => app.getVersion());
+
+  ipcMain.handle("shell:openExternal", (_event, url: string) => {
+    // Allowlist only http/https URLs to prevent arbitrary protocol execution
+    if (url.startsWith("https://") || url.startsWith("http://")) {
+      shell.openExternal(url);
+    }
+  });
 
   ipcMain.handle("dialog:saveProjectAs", async (_event, { jsonString, defaultName }) => {
     const { canceled, filePath } = await dialog.showSaveDialog({
@@ -362,7 +523,15 @@ app.whenReady().then(() => {
       dataToSave.updatedAt = new Date().toISOString();
 
       await fs.writeFile(filePath, JSON.stringify(dataToSave, null, 2));
-      return { success: true, filePath, name };
+      const stats = await fs.stat(filePath);
+
+      return {
+        success: true,
+        filePath,
+        name,
+        fileSize: stats.size,
+        updatedAt: dataToSave.updatedAt,
+      };
     } catch (err: any) {
       return { success: false, error: err.message, filePath: null };
     }
@@ -380,7 +549,36 @@ app.whenReady().then(() => {
       dataToSave.updatedAt = new Date().toISOString();
 
       await fs.writeFile(filePath, JSON.stringify(dataToSave, null, 2));
-      return { success: true, filePath };
+      const stats = await fs.stat(filePath);
+
+      return {
+        success: true,
+        filePath,
+        fileSize: stats.size,
+        updatedAt: dataToSave.updatedAt,
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("fs:saveImage", async (_event, { dataURL, filePath }) => {
+    if (!filePath) return { success: false, error: "No file path provided." };
+
+    const matches = dataURL.match(/^data:(.+);base64,(.+)$/);
+    if (!matches) return { success: false, error: "Invalid dataURL format" };
+
+    const buffer = Buffer.from(matches[2], "base64");
+    try {
+      await fs.writeFile(filePath, buffer);
+      const stats = await fs.stat(filePath);
+
+      return {
+        success: true,
+        filePath,
+        fileSize: stats.size,
+        updatedAt: new Date().toISOString(),
+      };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -396,6 +594,34 @@ app.whenReady().then(() => {
       detail: "Your changes will be lost if you don't save them.",
     });
     return response;
+  });
+
+  ipcMain.handle("fs:openProjectFromPath", async (_event, filePath) => {
+    if (!filePath) return { success: false, error: "No file path provided." };
+    try {
+      const content = await fs.readFile(filePath, "utf8");
+      return { success: true, filePath, content };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("fs:deleteFile", async (_event, filePath) => {
+    try {
+      await shell.trashItem(filePath);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("fs:renameFile", async (_event, { oldPath, newPath }) => {
+    try {
+      await fs.rename(oldPath, newPath);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 
   ipcMain.handle("dialog:openProject", async () => {
@@ -437,6 +663,25 @@ app.whenReady().then(() => {
       }
     } catch (err: any) {
       return { success: false, error: err.message };
+    }
+  });
+
+  // Auto-Update Handlers
+  ipcMain.handle("forge:update-download", async (_event, { version, assetName }) => {
+    if (win) downloadUpdate(win, version, assetName);
+  });
+
+  ipcMain.handle("forge:update-open-release-page", (_event, url: string) => {
+    if (url.startsWith("https://github.com/")) {
+      shell.openExternal(url);
+    }
+  });
+
+  ipcMain.handle("forge:update-install", async (_event, filePath: string) => {
+    // Only allow opening paths within the temp directory for security
+    const tempDir = app.getPath("temp");
+    if (filePath.startsWith(tempDir)) {
+      shell.openPath(filePath);
     }
   });
 

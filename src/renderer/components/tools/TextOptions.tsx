@@ -221,7 +221,7 @@ export const TextOptions: React.FC = () => {
         <select
           value={textSettings.fontFamily}
           onChange={(e) => updateToolSettings("text", { fontFamily: e.target.value })}
-          className="bg-zinc-800 border-none text-[0.75rem] text-white px-2 py-1 rounded outline-none focus:ring-1 focus:ring-accent min-w-[120px] max-w-[200px]"
+          className="bg-zinc-800 border-none text-[0.75rem] text-white px-2 py-1 rounded outline-none focus:ring-1 focus:ring-accent min-w-[100px] max-w-[150px]"
         >
           <optgroup label="System Fonts">
             {sortedSystemFonts.map((f) => (

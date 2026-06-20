@@ -7,6 +7,7 @@ import {
   Brush,
   Pencil,
   Eraser,
+  PaintBucket,
   Type,
   Maximize2,
   Crop,
@@ -34,5 +35,11 @@ export const TOOLS: ToolDefinition[] = [
   { id: "brush", icon: Brush, label: "Brush (B)", name: "Brush" },
   { id: "pencil", icon: Pencil, label: "Pencil (P)", name: "Pencil" },
   { id: "eraser", icon: Eraser, label: "Eraser (E)", name: "Eraser" },
+  {
+    id: "paintBucket",
+    icon: PaintBucket,
+    label: "Paint Bucket (G)",
+    name: "Paint Bucket",
+  },
   { id: "text", icon: Type, label: "Text (T)", name: "Text" },
 ];

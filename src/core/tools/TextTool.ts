@@ -4,6 +4,7 @@
 import { BaseTool, ToolContext, ToolId } from "./BaseTool";
 import { Layer, useProjectStore, HistoryState } from "@/renderer/store/projectStore";
 import { TextLayer } from "../layers/TextLayer";
+import { useUIStore } from "@/renderer/store/uiStore";
 
 export class TextTool extends BaseTool {
   id: ToolId = "text";
@@ -15,6 +16,9 @@ export class TextTool extends BaseTool {
   private startPos = { x: 0, y: 0 };
   private currentPos = { x: 0, y: 0 };
   private layerStartPos = { x: 0, y: 0 };
+  private layerStartBounds = { x: 0, y: 0, width: 0, height: 0 };
+  private handleStartOffset = { x: 0, y: 0 };
+  private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
   private editingLayerId: string | null = null;
   private caretIndex: number = 0;
@@ -51,6 +55,7 @@ export class TextTool extends BaseTool {
     if (this.isEditing) {
       this.commit(context);
     }
+    this.activeSnapLines = [];
     window.removeEventListener("forge:text-apply", this.onApply);
     window.removeEventListener("forge:text-cancel", this.onCancel);
     window.removeEventListener("keydown", this.handleKeyChange);
@@ -209,11 +214,17 @@ export class TextTool extends BaseTool {
     const handleSize = 8 / zoom;
     const threshold = handleSize * 1.5;
 
+    let bestHandle = null;
+    let minRectDist = threshold;
+
     for (const h of handles) {
       const dist = Math.sqrt(Math.pow(x - h.x, 2) + Math.pow(y - h.y, 2));
-      if (dist < threshold) return h;
+      if (dist < minRectDist) {
+        minRectDist = dist;
+        bestHandle = h;
+      }
     }
-    return null;
+    return bestHandle;
   }
 
   getEditingState() {
@@ -245,6 +256,13 @@ export class TextTool extends BaseTool {
           } else {
             this.isResizing = true;
             this.resizeHandle = handle.name;
+            this.handleStartOffset = { x: x - handle.x, y: y - handle.y };
+            this.layerStartBounds = {
+              x: editingLayer.x,
+              y: editingLayer.y,
+              width: editingLayer.width,
+              height: editingLayer.height,
+            };
           }
           this.layerStartPos = { x: editingLayer.x, y: editingLayer.y };
           this.startPos = { x, y };
@@ -293,11 +311,68 @@ export class TextTool extends BaseTool {
     // 2. Prepare for new layer (click or drag)
     this.isDragging = true;
     context.setInteracting(true);
+
+    let startX = x;
+    let startY = y;
+    this.activeSnapLines = [];
+
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
+
+    const vSnaps = [0, context.project.width / 2, context.project.width];
+    const hSnaps = [0, context.project.height / 2, context.project.height];
+
+    if (showGuides && snapToGuides) {
+      const guides = context.project.guides || [];
+      vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+      hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+    }
+
+    const snapMargin = 5 / context.project.zoom;
+
+    let bestDiffX = Infinity;
+    let bestGuideX = null;
+    for (const snapPos of vSnaps) {
+      const diff = snapPos - startX;
+      if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
+        bestDiffX = diff;
+        bestGuideX = snapPos;
+      }
+    }
+    if (bestGuideX !== null) {
+      startX = bestGuideX;
+      this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
+    }
+
+    let bestDiffY = Infinity;
+    let bestGuideY = null;
+    for (const snapPos of hSnaps) {
+      const diff = snapPos - startY;
+      if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
+        bestDiffY = diff;
+        bestGuideY = snapPos;
+      }
+    }
+    if (bestGuideY !== null) {
+      startY = bestGuideY;
+      this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
+    }
+
+    this.startPos = { x: startX, y: startY };
+    this.currentPos = { x: startX, y: startY };
   }
 
   onMouseMove(e: MouseEvent, context: ToolContext): void {
     this.lastContext = context;
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
+    this.activeSnapLines = [];
+
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
+    const snapMargin = 5 / context.project.zoom;
+    const guides = context.project.guides || [];
 
     if (this.isSelecting && this.editingLayerId) {
       const editingLayer = context.project.layers.find((l) => l.id === this.editingLayerId);
@@ -339,46 +414,199 @@ export class TextTool extends BaseTool {
       const layer = context.project.layers.find((l) => l.id === this.editingLayerId);
       if (!layer) return;
 
-      const localPos = this.worldToLocal(x, y, layer);
-      const localStartPos = this.worldToLocal(this.startPos.x, this.startPos.y, layer);
+      // 1. Correct mouse position by initial handle offset
+      let targetX = x - this.handleStartOffset.x;
+      let targetY = y - this.handleStartOffset.y;
 
-      const dx = localPos.x - localStartPos.x;
-      const dy = localPos.y - localStartPos.y;
+      const potentialSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
+
+      let bestDiffX = Infinity;
+      let bestGuideX = null;
+      let bestDiffY = Infinity;
+      let bestGuideY = null;
+
+      const vSnaps = [0, context.project.width / 2, context.project.width];
+      const hSnaps = [0, context.project.height / 2, context.project.height];
+
+      if (showGuides && snapToGuides) {
+        vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+        hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+      }
+
+      for (const snapPos of vSnaps) {
+        const diff = snapPos - targetX;
+        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
+          bestDiffX = diff;
+          bestGuideX = snapPos;
+        }
+      }
+      for (const snapPos of hSnaps) {
+        const diff = snapPos - targetY;
+        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
+          bestDiffY = diff;
+          bestGuideY = snapPos;
+        }
+      }
+
+      if (bestGuideX !== null) {
+        targetX = bestGuideX;
+        potentialSnapLines.push({ type: "vertical", position: bestGuideX });
+      }
+      if (bestGuideY !== null) {
+        targetY = bestGuideY;
+        potentialSnapLines.push({ type: "horizontal", position: bestGuideY });
+      }
+
+      const isRotated = Math.abs(layer.rotation || 0) > 0.01;
 
       let newX = layer.x;
       let newY = layer.y;
       let newW = layer.width;
       let newH = layer.height;
 
-      // This is a simplified resizing that doesn't perfectly account for rotation yet
-      // but is better than nothing.
-      if (this.resizeHandle.includes("right")) newW = Math.max(10, layer.width + dx);
-      if (this.resizeHandle.includes("left")) {
-        const delta = Math.min(layer.width - 10, dx);
-        newX = layer.x + delta;
-        newW = layer.width - delta;
-      }
-      if (this.resizeHandle.includes("bottom")) newH = Math.max(10, layer.height + dy);
-      if (this.resizeHandle.includes("top")) {
-        const delta = Math.min(layer.height - 10, dy);
-        newY = layer.y + delta;
-        newH = layer.height - delta;
+      if (!isRotated) {
+        // Use initial bounds to avoid drift
+        const b = this.layerStartBounds;
+        if (this.resizeHandle.includes("right")) newW = Math.max(10, targetX - b.x);
+        if (this.resizeHandle.includes("left")) {
+          const right = b.x + b.width;
+          newX = Math.min(right - 10, targetX);
+          newW = right - newX;
+        }
+        if (this.resizeHandle.includes("bottom")) newH = Math.max(10, targetY - b.y);
+        if (this.resizeHandle.includes("top")) {
+          const bottom = b.y + b.height;
+          newY = Math.min(bottom - 10, targetY);
+          newH = bottom - newY;
+        }
+
+        newX = Math.round(newX);
+        newY = Math.round(newY);
+        newW = Math.round(newW);
+        newH = Math.round(newH);
+      } else {
+        // Rotated text still uses delta logic
+        const localPos = this.worldToLocal(targetX, targetY, layer);
+        const localStartPos = this.worldToLocal(this.startPos.x, this.startPos.y, layer);
+
+        const dx = localPos.x - localStartPos.x;
+        const dy = localPos.y - localStartPos.y;
+
+        if (this.resizeHandle.includes("right")) newW = Math.max(10, layer.width + dx);
+        if (this.resizeHandle.includes("left")) {
+          const delta = Math.min(layer.width - 10, dx);
+          newX = layer.x + delta;
+          newW = layer.width - delta;
+        }
+        if (this.resizeHandle.includes("bottom")) newH = Math.max(10, layer.height + dy);
+        if (this.resizeHandle.includes("top")) {
+          const delta = Math.min(layer.height - 10, dy);
+          newY = layer.y + delta;
+          newH = layer.height - delta;
+        }
+
+        newX = Math.round(newX);
+        newY = Math.round(newY);
+        newW = Math.round(newW);
+        newH = Math.round(newH);
+
+        this.startPos = { x: targetX, y: targetY };
       }
 
       useProjectStore.getState().updateLayer(context.project.id, this.editingLayerId, {
-        x: Math.round(newX),
-        y: Math.round(newY),
-        width: Math.round(newW),
-        height: Math.round(newH),
+        x: newX,
+        y: newY,
+        width: newW,
+        height: newH,
       });
 
-      this.startPos = { x, y };
+      // Verify snap lines
+      const updatedLayer = { ...layer, x: newX, y: newY, width: newW, height: newH };
+      const handles = this.getTransformHandles(updatedLayer, context.project.zoom);
+      const currentHandle = handles.find((h) => h.name === this.resizeHandle);
+      if (currentHandle) {
+        for (const line of potentialSnapLines) {
+          if (line.type === "vertical" && Math.abs(currentHandle.x - line.position) < 0.1) {
+            this.activeSnapLines.push(line);
+          } else if (
+            line.type === "horizontal" &&
+            Math.abs(currentHandle.y - line.position) < 0.1
+          ) {
+            this.activeSnapLines.push(line);
+          }
+        }
+      }
       return;
     }
 
     if (this.isMoving && this.editingLayerId) {
-      const dx = x - this.startPos.x;
-      const dy = y - this.startPos.y;
+      const layer = context.project.layers.find((l) => l.id === this.editingLayerId);
+      if (!layer) return;
+
+      let dx = x - this.startPos.x;
+      let dy = y - this.startPos.y;
+
+      const potentialX = this.layerStartPos.x + dx;
+      const potentialY = this.layerStartPos.y + dy;
+
+      const snapPointsX = [
+        potentialX, // left
+        potentialX + layer.width / 2, // center
+        potentialX + layer.width, // right
+      ];
+
+      let bestDiffX = Infinity;
+      let bestGuideX = null;
+
+      const vSnapsCurrent = [0, context.project.width / 2, context.project.width];
+      if (showGuides && snapToGuides) {
+        vSnapsCurrent.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+      }
+
+      for (const snapPos of vSnapsCurrent) {
+        for (const sp of snapPointsX) {
+          const diff = snapPos - sp;
+          if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
+            bestDiffX = diff;
+            bestGuideX = snapPos;
+          }
+        }
+      }
+
+      if (bestGuideX !== null) {
+        dx += bestDiffX;
+        this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
+      }
+
+      const snapPointsY = [
+        potentialY, // top
+        potentialY + layer.height / 2, // center
+        potentialY + layer.height, // bottom
+      ];
+
+      let bestDiffY = Infinity;
+      let bestGuideY = null;
+
+      const hSnapsCurrent = [0, context.project.height / 2, context.project.height];
+      if (showGuides && snapToGuides) {
+        hSnapsCurrent.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+      }
+
+      for (const snapPos of hSnapsCurrent) {
+        for (const sp of snapPointsY) {
+          const diff = snapPos - sp;
+          if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
+            bestDiffY = diff;
+            bestGuideY = snapPos;
+          }
+        }
+      }
+
+      if (bestGuideY !== null) {
+        dy += bestDiffY;
+        this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
+      }
+
       useProjectStore.getState().updateLayer(context.project.id, this.editingLayerId, {
         x: Math.round(this.layerStartPos.x + dx),
         y: Math.round(this.layerStartPos.y + dy),
@@ -387,7 +615,47 @@ export class TextTool extends BaseTool {
     }
 
     if (this.isDragging) {
-      this.currentPos = { x, y };
+      let curX = x;
+      let curY = y;
+
+      let bestDiffX = Infinity;
+      let bestGuideX = null;
+      let bestDiffY = Infinity;
+      let bestGuideY = null;
+
+      const vSnapsCreate = [0, context.project.width / 2, context.project.width];
+      const hSnapsCreate = [0, context.project.height / 2, context.project.height];
+
+      if (showGuides && snapToGuides) {
+        vSnapsCreate.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+        hSnapsCreate.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+      }
+
+      for (const snapPos of vSnapsCreate) {
+        const diff = snapPos - curX;
+        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
+          bestDiffX = diff;
+          bestGuideX = snapPos;
+        }
+      }
+      for (const snapPos of hSnapsCreate) {
+        const diff = snapPos - curY;
+        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
+          bestDiffY = diff;
+          bestGuideY = snapPos;
+        }
+      }
+
+      if (bestGuideX !== null) {
+        curX = bestGuideX;
+        this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
+      }
+      if (bestGuideY !== null) {
+        curY = bestGuideY;
+        this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
+      }
+
+      this.currentPos = { x: curX, y: curY };
     } else {
       const hitLayer = this.findTextLayerAt(x, y, context);
 
@@ -409,6 +677,7 @@ export class TextTool extends BaseTool {
 
   onMouseUp(e: MouseEvent, context: ToolContext): void {
     this.lastContext = context;
+    this.activeSnapLines = [];
     if (this.isSelecting) {
       this.isSelecting = false;
       context.setInteracting(false);
@@ -485,7 +754,11 @@ export class TextTool extends BaseTool {
   private findTextLayerAt(x: number, y: number, context: ToolContext): Layer | null {
     const layers = [...context.project.layers].reverse();
     for (const layer of layers) {
-      if (layer.type === "text" && layer.visible && !layer.locked) {
+      if (
+        layer.type === "text" &&
+        context.isLayerVisible(layer.id) &&
+        !context.isLayerLocked(layer.id)
+      ) {
         const localPos = this.worldToLocal(x, y, layer);
         const padding = 10;
         if (
@@ -505,6 +778,7 @@ export class TextTool extends BaseTool {
     this.editingLayerId = layer.id;
     this.isEditing = true;
     this.originalText = layer.text || "";
+    this.activeSnapLines = [];
     context.updateProject({ activeLayerId: layer.id });
 
     // Sync tool settings with layer properties
@@ -525,7 +799,9 @@ export class TextTool extends BaseTool {
         width: context.project.width,
         height: context.project.height,
         layers: JSON.parse(JSON.stringify(context.project.layers)),
+        guides: JSON.parse(JSON.stringify(context.project.guides)),
         activeLayerId: context.project.activeLayerId,
+        selectedLayerIds: [...context.project.selectedLayerIds],
         selection: JSON.parse(JSON.stringify(context.project.selection)),
       };
     }
@@ -559,7 +835,9 @@ export class TextTool extends BaseTool {
       width: context.project.width,
       height: context.project.height,
       layers: JSON.parse(JSON.stringify(context.project.layers)),
+      guides: JSON.parse(JSON.stringify(context.project.guides)),
       activeLayerId: context.project.activeLayerId,
+      selectedLayerIds: [...context.project.selectedLayerIds],
       selection: JSON.parse(JSON.stringify(context.project.selection)),
     };
 
@@ -995,6 +1273,38 @@ export class TextTool extends BaseTool {
         }
         ctx.restore();
       }
+    }
+
+    if (this.activeSnapLines.length > 0) {
+      ctx.save();
+      ctx.setTransform(
+        context.project.zoom,
+        0,
+        0,
+        context.project.zoom,
+        context.project.panX,
+        context.project.panY,
+      );
+      ctx.strokeStyle = "red";
+      ctx.lineWidth = 1 / context.project.zoom;
+
+      const viewportWidth = context.canvas.width / context.project.zoom;
+      const viewportHeight = context.canvas.height / context.project.zoom;
+      const startX = -context.project.panX / context.project.zoom;
+      const startY = -context.project.panY / context.project.zoom;
+
+      for (const line of this.activeSnapLines) {
+        ctx.beginPath();
+        if (line.type === "horizontal") {
+          ctx.moveTo(startX, line.position);
+          ctx.lineTo(startX + viewportWidth, line.position);
+        } else {
+          ctx.moveTo(line.position, startY);
+          ctx.lineTo(line.position, startY + viewportHeight);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
     }
   }
 }

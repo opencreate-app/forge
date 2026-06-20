@@ -14,6 +14,7 @@ import { SelectOptions } from "./tools/SelectOptions";
 import { TransformOptions } from "./tools/TransformOptions";
 import { CropOptions } from "./tools/CropOptions";
 import { TextOptions } from "./tools/TextOptions";
+import { PaintBucketOptions } from "./tools/PaintBucketOptions";
 
 const TOOL_COMPONENTS: Partial<Record<ToolId, React.FC>> = {
   move: MoveOptions,
@@ -24,6 +25,7 @@ const TOOL_COMPONENTS: Partial<Record<ToolId, React.FC>> = {
   transform: TransformOptions,
   crop: CropOptions,
   text: TextOptions,
+  paintBucket: PaintBucketOptions,
 };
 
 const ToolOptions: React.FC = () => {

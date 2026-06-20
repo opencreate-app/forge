@@ -28,6 +28,39 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache APT Packages
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-cache
+          key: ${{ runner.os }}-apt-flatpak-v1
+
+      - name: Install Flatpak dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # 1. Cria o diretório de cache se não existir
+          mkdir -p ~/apt-cache
+
+          # 2. Copia debs antigos de volta para o cache do sistema (se houver)
+          if [ "$(ls -A ~/apt-cache)" ]; then
+            sudo cp -r ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          fi
+
+          # 3. Atualiza e instala sem baixar o que já existe
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils
+
+          # 4. Copia os novos debs baixados de volta para o cache do usuário
+          cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
+
+          # 5. Configura o Flathub
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+          # Só instala runtimes se não foi restaurado pelo cache do flatpak
+          if [ "${{ steps.flatpak-cache.outputs.cache-hit }}" != 'true' ]; then
+            flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08 org.electronjs.Electron2.BaseApp//23.08
+          fi
+
       - name: Run quality checks
         run: npm run check
 
@@ -55,6 +88,7 @@ jobs:
             dist/*.AppImage
             dist/*.deb
             dist/*.rpm
+            dist/*.flatpak
           if-no-files-found: error
 
   create-release:
@@ -132,9 +166,12 @@ jobs:
           <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-arm64-mac.zip">Portable (ZIP/APP)</a></td>
           </tr>
           <tr>
-          <td rowspan="3"><strong>Linux</strong></td>
-          <td rowspan="3">x64</td>
+          <td rowspan="4"><strong>Linux</strong></td>
+          <td rowspan="4">x64</td>
           <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION.AppImage">AppImage</a></td>
+          </tr>
+          <tr>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-x86_64.flatpak">Flatpak</a></td>
           </tr>
           <tr>
           <td><a href="$BASE_URL/${INTERNAL_NAME}_${VERSION}_amd64.deb">Debian (DEB)</a></td>
@@ -153,6 +190,6 @@ jobs:
           body_path: body.md
           files: artifacts/*
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

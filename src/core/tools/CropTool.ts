@@ -3,6 +3,7 @@
  */
 import { BaseTool, ToolContext, ToolId } from "./BaseTool";
 import { Layer } from "@/renderer/store/projectStore";
+import { useUIStore } from "@/renderer/store/uiStore";
 
 interface CropState {
   x: number;
@@ -30,8 +31,10 @@ export class CropTool extends BaseTool {
   private dragStartCoords = { x: 0, y: 0 };
   private dragStartCrop: CropState | null = null;
   private scaleAnchor = { x: 0, y: 0 };
+  private handleStartOffset = { x: 0, y: 0 };
   private isCropping = false;
   private context: ToolContext | null = null;
+  private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
   private readonly HANDLE_SIZE = 8;
 
@@ -48,12 +51,17 @@ export class CropTool extends BaseTool {
 
     // Use selection bounds if available
     if (project.selection.hasSelection && project.selection.bounds) {
-      const { bounds } = project.selection;
+      const b = project.selection.bounds;
+      const left = Math.round(b.x);
+      const top = Math.round(b.y);
+      const width = Math.round(b.width);
+      const height = Math.round(b.height);
+
       this.cropState = {
-        x: bounds.x + bounds.width / 2,
-        y: bounds.y + bounds.height / 2,
-        width: bounds.width,
-        height: bounds.height,
+        x: left + width / 2,
+        y: top + height / 2,
+        width: width,
+        height: height,
         scaleX: 1,
         scaleY: 1,
         rotation: 0,
@@ -71,6 +79,7 @@ export class CropTool extends BaseTool {
         anchor: { x: 0.5, y: 0.5 },
       };
     }
+    this.activeSnapLines = [];
     context.updateToolSettings("crop", { isDirty: false });
   }
 
@@ -98,6 +107,8 @@ export class CropTool extends BaseTool {
 
     // Save listeners to remove them later
     (this as any)._listeners = { handleApply, handleCancel, handleReset };
+
+    this.activeSnapLines = [];
 
     const { project } = context;
     // Update ratio settings based on project if not set
@@ -127,6 +138,7 @@ export class CropTool extends BaseTool {
     }
     this.isCropping = false;
     this.cropState = null;
+    this.activeSnapLines = [];
     context.updateToolSettings("crop", { isDirty: false });
     this.context = null;
   }
@@ -236,10 +248,15 @@ export class CropTool extends BaseTool {
     if (!this.cropState) return;
 
     if (!handle) {
+      // Snap start coordinates for pixel-perfect new selection if not rotated
+      const isRotated = Math.abs(this.cropState?.rotation || 0) > 0.01;
+      const snappedX = isRotated ? x : Math.round(x);
+      const snappedY = isRotated ? y : Math.round(y);
+
       // Start creating a new crop area
       this.cropState = {
-        x: x,
-        y: y,
+        x: snappedX,
+        y: snappedY,
         width: 0,
         height: 0,
         scaleX: 1,
@@ -249,10 +266,25 @@ export class CropTool extends BaseTool {
       };
       handle = { name: "bottom-right", cursor: "nwse-resize" };
       this.syncStore(context);
+
+      // Update drag start coords to snapped values too
+      this.dragStartCoords = { x: snappedX, y: snappedY };
+      this.handleStartOffset = { x: 0, y: 0 };
+    } else {
+      this.dragStartCoords = { x, y };
+
+      if (handle.name !== "move" && handle.name !== "rotate") {
+        const handles = this.getHandles(context);
+        const currentHandle = handles.find((h) => h.name === handle?.name);
+        if (currentHandle) {
+          this.handleStartOffset = { x: x - currentHandle.x, y: y - currentHandle.y };
+        }
+      } else {
+        this.handleStartOffset = { x: 0, y: 0 };
+      }
     }
 
     this.activeHandle = handle;
-    this.dragStartCoords = { x, y };
     this.dragStartCrop = { ...this.cropState };
 
     if (handle.name !== "move" && handle.name !== "rotate") {
@@ -285,14 +317,125 @@ export class CropTool extends BaseTool {
       return;
     }
 
+    this.activeSnapLines = [];
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
+    const snapMargin = 4 / context.project.zoom;
+    const guides = context.project.guides || [];
+
     const t = this.cropState;
     const startT = this.dragStartCrop;
+
+    // Initial mouse delta
     const dx = rawX - this.dragStartCoords.x;
     const dy = rawY - this.dragStartCoords.y;
 
     if (this.activeHandle.name === "move") {
       t.x = startT.x + dx;
       t.y = startT.y + dy;
+
+      const rot = (t.rotation * Math.PI) / 180;
+      const cos = Math.cos(rot);
+      const sin = Math.sin(rot);
+
+      const points = [
+        { x: -t.width * t.anchor.x * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TL
+        { x: t.width * (1 - t.anchor.x) * t.scaleX, y: -t.height * t.anchor.y * t.scaleY }, // TR
+        { x: t.width * (1 - t.anchor.x) * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BR
+        { x: -t.width * t.anchor.x * t.scaleX, y: t.height * (1 - t.anchor.y) * t.scaleY }, // BL
+        { x: 0, y: 0 }, // Center
+      ];
+
+      const transformed = points.map((p) => ({
+        x: t.x + (p.x * cos - p.y * sin),
+        y: t.y + (p.x * sin + p.y * cos),
+      }));
+
+      // Canvas Edge Snapping (Move)
+      const projectW = context.project.width;
+      const projectH = context.project.height;
+
+      // Vertical snap (Canvas Edges & Center)
+      const vEdges = [0, projectW / 2, projectW];
+      for (const edge of vEdges) {
+        for (const p of transformed) {
+          if (Math.abs(p.x - edge) < snapMargin) {
+            const diff = edge - p.x;
+            t.x += diff;
+            this.activeSnapLines.push({ type: "vertical", position: edge });
+            transformed.forEach((pt) => (pt.x += diff));
+            break;
+          }
+        }
+        if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
+      }
+
+      // Horizontal snap (Canvas Edges & Center)
+      const hEdges = [0, projectH / 2, projectH];
+      for (const edge of hEdges) {
+        for (const p of transformed) {
+          if (Math.abs(p.y - edge) < snapMargin) {
+            const diff = edge - p.y;
+            t.y += diff;
+            this.activeSnapLines.push({ type: "horizontal", position: edge });
+            transformed.forEach((pt) => (pt.y += diff));
+            break;
+          }
+        }
+        if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
+      }
+
+      // Vertical snap (Guides)
+      if (showGuides && snapToGuides && !this.activeSnapLines.some((l) => l.type === "vertical")) {
+        for (const guide of guides.filter((g) => g.type === "vertical")) {
+          for (const p of transformed) {
+            if (Math.abs(p.x - guide.position) < snapMargin) {
+              const diff = guide.position - p.x;
+              t.x += diff;
+              this.activeSnapLines.push({ type: "vertical", position: guide.position });
+              transformed.forEach((pt) => (pt.x += diff));
+              break;
+            }
+          }
+          if (this.activeSnapLines.some((l) => l.type === "vertical")) break;
+        }
+      }
+
+      // Horizontal snap (Guides)
+      if (
+        showGuides &&
+        snapToGuides &&
+        !this.activeSnapLines.some((l) => l.type === "horizontal")
+      ) {
+        for (const guide of guides.filter((g) => g.type === "horizontal")) {
+          for (const p of transformed) {
+            if (Math.abs(p.y - guide.position) < snapMargin) {
+              const diff = guide.position - p.y;
+              t.y += diff;
+              this.activeSnapLines.push({ type: "horizontal", position: guide.position });
+              transformed.forEach((pt) => (pt.y += diff));
+              break;
+            }
+          }
+          if (this.activeSnapLines.some((l) => l.type === "horizontal")) break;
+        }
+      }
+
+      // Grid snapping for Move
+      if (Math.abs(t.rotation % 360) < 0.01) {
+        const w = Math.round(t.width * t.scaleX);
+        const h = Math.round(t.height * t.scaleY);
+        const left = t.x - w / 2;
+        const top = t.y - h / 2;
+
+        if (!this.activeSnapLines.some((l) => l.type === "vertical")) {
+          t.x = Math.round(left) + w / 2;
+        }
+        if (!this.activeSnapLines.some((l) => l.type === "horizontal")) {
+          t.y = Math.round(top) + h / 2;
+        }
+      }
     } else if (this.activeHandle.name === "rotate") {
       const startAngle = Math.atan2(
         this.dragStartCoords.y - startT.y,
@@ -322,11 +465,67 @@ export class CropTool extends BaseTool {
 
       const scaleAnchor = e.altKey ? { x: startT.x, y: startT.y } : this.scaleAnchor;
 
+      // Adjust mouse to handle center
+      let targetMouseX = rawX - this.handleStartOffset.x;
+      let targetMouseY = rawY - this.handleStartOffset.y;
+
+      const snapMargin = 4 / context.project.zoom;
+      const projectW = context.project.width;
+      const projectH = context.project.height;
+
+      const potentialSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
+
+      // 1. Snap to Canvas Edges & Center
+      if (Math.abs(targetMouseX - 0) < snapMargin) {
+        targetMouseX = 0;
+        potentialSnapLines.push({ type: "vertical", position: 0 });
+      } else if (Math.abs(targetMouseX - projectW / 2) < snapMargin) {
+        targetMouseX = projectW / 2;
+        potentialSnapLines.push({ type: "vertical", position: projectW / 2 });
+      } else if (Math.abs(targetMouseX - projectW) < snapMargin) {
+        targetMouseX = projectW;
+        potentialSnapLines.push({ type: "vertical", position: projectW });
+      }
+
+      if (Math.abs(targetMouseY - 0) < snapMargin) {
+        targetMouseY = 0;
+        potentialSnapLines.push({ type: "horizontal", position: 0 });
+      } else if (Math.abs(targetMouseY - projectH / 2) < snapMargin) {
+        targetMouseY = projectH / 2;
+        potentialSnapLines.push({ type: "horizontal", position: projectH / 2 });
+      } else if (Math.abs(targetMouseY - projectH) < snapMargin) {
+        targetMouseY = projectH;
+        potentialSnapLines.push({ type: "horizontal", position: projectH });
+      }
+
+      // 2. Snap to Guides
+      if (showGuides && snapToGuides) {
+        for (const guide of guides) {
+          if (
+            guide.type === "vertical" &&
+            !potentialSnapLines.some((l) => l.type === "vertical" && l.position === targetMouseX)
+          ) {
+            if (Math.abs(targetMouseX - guide.position) < snapMargin) {
+              targetMouseX = guide.position;
+              potentialSnapLines.push({ type: "vertical", position: guide.position });
+            }
+          } else if (
+            guide.type === "horizontal" &&
+            !potentialSnapLines.some((l) => l.type === "horizontal" && l.position === targetMouseY)
+          ) {
+            if (Math.abs(targetMouseY - guide.position) < snapMargin) {
+              targetMouseY = guide.position;
+              potentialSnapLines.push({ type: "horizontal", position: guide.position });
+            }
+          }
+        }
+      }
+
       const vecStart = {
-        x: this.dragStartCoords.x - scaleAnchor.x,
-        y: this.dragStartCoords.y - scaleAnchor.y,
+        x: this.dragStartCoords.x - this.handleStartOffset.x - scaleAnchor.x,
+        y: this.dragStartCoords.y - this.handleStartOffset.y - scaleAnchor.y,
       };
-      const vecCurrent = { x: rawX - scaleAnchor.x, y: rawY - scaleAnchor.y };
+      const vecCurrent = { x: targetMouseX - scaleAnchor.x, y: targetMouseY - scaleAnchor.y };
 
       const startProjX = vecStart.x * axisX.x + vecStart.y * axisX.y;
       const startProjY = vecStart.x * axisY.x + vecStart.y * axisY.y;
@@ -366,11 +565,14 @@ export class CropTool extends BaseTool {
         }
       }
 
-      const finalSfx = applyX || (keepAspect && applyY) ? sfx : 1;
-      const finalSfy = applyY || (keepAspect && applyX) ? sfy : 1;
+      const finalSfx =
+        applyX || (keepAspect && applyY) ? (startT.width === 0 ? currentProjX : sfx) : 1;
+      const finalSfy =
+        applyY || (keepAspect && applyX) ? (startT.height === 0 ? currentProjY : sfy) : 1;
 
-      if (startProjX === 0 && startProjY === 0) {
+      if (startT.width === 0 || startT.height === 0) {
         // Special case for new creation from zero size
+        // finalSfx and finalSfy are actually the absolute width/height in this case because start is 0
         t.width = Math.abs(finalSfx);
         t.height = Math.abs(finalSfy);
         t.scaleX = 1;
@@ -395,14 +597,90 @@ export class CropTool extends BaseTool {
         t.x = scaleAnchor.x + newWorldVec.x;
         t.y = scaleAnchor.y + newWorldVec.y;
       }
+
+      // Verify which snap lines are still valid after all constraints
+      const handles = this.getHandles(context);
+      const currentHandle = handles.find((h) => h.name === this.activeHandle?.name);
+      if (currentHandle) {
+        for (const line of potentialSnapLines) {
+          if (line.type === "vertical" && Math.abs(currentHandle.x - line.position) < 0.01) {
+            this.activeSnapLines.push(line);
+          } else if (
+            line.type === "horizontal" &&
+            Math.abs(currentHandle.y - line.position) < 0.01
+          ) {
+            this.activeSnapLines.push(line);
+          }
+        }
+      }
     }
 
     this.syncStore(context);
+
+    // --- GRID SNAPPING (PIXEL PERFECT) ---
+    // If not rotated, ensure width, height and edges are aligned to the pixel grid.
+    if (Math.abs(t.rotation % 360) < 0.01) {
+      let w = Math.round(t.width * t.scaleX);
+      let h = Math.round(t.height * t.scaleY);
+
+      // Enforce minimum size of 1px if movement was intended
+      const minW = Math.abs(t.width * t.scaleX) > 0.001 ? 1 : 0;
+      const minH = Math.abs(t.height * t.scaleY) > 0.001 ? 1 : 0;
+
+      if (Math.abs(w) < minW) w = (Math.sign(t.width * t.scaleX) || 1) * minW;
+      if (Math.abs(h) < minH) h = (Math.sign(t.height * t.scaleY) || 1) * minH;
+
+      if (t.width !== 0 && t.height !== 0) {
+        t.scaleX = w / t.width;
+        t.scaleY = h / t.height;
+
+        // Calculate the top-left edge, round it, and reset center
+        const left = t.x - Math.abs(w) / 2;
+        const top = t.y - Math.abs(h) / 2;
+
+        const snapX = this.activeSnapLines.find((l) => l.type === "vertical");
+        const snapY = this.activeSnapLines.find((l) => l.type === "horizontal");
+
+        // If snapped to a guide, respect its exact position. Otherwise round.
+        const finalLeft = Math.round(left);
+        const finalTop = Math.round(top);
+
+        // If we are dragging a left/top handle and it's snapped, we adjust the corner.
+        // If we are dragging a right/bottom handle and it's snapped, we adjust the width/height (already done by scale).
+        // Actually, if we are snapped to a vertical guide, one of the vertical edges (left or right) should be at that position.
+        const handles = this.getHandles(context);
+        const currentHandle = handles.find((h) => h.name === this.activeHandle?.name);
+
+        if (snapX && currentHandle) {
+          const diff = snapX.position - currentHandle.x;
+          t.x += diff;
+        } else {
+          t.x = finalLeft + Math.abs(w) / 2;
+        }
+
+        if (snapY && currentHandle) {
+          const diff = snapY.position - currentHandle.y;
+          t.y += diff;
+        } else {
+          t.y = finalTop + Math.abs(h) / 2;
+        }
+      }
+    }
   }
 
   onMouseUp(_e: MouseEvent, context: ToolContext): void {
+    if (this.cropState) {
+      const w = Math.round(this.cropState.width * this.cropState.scaleX);
+      const h = Math.round(this.cropState.height * this.cropState.scaleY);
+      // If it's a zero-sized crop (like from a simple click), reset it to project bounds
+      if (w === 0 || h === 0) {
+        this.resetCrop(context);
+      }
+    }
+
     this.activeHandle = null;
     this.dragStartCrop = null;
+    this.activeSnapLines = [];
     context.setInteracting(false);
   }
 
@@ -475,6 +753,29 @@ export class CropTool extends BaseTool {
       }
     }
 
+    // 5. Draw Snap Lines
+    if (this.activeSnapLines.length > 0) {
+      ctx.strokeStyle = "red";
+      ctx.lineWidth = 1 / zoom;
+
+      const viewportWidth = context.canvas.width / zoom;
+      const viewportHeight = context.canvas.height / zoom;
+      const startX = -context.project.panX / zoom;
+      const startY = -context.project.panY / zoom;
+
+      for (const line of this.activeSnapLines) {
+        ctx.beginPath();
+        if (line.type === "horizontal") {
+          ctx.moveTo(startX, line.position);
+          ctx.lineTo(startX + viewportWidth, line.position);
+        } else {
+          ctx.moveTo(line.position, startY);
+          ctx.lineTo(line.position, startY + viewportHeight);
+        }
+        ctx.stroke();
+      }
+    }
+
     ctx.restore();
   }
 
@@ -483,13 +784,26 @@ export class CropTool extends BaseTool {
 
     context.pushHistory("Crop");
 
-    const t = this.cropState;
+    const t = JSON.parse(JSON.stringify(this.cropState));
+    if (Math.abs(t.rotation % 360) < 0.01) {
+      const w = Math.round(t.width * t.scaleX);
+      const h = Math.round(t.height * t.scaleY);
+      const left = Math.round(t.x - Math.abs(w) / 2);
+      const top = Math.round(t.y - Math.abs(h) / 2);
+      t.width = Math.abs(w);
+      t.height = Math.abs(h);
+      t.scaleX = 1;
+      t.scaleY = 1;
+      t.x = left + t.width / 2;
+      t.y = top + t.height / 2;
+    }
+
     const settings = context.settings.crop;
 
     const localLeft = -t.width * t.anchor.x * t.scaleX;
     const localTop = -t.height * t.anchor.y * t.scaleY;
-    const newW = Math.round(Math.abs(t.width * t.scaleX));
-    const newH = Math.round(Math.abs(t.height * t.scaleY));
+    const newW = Math.max(1, Math.round(Math.abs(t.width * t.scaleX)));
+    const newH = Math.max(1, Math.round(Math.abs(t.height * t.scaleY)));
 
     const invRot = (-t.rotation * Math.PI) / 180;
     const cos = Math.cos(invRot);
@@ -513,11 +827,33 @@ export class CropTool extends BaseTool {
 
         // If it's not a raster layer or we don't want to delete pixels, just update transform
         if (layer.type !== "raster" || !settings.deleteCropped) {
+          const newX = newCenterX - layer.width / 2;
+          const newY = newCenterY - layer.height / 2;
+
+          let newMask = layer.mask;
+          if (layer.mask?.linked) {
+            const mcx = layer.mask.x + layer.mask.width / 2;
+            const mcy = layer.mask.y + layer.mask.height / 2;
+            const mRelX = mcx - t.x;
+            const mRelY = mcy - t.y;
+            const mRotX = mRelX * cos - mRelY * sin;
+            const mRotY = mRelX * sin + mRelY * cos;
+            const newMCX = mRotX - localLeft;
+            const newMCY = mRotY - localTop;
+
+            newMask = {
+              ...layer.mask,
+              x: newMCX - layer.mask.width / 2,
+              y: newMCY - layer.mask.height / 2,
+            };
+          }
+
           return {
             ...layer,
             rotation: newRotation,
-            x: newCenterX - layer.width / 2,
-            y: newCenterY - layer.height / 2,
+            x: newX,
+            y: newY,
+            mask: newMask,
           };
         }
 
@@ -630,6 +966,32 @@ export class CropTool extends BaseTool {
         }
 
         context.invalidateCache(layer.id);
+
+        let newMask = layer.mask;
+        if (layer.mask?.linked) {
+          // Calculate mask's new position in the cropped project space
+          const mcx = layer.mask.x + layer.mask.width / 2;
+          const mcy = layer.mask.y + layer.mask.height / 2;
+
+          const mRelX = mcx - t.x;
+          const mRelY = mcy - t.y;
+          const mRotX = mRelX * cos - mRelY * sin;
+          const mRotY = mRelX * sin + mRelY * cos;
+
+          const newMCX = mRotX - localLeft;
+          const newMCY = mRotY - localTop;
+
+          newMask = {
+            ...layer.mask,
+            x: newMCX - layer.mask.width / 2,
+            y: newMCY - layer.mask.height / 2,
+            // Note: In non-rasterize mode, we just move it.
+          };
+
+          // If we also want to rasterize the mask (like we did for the layer),
+          // it would be more consistent. But for now movement is a good start.
+        }
+
         return {
           ...layer,
           rotation: 0, // Baked
@@ -638,6 +1000,7 @@ export class CropTool extends BaseTool {
           height: finalCanvas.height,
           x: finalX,
           y: finalY,
+          mask: newMask,
         };
       }),
     );

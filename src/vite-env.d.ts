@@ -7,3 +7,15 @@ declare module "*.css" {
   const content: { [className: string]: string };
   export default content;
 }
+
+declare module "upng-js" {
+  export function encode(
+    imgs: ArrayBuffer[],
+    w: number,
+    h: number,
+    cnum: number,
+    dels?: number[],
+  ): ArrayBuffer;
+  export function decode(data: ArrayBuffer): any;
+  export function toRGBA8(out: any): ArrayBuffer[];
+}

@@ -2,8 +2,147 @@ TODO: OpenCreate Forge
 
 [x] Marcar como feito
 [-] Marcar como pendente
+[/] Marcar como parcialmente feito
 
-- [ ] Guias (depois de Régua)
+## Alpha 3
+
+- [ ] Migração completa de `2d` para `webgl2` ([docs](docs/WEBGL2_MIGRATE.md))
+- [ ] Adicionar suporte para mostrar a miniatura do projeto na aba, usando o thumbnail gerado ao salvar o projeto
+
+## Alpha 2.1 (Patch 1)
+
+- [ ] Bug: Ao agrupar a camada, colocar estilos apenas no grupo, transformar camada filho, o render corta nos limites atuais do grupo.
+- [ ] Ferramenta de Degradê (GradientTool)
+  - [ ] Novo tipo de camada `gradient_fill` que tem as propriedades do degradê (type [linear, radial, angular], colors [array de {color, position}])
+  - [ ] Tipos de degradê: Linear, Radial, Angular
+  - [ ] Editor de degradê (Gradient Editor Modal) para criar e editar os degradês personalizados
+  - [ ] Aplicar o degradê na camada selecionada, respeitando a opacidade e os estilos da camada
+
+## Alpha 2
+
+- [/] Finalização
+  - [/] Funcionalidade de [Auto-Update](docs/AUTOUPDATE.md)
+  - [x] Adicionar mais uma build `flatpak`
+  - [x] O ícone para macOS do `OpenCreate Forge.app` tem saturação diferente do arquivo original
+  - [x] Accent color está diferente da logo na home
+  - [x] Adicionar [Selo Made in Brasil](https://feitonobrasil.dev.br/)
+  - [x] Corrigir layout do RecentProjects
+  - [x] Otimizar o [Electron Builder](docs/ELECTRON_OPTIMIZE.md)
+  - [x] Bug: Ao selecionar com SelectTool fica desalinhado em relação ao mouse.
+  - [x] Bug: Ao tentar selecionar uma nova area no CropTool, apenas seleciona um pixel e não expande ao mouse.
+  - [x] Bug: Mudar o funcionamento do copiar e colar seleção, pois alguns apps recebem os metadados da seleção em texto cru (por exemplo: `{"source":"forge-editor","projectId":"9e46268f-4d80-4541-a2d0-c0679b58b75d","x":822,"y":485}`), e não a imagem da seleção de fato. Salvar os metadados em `localStorage` e garantir que os metadados são da imagem copiada
+  - [x] Bug: Ao esconder o grupo, deve esmaecer (opacity 50%) as camadas dentro do grupo.
+  - [x] Bug: o tema claro está conflitando com o tema escuro, desabilitar o tema claro por enquanto
+  - [x] Bug: A fonte não é carregada corretamente ao abrir um projeto salvo. (Principalmente fontes do Google Fonts)
+  - [x] No ContextMenu da camada, adicionar opção "Layer Styles..." para abrir o LayerStyleModal
+  - [x] Adicionar "About OpenCreate Forge" no menu de ajuda, com informações sobre o projeto, links para o repositório, etc.
+  - [x] Melhor UX das abas de projetos
+    - [x] Poder fechar um projeto ao clicar com botão do meio na aba
+    - [x] Poder arrastar as abas para reordenar os projetos
+    - [x] Ao fechar um projeto, mudar para a aba esquerda, e se não tiver, mudar para a aba da direita
+      - [x] Caso não tenha mais abas, ir para a Home
+  - [x] Corrigir o alinhamento da grid em CropTool
+  - [x] Corrigir o alinhamento da grid em TransformTool
+  - [x] Modals que podem ser movidos, ele aparece primeiramente no canto superior esquerdo
+- [x] Opções no menu Image
+  - [x] Image Size... (ImageSizeModal) (Ctrl+Alt+I) (width, height, resample [nearest, bilinear], constrain proportions)
+  - [x] Rotate Image (submenu) (90° CW, 90° CCW, 180°)
+  - [x] Flip Image (submenu) (Horizontal, Vertical)
+- [x] Guias
+  - [x] Poder criar guias verticais e horizontais através das réguas (clicando e arrastando da régua para o canvas)
+  - [x] Poder remover guias arrastando elas de volta para a régua
+  - [x] Poder mostrar/ocultar as guias no menu do app (Ctrl/Cmd+;)
+  - [x] Poder mover as guias apenas usando o MoveTool
+  - [x] Guide Snapping (margem de 4px para snap, mostrar linha vermelha de snap):
+    - [x] Guide Snapping ser ativado/desativado no menu do app (View > Snap to [submenu] > Guides [checkbox])
+    - [x] MoveTool: Snap nos cantos da camada nas guias
+    - [x] MoveTool: Snap ao centro da camada com as guias
+    - [x] MoveTool: Snap ao mover a guia, para os cantos e centro da camada
+    - [x] TransformTool: Snap nos cantos da seleção atual nas guias
+    - [x] TransformTool: Snap ao centro da seleção atual com as guias
+    - [x] Bug: TransformTool: Garantir snap na grid durante a transformação, pois as vezes ele desloca da grid
+    - [x] CropTool: Snap nos cantos da seleção nova nas guias
+    - [x] CropTool: Snap ao centro da seleção nova com as guias
+    - [x] CropTool: Snap ao mover a borda da seleção, para os cantos e centro da camada
+    - [x] CropTool: Snap no canto do canvas (mostrar feedback visual de snap)
+    - [x] CropTool: Garantir snap na grid durante o crop, pois agora ele não está respeitando a grid
+    - [x] SelectTool: Snap nos cantos da seleção nas guias
+    - [x] SelectTool: Snap ao centro da seleção com as guias
+    - [x] SelectTool: Snap no canto do canvas (mostrar feedback visual de snap)
+    - [x] TextTool: Snap nos cantos da caixa de texto nas guias
+    - [x] TextTool: Snap ao centro da caixa de texto com as guias
+    - [x] TextTool: Snap no canto do canvas (mostrar feedback visual de snap)
+  - [x] Layer Snapping:
+    - [x] Layer Snapping ser ativado/desativado no menu do app (View > Snap to [submenu] > Layers [checkbox])
+    - [x] MoveTool: Snap nos cantos da camada nas camadas
+    - [x] MoveTool: Snap ao centro da camada com as camadas
+    - [x] MoveTool: Snap nos cantos da camada no canto do canvas
+    - [x] MoveTool: Snap ao centro da camada com o centro do canvas
+- [x] Layer Masks
+  - [x] Adicionar suporte para criar uma Layer Mask no menu de contexto da camada (tudo branco por padrão)
+  - [x] Adicionar suporte para mostrar a Layer Mask como uma miniatura ao lado da miniatura da camada no painel de camadas
+  - [x] Renderizar a Layer Mask corretamente, aplicando a máscara na camada
+  - [x] Adicionar suporte para editar a Layer Mask com as ferramentas de pintura (Pencil, Brush, Eraser) usando a cor preta para ocultar e branca para mostrar
+  - [x] Adicionar suporte para desabilitar temporariamente a Layer Mask (mostrar a camada sem a máscara) no painel de camadas (com Shift+Click na miniatura da máscara)
+  - [x] Adicionar suporte para desabilitar e deletar a Layer Mask no menu de contexto da camada
+  - [x] Bug: Não é possivel pintar no Layer Mask em camadas que não são RasterLayer
+- [x] Layer Styles (stroke, drop-shadow, etc.)
+  - [x] Implementar LayerStyleModal e abrir ao DoubleClick na camada
+  - [x] BaseModal, suporte para habilitar o mover, redimensionar o modal, e opção para previnir que feche ao clicar fora do modal
+  - [x] Adicionar suporte para atualizar a camada em tempo real ao editar os estilos, sem precisar clicar em "OK" (salvar no histórico de forma inteligente para não encher)
+  - [x] Adicionar StrokeStyle (size, position [outside, center, inside], opacity, color, rounded, anti_alias)
+  - [x] Adicionar DropShadowStyle (size, distance, angle, color, opacity, spread, noise)
+  - [x] Adicionar InnerShadowStyle (size, distance, angle, color, opacity, spread, noise)
+  - [x] Mover os estilos que estão em `projectStore` para uma nova store `layerStylesStore`
+  - [x] Bug: ao converter para Smart Object ele não renderiza os estilos, calcular a posição e tamanho do Smart Object para renderizar os estilos corretamente
+  - [x] Bug: Group Layer não renderiza os estilos e apenas some as camadas ao ativar um dos estilos
+- [x] Layer Blending Modes
+- [x] Layer Opacity, Fill
+- [x] Smart Objects
+  - Smart Objects são camadas que basicamente é um projeto em JSON (armazenado em `dataObject` ao lado de `data` que guardará a renderização de `dataObject`)
+  - [x] Poder converter uma camada (ou várias camadas) em Smart Object no menu de contexto das camadas
+  - [x] Bloquear a pintura e edição direta em uma Smart Object, mostrando um alerta para editar o conteúdo dela
+  - [x] Poder transformar a Smart Object, e deve ter `originalTransform` para guardar a transformação original e resetar no menu de contexto
+  - [x] Poder editar o conteúdo de uma Smart Object, abrindo o projeto interno dela (clicando duas vezes ou no menu de contexto) em uma nova janela (igual Photoshop)
+  - [x] Poder rasterizar a Smart Object, convertendo ela em uma camada de imagem normal, no menu de contexto
+- [x] Layer Groups
+- [x] Melhorar o manuseio das camadas
+  - [x] DragOver deve detectar melhor a posição do mouse, se tiver na primeira metade ou na segunda metade do elemento
+  - [x] Ao dropar uma camada no painel de camadas (que não seja um dos itens) deve dropar no final da lista
+  - [x] Feedback visual de dropar em cima ou em baixo da camada não deve ocorrer na camada selecionada
+  - [x] Poder selecionar múltiplas camadas com Ctrl+Click e arrastar para reordenar
+  - [x] Poder selecionar múltiplas camadas com Shift+Click para selecionar um range de camadas
+  - [x] Clicar e arrastar no olho para ocultar/mostrar a camada de forma rápida, sem precisar clicar em cada olho (igual Photoshop)
+  - [x] Alt+Click no olho para ocultar todas as outras camadas, exceto a clicada (igual Photoshop)
+- [x] Ferramenta de Preenchimento (Paint Bucket)
+  - [x] Suporte para preencher áreas conectadas (contiguous) ou toda a camada (global)
+  - [x] Suporte para preencher como RasterLayer ou preencher tudo em nova camada do tipo `color_fill`
+  - [x] Ao clicar duas vezes na thumbnail da camada `color_fill` deve abrir um modal (com comportamento igual LayerStyles) para editar as opções do preenchimento (cor)
+- [x] Menu de contexto na Home para cada projeto (Abrir, Renomear, Exportar, Export to Clipboard, Remover da Lista, Deletar)
+  - [x] Bug: Exportar e Export to Clipboard não funciona
+  - [x] Adicionar suporte para ter separadores no ContextMenu
+- [x] Copiar o projeto para a área de transferência como imagem `Export to Clipboard` no menu `File`
+- [x] Home mostrar os projetos recentes com thumbnails (será gerada ao salvar o projeto, 200x200)
+- [x] Novo projeto a partir da clipboard (se houver imagem, apenas mudar o width e height do NewProjectModal para o tamanho da imagem)
+- [x] Puder abrir e salvar (Ctrl+S) num arquivo de imagem (PNG, JPEG, WEBP) direta, sem precisar salvar como `.ocfd`
+- [x] Modal de Preferências
+  - [x] Configurações de interface (ex: tema escuro/claro, padrão escuro) (`forge:general:theme`)
+  - [x] Salvamento automático (padrão desligado, intervalo de 5 minutos) (`forge:general:autosave`)
+  - [x] Salvar no projeto o histórico de mudanças (padrão desligado) (`forge:general:save_history`)
+  - [x] Limite de histórico de mudanças (padrão 50, maximo 200) (`forge:general:history_limit`)
+- [x] Modal de Exportação Avançada
+  - [x] Campos de Nome e Formato
+  - [x] Exportar para multiplos formatos (PNG, JPEG, WEBP)
+  - [x] Qualidade da exportação (padrão 100%)
+- [x] Bug: transformar a camada aparece um clone da camada durante a transformação
+- [x] Bug: é possível pintar na camada de texto, mostrar alerta ao tentar pintar
+- [x] Bug: Text Tool > digitar "Lorem" > aplicar. ele renomeia a camada para "Lorem", mas ao clicar duas vezes na camada para renomear ele volta para o nome original "Text Layer"
+- [x] Bug: ao pintar em uma camada atrás de outra camada, essa camada que está sendo pintada move para frente durante a pintura, mas volta para trás depois de pintar
+- [x] Bug: ao dropar um projeto (`.ocfd`) no app não puxa o `filePath` (fica undefined), diferente ao abrir o projeto com Ctrl+O que puxa o `filePath` corretamente.
+- [x] Bug: ao criar nova camada ele é criado no tipo da lista de camadas, ao invés em cima da camada selecionada
+
+## Alpha 1
+
 - [x] Carregar todas as fontes do sistema
   - [x] Integrar com Google Fonts
   - [x] Corrigir e verificar se todos os weights estão sendo renderizados corretamente
@@ -42,7 +181,7 @@ TODO: OpenCreate Forge
 - [x] Selection Tool
   - [x] Copiar seleção e colar
 - [x] Pencil Tool
-- [-] Home com presets de tamanhos para Novo Projeto
+- [x] Home com presets de tamanhos para Novo Projeto
 - [x] Eraser Tool
   - [x] Hardness
 - [x] Brush Tool
