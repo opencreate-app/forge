@@ -28,12 +28,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache Flatpak Dependencies
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/cache@v4
+        id: flatpak-cache
+        with:
+          path: |
+            ~/.local/share/flatpak
+            /var/tmp/flatpak-builder-*
+          key: ${{ runner.os }}-flatpak-v1-23.08
+
       - name: Install Flatpak dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get install -y flatpak flatpak-builder elfutils
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08 org.electronjs.Electron2.BaseApp//23.08
+
+          # Só instala se não foi restaurado pelo cache
+          if [ "${{ steps.flatpak-cache.outputs.cache-hit }}" != 'true' ]; then
+            flatpak install --user -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08 org.electronjs.Electron2.BaseApp//23.08
+          fi
 
       - name: Run quality checks
         run: npm run check
