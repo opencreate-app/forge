@@ -1,5 +1,6 @@
 /// <reference types="vitest" />
-import { defineConfig } from "vitest/config";
+/// <reference types="vite/client" />
+import { defineConfig, type UserConfig } from "vite";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
 import electron from "vite-plugin-electron/simple";
@@ -49,5 +50,14 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "dist"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes("node_modules")) {
+            return "vendor";
+          }
+        },
+      },
+    },
   },
-});
+} as UserConfig);
