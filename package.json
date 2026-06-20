@@ -8,7 +8,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "rm -rf dist/ dist-electron/ && tsc && vite build && electron-builder",
     "preview": "vite preview",
     "lint": "eslint . --color",
     "tsc": "tsc --noEmit --pretty",
@@ -65,10 +65,13 @@
       "output": "dist"
     },
     "files": [
-      "dist/**/*",
       "dist-electron/**/*",
+      "dist/**/*",
       "package.json",
-      "!**/*.map"
+      "!dist/*.zip",
+      "!dist/*.dmg",
+      "!dist/mac/**/*",
+      "!dist/mac-arm64/**/*"
     ],
     "extraMetadata": {
       "main": "dist-electron/main.js"
@@ -77,8 +80,20 @@
       "category": "public.app-category.graphics-design",
       "icon": "shared/favicon/favicon-darwin-liquid.icns",
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
