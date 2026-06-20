@@ -76,29 +76,6 @@
     "extraMetadata": {
       "main": "dist-electron/main.js"
     },
-    "mac": {
-      "category": "public.app-category.graphics-design",
-      "icon": "shared/favicon/favicon-darwin-liquid.icns",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false,
-      "identity": null
-    },
     "win": {
       "icon": "shared/favicon/favicon-windows.ico",
       "target": [
@@ -132,6 +109,27 @@
         "--filesystem=home"
       ]
     },
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "icon": "shared/favicon/favicon-darwin-liquid.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "identity": "-"
+    },
     "dmg": {
       "sign": false,
       "background": "shared/favicon/dmg-background.png",
@@ -142,15 +140,15 @@
       },
       "contents": [
         {
-          "x": 130,
-          "y": 120,
-          "type": "file"
-        },
-        {
           "x": 410,
           "y": 120,
           "type": "link",
           "path": "/Applications"
+        },
+        {
+          "x": 130,
+          "y": 120,
+          "type": "file"
         }
       ]
     }
