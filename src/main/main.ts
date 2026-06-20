@@ -30,6 +30,14 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(APP_ROOT, "public") : 
 
 let win: BrowserWindow | null;
 let splash: BrowserWindow | null;
+let menuState = {
+  hasProject: false,
+  showRulers: true,
+  showGuides: true,
+  snapToGuides: true,
+  snapToLayers: true,
+  updateStatus: "",
+};
 
 app.commandLine.appendSwitch("ignore-gpu-blacklist"); // Ensures GPU usage on more machines
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // Improves rendering of vector shapes and drawings
@@ -64,6 +72,7 @@ function createMenu(
   showGuides = true,
   snapToGuides = true,
   snapToLayers = true,
+  updateStatus = "",
 ) {
   const isDev = !!VITE_DEV_SERVER_URL;
 
@@ -311,6 +320,19 @@ function createMenu(
           label: "About OpenCreate Forge",
           click: () => win?.webContents.send("menu:action", "about"),
         },
+        {
+          label: "Check for Updates...",
+          enabled:
+            updateStatus === "" ||
+            updateStatus === "done" ||
+            updateStatus === "up-to-date" ||
+            updateStatus.startsWith("error:")
+              ? true
+              : false,
+          click: () => {
+            if (win) checkForUpdates(win);
+          },
+        },
         { type: "separator" },
         {
           label: "View on GitHub",
@@ -424,12 +446,30 @@ app.whenReady().then(() => {
     return filePaths[0];
   });
 
-  ipcMain.handle(
-    "app:updateMenu",
-    (_event, { hasProject, showRulers, showGuides, snapToGuides, snapToLayers }) => {
-      createMenu(hasProject, showRulers, showGuides, snapToGuides, snapToLayers);
-    },
-  );
+  ipcMain.handle("app:updateMenu", (_event, state) => {
+    menuState = { ...menuState, ...state };
+
+    createMenu(
+      menuState.hasProject,
+      menuState.showRulers,
+      menuState.showGuides,
+      menuState.snapToGuides,
+      menuState.snapToLayers,
+    );
+  });
+
+  ipcMain.on("main:update-status-changed", (_event, newStatus: string) => {
+    menuState.updateStatus = newStatus;
+
+    createMenu(
+      menuState.hasProject,
+      menuState.showRulers,
+      menuState.showGuides,
+      menuState.snapToGuides,
+      menuState.snapToLayers,
+      menuState.updateStatus,
+    );
+  });
 
   ipcMain.handle("dialog:saveFile", async (_event, { dataURL, defaultName, filters }) => {
     const { canceled, filePath } = await dialog.showSaveDialog({

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, net } from "electron";
+import { app, BrowserWindow, net, ipcMain } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -78,10 +78,22 @@ function isNewer(v1: string, v2: string): boolean {
 /**
  * Checks for updates via GitHub Releases API.
  */
+function setStatusAndRefreshMenu(win: BrowserWindow, status: string) {
+  // Dispara o evento interno mapeado no main.ts passando o novo status
+  ipcMain.emit("main:update-status-changed", null, status);
+}
+
 export async function checkForUpdates(win: BrowserWindow) {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  setStatusAndRefreshMenu(win, "checking");
+
+  await sleep(1000);
+
   // Skip check in development
   if (process.env.VITE_DEV_SERVER_URL) {
     console.log("[AutoUpdater] Skipping update check in development mode.");
+    setStatusAndRefreshMenu(win, "");
     return;
   }
 
@@ -130,20 +142,24 @@ export async function checkForUpdates(win: BrowserWindow) {
             };
             win.webContents.send("forge:update-available", payload);
           } else {
+            setStatusAndRefreshMenu(win, "up-to-date");
             console.log("[AutoUpdater] App is up to date.");
           }
         } catch (_e) {
+          setStatusAndRefreshMenu(win, "error:gh-api-response-parse");
           console.error("[AutoUpdater] Failed to parse GitHub API response.");
         }
       });
     });
 
     request.on("error", (err) => {
+      setStatusAndRefreshMenu(win, "error:network-on-check");
       console.error(`[AutoUpdater] Network error during update check: ${err.message}`);
     });
 
     request.end();
   } catch (_error) {
+    setStatusAndRefreshMenu(win, "error:unexpected-on-check");
     console.error("[AutoUpdater] Unexpected error during update check.");
   }
 }
