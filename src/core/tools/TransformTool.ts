@@ -46,6 +46,8 @@ export class TransformTool extends BaseTool {
   private context: ToolContext | null = null;
   private unsubscribeStore: (() => void) | null = null;
   private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
+  private transformHistory: TransformState[] = [];
+  private transformHistoryIndex = -1;
 
   private isFloating = false;
 
@@ -84,11 +86,15 @@ export class TransformTool extends BaseTool {
         anchor: { x: 0.5, y: 0.5 },
         isDirty: this.isFloating, // If we just floated, it's already a change from original
       };
+      this.transformHistory = [this.cloneTransform(this.currentTransform)];
+      this.transformHistoryIndex = 0;
       this.syncStore(context);
     }
 
     window.addEventListener("forge:transform-apply", this.handleApplyEvent);
     window.addEventListener("forge:transform-cancel", this.handleCancelEvent);
+    window.addEventListener("forge:transform-undo", this.handleUndoEvent);
+    window.addEventListener("forge:transform-redo", this.handleRedoEvent);
     window.addEventListener("keydown", this.handleKeyDown);
 
     this.unsubscribeStore = context.subscribe((settings) => {
@@ -104,6 +110,7 @@ export class TransformTool extends BaseTool {
           this.currentTransform.rotation !== newSettings.rotation
         ) {
           this.currentTransform = { ...newSettings };
+          if (!this.activeHandle) this.recordTransform(this.currentTransform);
         }
       }
     });
@@ -159,6 +166,14 @@ export class TransformTool extends BaseTool {
     if (this.context) this.cancel(this.context);
   };
 
+  private handleUndoEvent = () => {
+    if (this.context) this.undoTransform(this.context);
+  };
+
+  private handleRedoEvent = () => {
+    if (this.context) this.redoTransform(this.context);
+  };
+
   onDeactivate(context: ToolContext): void {
     this.originalLayer = null;
     this.currentTransform = null;
@@ -166,6 +181,8 @@ export class TransformTool extends BaseTool {
     this.activeSnapLines = [];
     window.removeEventListener("forge:transform-apply", this.handleApplyEvent);
     window.removeEventListener("forge:transform-cancel", this.handleCancelEvent);
+    window.removeEventListener("forge:transform-undo", this.handleUndoEvent);
+    window.removeEventListener("forge:transform-redo", this.handleRedoEvent);
     window.removeEventListener("keydown", this.handleKeyDown);
     if (this.unsubscribeStore) {
       this.unsubscribeStore();
@@ -175,6 +192,51 @@ export class TransformTool extends BaseTool {
     // Reset dirty state on deactivate
     context.updateToolSettings("transform", { isDirty: false });
     this.context = null;
+  }
+
+  private cloneTransform(transform: TransformState): TransformState {
+    return { ...transform, anchor: { ...transform.anchor } };
+  }
+
+  private recordTransform(transform: TransformState) {
+    const lastTransform = this.transformHistory[this.transformHistoryIndex];
+    if (
+      lastTransform &&
+      lastTransform.x === transform.x &&
+      lastTransform.y === transform.y &&
+      lastTransform.scaleX === transform.scaleX &&
+      lastTransform.scaleY === transform.scaleY &&
+      lastTransform.rotation === transform.rotation &&
+      lastTransform.width === transform.width &&
+      lastTransform.height === transform.height
+    ) {
+      return;
+    }
+
+    this.transformHistory = this.transformHistory.slice(0, this.transformHistoryIndex + 1);
+    this.transformHistory.push(this.cloneTransform(transform));
+    this.transformHistoryIndex = this.transformHistory.length - 1;
+  }
+
+  private restoreTransform(context: ToolContext, index: number) {
+    const transform = this.transformHistory[index];
+    if (!transform) return;
+
+    this.transformHistoryIndex = index;
+    this.currentTransform = { ...this.cloneTransform(transform), isDirty: index > 0 };
+    this.syncStore(context);
+  }
+
+  private undoTransform(context: ToolContext) {
+    if (this.transformHistoryIndex > 0) {
+      this.restoreTransform(context, this.transformHistoryIndex - 1);
+    }
+  }
+
+  private redoTransform(context: ToolContext) {
+    if (this.transformHistoryIndex < this.transformHistory.length - 1) {
+      this.restoreTransform(context, this.transformHistoryIndex + 1);
+    }
   }
 
   private syncStore(context: ToolContext) {
@@ -628,6 +690,9 @@ export class TransformTool extends BaseTool {
   }
 
   onMouseUp(): void {
+    if (this.currentTransform && this.dragStartTransform) {
+      this.recordTransform(this.currentTransform);
+    }
     this.activeHandle = null;
     this.dragStartTransform = null;
     this.activeSnapLines = [];

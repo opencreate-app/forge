@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useProjectStore, getSerializableProject } from "@store/projectStore";
 import { useRecentProjectsStore } from "@store/recentProjectsStore";
 import { useUIStore } from "@store/uiStore";
+import { useToolStore } from "@store/toolStore";
 import { createProjectFromImage, loadImage } from "@utils/projectUtils";
 import { forgeEvents, FORGE_EVENTS } from "@utils/events";
 
@@ -321,7 +322,11 @@ export const useMenuHandler = () => {
               console.warn("execCommand undo failed:", e);
             }
           } else if (activeProjectId) {
-            undo(activeProjectId);
+            if (useToolStore.getState().activeToolId === "transform") {
+              window.dispatchEvent(new CustomEvent("forge:transform-undo"));
+            } else {
+              undo(activeProjectId);
+            }
           }
           break;
 
@@ -333,7 +338,11 @@ export const useMenuHandler = () => {
               console.warn("execCommand redo failed:", e);
             }
           } else if (activeProjectId) {
-            redo(activeProjectId);
+            if (useToolStore.getState().activeToolId === "transform") {
+              window.dispatchEvent(new CustomEvent("forge:transform-redo"));
+            } else {
+              redo(activeProjectId);
+            }
           }
           break;
 
