@@ -2207,15 +2207,19 @@ export class ForgeEngine {
 
     let { x, y, width, height } = layer;
 
-    // Groups in our engine often have 0 size. If they have styles, we must find their content bounds.
-    if (layer.type === "group" && (width === 0 || height === 0)) {
+    // Groups are containers, so their style bounds come from their descendants. This is
+    // especially important while transforming a child: the child is rendered using its
+    // preview transform, but the group's old bounds would otherwise clip that preview.
+    if (layer.type === "group") {
       const allDescendantIds = this.getGroupDescendants(layer.id);
       const visibleDescendants = this.project!.layers.filter(
         (l) => allDescendantIds.has(l.id) && l.visible,
       );
 
       if (visibleDescendants.length > 0) {
-        const bounds = getCombinedStyledBounds(visibleDescendants);
+        const bounds = getCombinedStyledBounds(
+          visibleDescendants.map((descendant) => this.getCurrentRenderBoundsLayer(descendant)),
+        );
         x = bounds.x;
         y = bounds.y;
         width = bounds.width;
@@ -2322,6 +2326,56 @@ export class ForgeEngine {
 
     // 3. Final Draw to main context
     ctx.drawImage(compCanvas, destX, destY);
+  }
+
+  /**
+   * Returns a layer copy with the bounds currently used by the transform preview.
+   * Group styles use these bounds to size their offscreen buffer before descendants
+   * are rendered, preventing transformed children from being clipped to stale bounds.
+   */
+  private getCurrentRenderBoundsLayer(layer: Layer): Layer {
+    const tool = this.getActiveTool();
+    if (tool?.id !== "transform" || tool.getEditingLayerId() !== layer.id) return layer;
+
+    const transform = useToolStore.getState().toolSettings.transform;
+    const width = transform.width * Math.abs(transform.scaleX);
+    const height = transform.height * Math.abs(transform.scaleY);
+    const rotation = (transform.rotation * Math.PI) / 180;
+
+    if (Math.abs(transform.rotation % 360) < 0.01) {
+      return {
+        ...layer,
+        x: transform.x - width * transform.anchor.x,
+        y: transform.y - height * transform.anchor.y,
+        width,
+        height,
+        rotation: 0,
+      };
+    }
+
+    const corners = [
+      { x: -width * transform.anchor.x, y: -height * transform.anchor.y },
+      { x: width * (1 - transform.anchor.x), y: -height * transform.anchor.y },
+      { x: width * (1 - transform.anchor.x), y: height * (1 - transform.anchor.y) },
+      { x: -width * transform.anchor.x, y: height * (1 - transform.anchor.y) },
+    ].map(({ x, y }) => ({
+      x: transform.x + x * Math.cos(rotation) - y * Math.sin(rotation),
+      y: transform.y + x * Math.sin(rotation) + y * Math.cos(rotation),
+    }));
+
+    const minX = Math.min(...corners.map((corner) => corner.x));
+    const minY = Math.min(...corners.map((corner) => corner.y));
+    const maxX = Math.max(...corners.map((corner) => corner.x));
+    const maxY = Math.max(...corners.map((corner) => corner.y));
+
+    return {
+      ...layer,
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      rotation: 0,
+    };
   }
 
   /**
