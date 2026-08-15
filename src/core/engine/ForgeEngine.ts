@@ -22,10 +22,10 @@ import {
   safeBase64FromBuffer,
 } from "../utils/imageUtils";
 import { FORGE_CLIPBOARD_METADATA_KEY, ClipboardMetadata } from "@/renderer/utils/clipboardUtils";
-import { getCombinedStyledBounds } from "@/renderer/utils/projectUtils";
+import { getCombinedStyledBounds, getLayerGeometryBounds } from "@/renderer/utils/projectUtils";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TextLayer } from "../layers/TextLayer";
-import { GroupLayer } from "../layers/GroupLayer";
+import { GroupLayer, GroupRenderTransform } from "../layers/GroupLayer";
 import { SmartObjectLayer } from "../layers/SmartObjectLayer";
 import { ColorFillLayer } from "../layers/ColorFillLayer";
 
@@ -2034,7 +2034,7 @@ export class ForgeEngine {
 
     let renderLayerTarget = layer;
 
-    if (isEditing && tool?.id === "transform") {
+    if (isEditing && tool?.id === "transform" && layer.type !== "group") {
       const transform = useToolStore.getState().toolSettings.transform;
       const isRotated = Math.abs(transform.rotation % 360) >= 0.01;
 
@@ -2143,7 +2143,7 @@ export class ForgeEngine {
     ctx: CanvasRenderingContext2D,
     layer: Layer,
     editingState?: any,
-    options?: { skipStyles?: boolean },
+    options?: { skipStyles?: boolean; groupTransformOrigin?: { x: number; y: number } },
   ) {
     switch (layer.type) {
       case "raster":
@@ -2166,7 +2166,11 @@ export class ForgeEngine {
           options,
         );
         break;
-      case "group":
+      case "group": {
+        const groupTransform = this.getGroupRenderTransform(
+          layer,
+          options?.groupTransformOrigin,
+        );
         GroupLayer.render(
           ctx,
           layer,
@@ -2174,8 +2178,10 @@ export class ForgeEngine {
           (c, l) => this.renderLayer(c, l),
           this.project!.width,
           this.project!.height,
+          groupTransform,
         );
         break;
+      }
       case "smart_object":
         SmartObjectLayer.render(
           ctx,
@@ -2217,9 +2223,15 @@ export class ForgeEngine {
       );
 
       if (visibleDescendants.length > 0) {
-        const bounds = getCombinedStyledBounds(
-          visibleDescendants.map((descendant) => this.getCurrentRenderBoundsLayer(descendant)),
-        );
+        const boundsLayer = this.getCurrentRenderBoundsLayer(layer);
+        const bounds =
+          boundsLayer !== layer
+            ? getCombinedStyledBounds([boundsLayer])
+            : getCombinedStyledBounds(
+                visibleDescendants.map((descendant) =>
+                  this.getCurrentRenderBoundsLayer(descendant),
+                ),
+              );
         x = bounds.x;
         y = bounds.y;
         width = bounds.width;
@@ -2248,7 +2260,17 @@ export class ForgeEngine {
     // aligns with 'padding, padding' in the buffer.
     bctx.save();
     bctx.translate(padding - x, padding - y);
-    this.renderLayerToContext(bctx, layer, editingState, { skipStyles: true });
+    const renderOptions: { skipStyles: boolean; groupTransformOrigin?: { x: number; y: number } } = {
+      skipStyles: true,
+    };
+    if (layer.type === "group") {
+      // GroupLayer composites its children in project coordinates into its own
+      // project-sized buffer. The outer buffer translation happens only when
+      // that completed image is drawn, so applying this offset here would shift
+      // the preview a second time.
+      renderOptions.groupTransformOrigin = { x: 0, y: 0 };
+    }
+    this.renderLayerToContext(bctx, layer, editingState, renderOptions);
     bctx.restore();
 
     // --- LAYER MASK (Applied to content before styles so styles adapt) ---
@@ -2375,6 +2397,46 @@ export class ForgeEngine {
       width: maxX - minX,
       height: maxY - minY,
       rotation: 0,
+    };
+  }
+
+  private getGroupContentBounds(groupId: string) {
+    const descendantIds = this.getGroupDescendants(groupId);
+    const descendants = this.project!.layers.filter(
+      (candidate) => descendantIds.has(candidate.id) && candidate.visible,
+    );
+    const contentLayers = descendants.filter((candidate) => candidate.type !== "group");
+    if (contentLayers.length === 0) return { x: 0, y: 0, width: 1, height: 1 };
+
+    const bounds = contentLayers.map((candidate) => getLayerGeometryBounds(candidate));
+    const minX = Math.min(...bounds.map((candidate) => candidate.x));
+    const minY = Math.min(...bounds.map((candidate) => candidate.y));
+    const maxX = Math.max(...bounds.map((candidate) => candidate.x + candidate.width));
+    const maxY = Math.max(...bounds.map((candidate) => candidate.y + candidate.height));
+
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+    };
+  }
+
+  private getGroupRenderTransform(
+    layer: Layer,
+    origin = { x: 0, y: 0 },
+  ): GroupRenderTransform | undefined {
+    const tool = this.getActiveTool();
+    if (tool?.id !== "transform" || tool.getEditingLayerId() !== layer.id) return undefined;
+
+    const transform = useToolStore.getState().toolSettings.transform;
+    const bounds = this.getGroupContentBounds(layer.id);
+    return {
+      ...transform,
+      baseX: bounds.x,
+      baseY: bounds.y,
+      originX: origin.x,
+      originY: origin.y,
     };
   }
 

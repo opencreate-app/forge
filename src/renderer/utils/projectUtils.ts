@@ -10,11 +10,41 @@ export interface Bounds {
   height: number;
 }
 
+/** Calculates the axis-aligned bounds of a layer rectangle after rotation. */
+export const getLayerGeometryBounds = (layer: Layer): Bounds => {
+  const rotation = ((layer.rotation || 0) * Math.PI) / 180;
+  if (Math.abs(rotation) < 0.0001) {
+    return { x: layer.x, y: layer.y, width: layer.width, height: layer.height };
+  }
+
+  const centerX = layer.x + layer.width / 2;
+  const centerY = layer.y + layer.height / 2;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const halfWidth = layer.width / 2;
+  const halfHeight = layer.height / 2;
+  const corners = [
+    { x: -halfWidth, y: -halfHeight },
+    { x: halfWidth, y: -halfHeight },
+    { x: halfWidth, y: halfHeight },
+    { x: -halfWidth, y: halfHeight },
+  ].map((corner) => ({
+    x: centerX + corner.x * cos - corner.y * sin,
+    y: centerY + corner.x * sin + corner.y * cos,
+  }));
+
+  const minX = Math.min(...corners.map((corner) => corner.x));
+  const minY = Math.min(...corners.map((corner) => corner.y));
+  const maxX = Math.max(...corners.map((corner) => corner.x));
+  const maxY = Math.max(...corners.map((corner) => corner.y));
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+};
+
 /**
  * Calculates the bounding box of a layer, including its styles (stroke, shadow, etc.).
  */
 export const getStyledLayerBounds = (layer: Layer): Bounds => {
-  const { x, y, width, height } = layer;
+  const { x, y, width, height } = getLayerGeometryBounds(layer);
   if (!layer.styles) return { x, y, width, height };
 
   const { stroke, dropShadow } = layer.styles;
