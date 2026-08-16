@@ -33,4 +33,19 @@ describe("ForgeEngine", () => {
     const coords = engine.screenToProject(200, 150);
     expect(coords).toEqual({ x: 50, y: 50 });
   });
+
+  it("should sample a rendered pixel using viewport coordinates", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange);
+    const context = canvas.getContext("2d")!;
+    Object.defineProperty(canvas, "getBoundingClientRect", {
+      value: () => ({ left: 10, top: 20, width: 400, height: 300, right: 410, bottom: 320 }),
+    });
+    vi.spyOn(context, "getImageData").mockReturnValue({
+      data: new Uint8ClampedArray([12, 34, 56, 255]),
+    } as ImageData);
+
+    expect(engine.sampleColorAtScreen(110, 170)).toEqual({ r: 12, g: 34, b: 56, a: 255 });
+    expect(context.getImageData).toHaveBeenCalledWith(200, 300, 1, 1);
+    expect(engine.sampleColorAtScreen(500, 500)).toBeNull();
+  });
 });
