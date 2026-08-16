@@ -1,25 +1,32 @@
 /**
  * Purpose: Modal for managing layer styles such as stroke, drop shadows, and other effects, similar to Photoshop's Layer Style dialog.
  */
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useProjectStore } from "@store/projectStore";
 import { useLayerStylesStore, LayerStyles } from "@store/layerStylesStore";
 import { useUIStore } from "@store/uiStore";
 import BaseModal from "./BaseModal";
 import { EffectsIcon } from "../Sidebar/LayerItem";
+import ColorPickerTrigger from "../ui/ColorPickerTrigger";
+import type { ColorPickerOpenRequest } from "@utils/colorPicker";
 
 interface LayerStylesModalProps {
   /** Flag showing if the modal is currently open */
   isOpen: boolean;
   /** Function called when closing the modal */
   onClose: () => void;
+  onOpenColorPicker: (request: ColorPickerOpenRequest) => void;
 }
 
 /**
  * LayerStylesModal provides a Photoshop-style interface for editing layer effects.
  * It features a list of effects on the left and detailed properties on the right.
  */
-export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onClose }) => {
+export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({
+  isOpen,
+  onClose,
+  onOpenColorPicker,
+}) => {
   const layerStyleDefinitions = useLayerStylesStore((state) => state.getAllLayerStyles());
   const activeTab = useUIStore((state) => state.activeTab);
   const stylingLayerId = useUIStore((state) => state.stylingLayerId);
@@ -47,14 +54,21 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   const [prevLayerId, setPrevLayerId] = useState(layer?.id);
 
   // Intelligent History Tracking
-  const [hasPushedHistory, setHasPushedHistory] = useState(false);
+  const hasPushedHistoryRef = useRef(false);
+  const localStylesRef = useRef<LayerStyles>(localStyles);
 
   if (layer && layer.id !== prevLayerId) {
     setPrevLayerId(layer.id);
     setLocalStyles(layer.styles || {});
     setActiveEffectId(layer ? lastLayerStyleEffects[layer.id] || null : null);
-    setHasPushedHistory(false); // Reset history tracking for the new layer
   }
+
+  useEffect(() => {
+    if (layer && layer.id !== prevLayerId) {
+      localStylesRef.current = layer.styles || {};
+      hasPushedHistoryRef.current = false;
+    }
+  }, [layer, prevLayerId]);
 
   const updateLayer = useProjectStore((state) => state.updateLayer);
   const pushHistory = useProjectStore((state) => state.pushHistory);
@@ -62,14 +76,14 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
   const setStylingLayerId = useUIStore((state) => state.setStylingLayerId);
 
   const ensureHistoryPushed = () => {
-    if (!hasPushedHistory && project) {
+    if (!hasPushedHistoryRef.current && project) {
       pushHistory(project.id, "Layer Style");
-      setHasPushedHistory(true);
+      hasPushedHistoryRef.current = true;
     }
   };
 
   const handleCancel = () => {
-    if (hasPushedHistory && project) {
+    if (hasPushedHistoryRef.current && project) {
       undo(project.id);
     }
     setStylingLayerId(null);
@@ -100,12 +114,13 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
 
   const toggleEffect = (effectId: keyof LayerStyles, enabled: boolean) => {
     const newStyles = {
-      ...localStyles,
+      ...localStylesRef.current,
       [effectId]: {
-        ...(localStyles[effectId] || getDefaultValues(effectId)),
+        ...(localStylesRef.current[effectId] || getDefaultValues(effectId)),
         enabled,
       },
     };
+    localStylesRef.current = newStyles;
     setLocalStyles(newStyles);
 
     if (project && renderedLayer) {
@@ -116,12 +131,13 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
 
   const updateEffectOption = (effectId: keyof LayerStyles, optionId: string, value: any) => {
     const newStyles = {
-      ...localStyles,
+      ...localStylesRef.current,
       [effectId]: {
-        ...(localStyles[effectId] || getDefaultValues(effectId)),
+        ...(localStylesRef.current[effectId] || getDefaultValues(effectId)),
         [optionId]: value,
       },
     };
+    localStylesRef.current = newStyles;
     setLocalStyles(newStyles);
 
     if (project && renderedLayer) {
@@ -278,27 +294,41 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({ isOpen, onCl
                   }
 
                   if (opt.type === "color") {
+                    const colorValue = val as string;
                     return (
                       <div key={opt.id} className="flex gap-2 items-center">
                         <label className="text-xs">{opt.name}</label>
                         <div className="flex gap-3 items-center">
-                          <div
-                            className="w-8 h-8 rounded-full border-2 border-white/20 hover:border-white/30 has-[input:focus]:border-accent overflow-hidden relative"
-                            style={{
-                              backgroundColor: val as string,
-                              // transition only the border color so the color swatch updates instantly
-                              transition: "border-color 200ms",
-                            }}
-                          >
-                            <input
-                              type="color"
-                              value={val as string}
-                              onChange={(e) =>
-                                updateEffectOption(activeEffectId, opt.id, e.target.value)
-                              }
-                              className="absolute inset-0 opacity-0 border-0 cursor-pointer w-full h-full"
-                            />
-                          </div>
+                          <ColorPickerTrigger
+                            color={colorValue}
+                            label={`${opt.name} color`}
+                            onClick={() =>
+                              onOpenColorPicker({
+                                initialColor: colorValue,
+                                onPreview: (color) =>
+                                  updateEffectOption(activeEffectId, opt.id, color),
+                                onApply: (color) => {
+                                  if (
+                                    (localStylesRef.current[activeEffectId] as
+                                      | Record<string, unknown>
+                                      | undefined)?.[opt.id] !== color
+                                  ) {
+                                    updateEffectOption(activeEffectId, opt.id, color);
+                                  }
+                                },
+                                onCancel: () => {
+                                  if (
+                                    (localStylesRef.current[activeEffectId] as
+                                      | Record<string, unknown>
+                                      | undefined)?.[opt.id] !== colorValue
+                                  ) {
+                                    updateEffectOption(activeEffectId, opt.id, colorValue);
+                                  }
+                                },
+                              })
+                            }
+                            className="h-8 w-8 rounded-full border-2 border-white/20"
+                          />
                           {/* <input
                             type="text"
                             value={(val as string).toUpperCase()}

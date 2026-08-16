@@ -4,7 +4,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BaseModal from "./BaseModal";
 import { Palette } from "lucide-react";
-import { useToolStore } from "@store/toolStore";
 import {
   HSBColor,
   RGBColor,
@@ -16,11 +15,12 @@ import {
 } from "@utils/colorUtils";
 import { ColorSampleRequest, forgeEvents, FORGE_EVENTS, SampledColor } from "@utils/events";
 
-export type ColorPickerTarget = "foreground" | "background";
-
 interface ColorPickerModalProps {
   isOpen: boolean;
-  target: ColorPickerTarget;
+  initialColor: string;
+  onPreview?: (color: string) => void;
+  onApply: (color: string) => void;
+  onCancel?: () => void;
   onClose: () => void;
 }
 
@@ -29,12 +29,14 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const getPointerTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement ? target.closest('[data-modal-id="color-picker-modal"]') : null;
 
-const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onClose }) => {
-  const foregroundColor = useToolStore((state) => state.foregroundColor);
-  const backgroundColor = useToolStore((state) => state.backgroundColor);
-  const setForegroundColor = useToolStore((state) => state.setForegroundColor);
-  const setBackgroundColor = useToolStore((state) => state.setBackgroundColor);
-  const initialColor = target === "foreground" ? foregroundColor : backgroundColor;
+const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
+  isOpen,
+  initialColor,
+  onPreview,
+  onApply,
+  onCancel,
+  onClose,
+}) => {
   const initialRgb = hexToRgb(initialColor) || { r: 0, g: 0, b: 0 };
   const initialHsb = rgbToHsb(initialRgb);
 
@@ -53,10 +55,19 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
   const hsb = useMemo(() => rgbToHsb(color), [color]);
   const hex = useMemo(() => rgbToHex(color), [color]);
 
-  const setColor = useCallback((nextColor: RGBColor) => {
-    setColorState(nextColor);
-    setHexInput(rgbToHex(nextColor));
-  }, []);
+  const setColor = useCallback(
+    (nextColor: RGBColor) => {
+      setColorState(nextColor);
+      const nextHex = rgbToHex(nextColor);
+      const nextHsb = rgbToHsb(nextColor);
+      if (nextHsb.s > 0) {
+        setHuePosition({ x: 0, y: nextHsb.h / 360 });
+      }
+      setHexInput(nextHex);
+      onPreview?.(nextHex);
+    },
+    [onPreview],
+  );
 
   const colorFromPositions = useCallback(
     (picker: { x: number; y: number }, hue: { x: number; y: number }) =>
@@ -187,7 +198,17 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
     selection: "picker" | "hue",
     update: (event: React.PointerEvent<HTMLDivElement>) => void,
   ) => {
-    if (activeSelection.current === selection) update(event);
+    if (activeSelection.current !== selection) return;
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const isOutside =
+      event.clientX < bounds.left ||
+      event.clientX > bounds.right ||
+      event.clientY < bounds.top ||
+      event.clientY > bounds.bottom;
+
+    update(event);
+    if (isOutside) endPointerSelection(event, selection);
   };
 
   const endPointerSelection = (
@@ -203,6 +224,16 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
     } catch {
       // Ignore browsers without pointer capture support.
     }
+  };
+
+  const stopPointerSelectionAtBoundary = (
+    event: React.PointerEvent<HTMLDivElement>,
+    selection: "picker" | "hue",
+    update: (event: React.PointerEvent<HTMLDivElement>) => void,
+  ) => {
+    if (activeSelection.current !== selection) return;
+    update(event);
+    endPointerSelection(event, selection);
   };
   // const [pointerMoving, setPointerMoving] = useState(false);
 
@@ -234,7 +265,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
   const handleHexChange = (value: string) => {
     setHexInput(value);
     const parsed = hexToRgb(value);
-    if (parsed) setColorState(parsed);
+    if (parsed) setColor(parsed);
   };
 
   const handleHexBlur = () => {
@@ -242,7 +273,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
     if (normalized) {
       setHexInput(normalized);
       const parsed = hexToRgb(normalized);
-      if (parsed) setColorState(parsed);
+      if (parsed) setColor(parsed);
     } else {
       setHexInput(hex);
     }
@@ -250,8 +281,12 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
 
   const handleApply = () => {
     const nextColor = rgbToHex(color);
-    if (target === "foreground") setForegroundColor(nextColor);
-    else setBackgroundColor(nextColor);
+    onApply(nextColor);
+    onClose();
+  };
+
+  const handleCancel = () => {
+    onCancel?.();
     onClose();
   };
 
@@ -259,7 +294,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
     <BaseModal
       id="color-picker-modal"
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleCancel}
       title="Color Picker"
       icon={Palette}
       width="582px"
@@ -279,18 +314,19 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
                 aria-label="Saturation and brightness"
                 tabIndex={0}
                 className="relative h-[300px] aspect-square cursor-crosshair rounded border border-border"
-                style={{ backgroundColor: `hsl(${hsb.h}, 100%, 50%)` }}
+                style={{ backgroundColor: `hsl(${huePosition.y * 360}, 100%, 50%)` }}
                 onPointerDown={(event) => beginPointerSelection(event, "picker", updatePicker)}
-                onPointerMove={(event) =>
-                  continuePointerSelection(event, "picker", updatePicker)
-                }
+                onPointerMove={(event) => continuePointerSelection(event, "picker", updatePicker)}
                 onPointerUp={(event) => endPointerSelection(event, "picker")}
                 onPointerCancel={(event) => endPointerSelection(event, "picker")}
+                onPointerLeave={(event) =>
+                  stopPointerSelectionAtBoundary(event, "picker", updatePicker)
+                }
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-white to-transparent" />
-                <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black" />
+                <div className="absolute rounded-[3px] inset-0 bg-gradient-to-r from-white to-transparent" />
+                <div className="absolute rounded-[3px] inset-0 bg-gradient-to-b from-transparent to-black" />
                 <div
-                  className={`pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-1 border-white shadow-[0_0_0_1px_#333]`}
+                  className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-1 border-white shadow-[0_0_0_1px_#333] hover:w-5 hover:h-5"
                   style={{
                     left: `${pickerPosition.x * 100}%`,
                     top: `${pickerPosition.y * 100}%`,
@@ -312,6 +348,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
                 onPointerMove={(event) => continuePointerSelection(event, "hue", updateHue)}
                 onPointerUp={(event) => endPointerSelection(event, "hue")}
                 onPointerCancel={(event) => endPointerSelection(event, "hue")}
+                onPointerLeave={(event) => stopPointerSelectionAtBoundary(event, "hue", updateHue)}
               >
                 <div
                   className="pointer-events-none absolute left-[-3px] right-[-3px] h-1 rounded border border-white bg-transparent shadow-[0_0_0_1px_#333]"
@@ -392,7 +429,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({ isOpen, target, onC
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-bg-tertiary p-4">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleCancel}
             className="rounded border border-bg-tertiary px-4 py-2 text-xs font-medium text-text transition-all hover:bg-bg-tertiary focus-visible:ring-1 focus-visible:ring-accent"
           >
             Cancel

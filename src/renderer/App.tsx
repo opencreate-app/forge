@@ -17,7 +17,7 @@ import { LayerStylesModal } from "./components/modals/LayerStylesModal";
 import { ColorFillModal } from "./components/modals/ColorFillModal";
 import { ImageSizeModal } from "./components/modals/ImageSizeModal";
 import { AboutModal } from "./components/modals/AboutModal";
-import ColorPickerModal, { ColorPickerTarget } from "./components/modals/ColorPickerModal";
+import ColorPickerModal from "./components/modals/ColorPickerModal";
 import { usePreferencesStore } from "./store/preferencesStore";
 import { useAutosave } from "./hooks/useAutosave";
 import { useToolStore } from "@store/toolStore";
@@ -26,6 +26,7 @@ import { useMenuHandler } from "./hooks/useMenuHandler";
 
 import { getClipboardImageDimensions } from "@utils/clipboardUtils";
 import { forgeEvents, FORGE_EVENTS } from "@utils/events";
+import type { ColorPickerOpenRequest } from "@utils/colorPicker";
 import { Box, X } from "lucide-react";
 
 // ... (imports remain)
@@ -66,7 +67,8 @@ function App() {
   const [isColorFillModalOpen, setIsColorFillModalOpen] = React.useState(false);
   const [isImageSizeModalOpen, setIsImageSizeModalOpen] = React.useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = React.useState(false);
-  const [colorPickerTarget, setColorPickerTarget] = React.useState<ColorPickerTarget>("foreground");
+  const [colorPickerRequest, setColorPickerRequest] =
+    React.useState<ColorPickerOpenRequest | null>(null);
   const [isColorPickerOpen, setIsColorPickerOpen] = React.useState(false);
   const [colorPickerSession, setColorPickerSession] = React.useState(0);
 
@@ -136,6 +138,10 @@ function App() {
   const setShowRulers = useUIStore((state) => state.setShowRulers);
   const swapColors = useToolStore((state) => state.swapColors);
   const resetColors = useToolStore((state) => state.resetColors);
+  const foregroundColor = useToolStore((state) => state.foregroundColor);
+  const backgroundColor = useToolStore((state) => state.backgroundColor);
+  const setForegroundColor = useToolStore((state) => state.setForegroundColor);
+  const setBackgroundColor = useToolStore((state) => state.setBackgroundColor);
 
   const originalModeRef = React.useRef<any>(null);
   const pendingRestoreRef = React.useRef<boolean>(false);
@@ -144,11 +150,22 @@ function App() {
     state.projects.find((p) => p.id === activeProjectId),
   );
 
-  const openColorPicker = React.useCallback((target: ColorPickerTarget) => {
-    setColorPickerTarget(target);
+  const openColorPicker = React.useCallback((request: ColorPickerOpenRequest) => {
+    setColorPickerRequest(request);
     setColorPickerSession((session) => session + 1);
     setIsColorPickerOpen(true);
   }, []);
+
+  const openToolbarColorPicker = React.useCallback(
+    (target: "foreground" | "background") => {
+      const initialColor = target === "foreground" ? foregroundColor : backgroundColor;
+      openColorPicker({
+        initialColor,
+        onApply: target === "foreground" ? setForegroundColor : setBackgroundColor,
+      });
+    },
+    [backgroundColor, foregroundColor, openColorPicker, setBackgroundColor, setForegroundColor],
+  );
 
   React.useEffect(() => {
     if (activeTab === "home") setIsColorPickerOpen(false);
@@ -364,10 +381,12 @@ function App() {
       <LayerStylesModal
         isOpen={isLayerStylesModalOpen}
         onClose={() => setIsLayerStylesModalOpen(false)}
+        onOpenColorPicker={openColorPicker}
       />
       <ColorFillModal
         isOpen={isColorFillModalOpen}
         onClose={() => setIsColorFillModalOpen(false)}
+        onOpenColorPicker={openColorPicker}
       />
       <ImageSizeModal
         isOpen={isImageSizeModalOpen}
@@ -376,9 +395,15 @@ function App() {
       <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} />
       <ColorPickerModal
         key={colorPickerSession}
-        isOpen={isColorPickerOpen && activeTab !== "home"}
-        target={colorPickerTarget}
-        onClose={() => setIsColorPickerOpen(false)}
+        isOpen={isColorPickerOpen && activeTab !== "home" && colorPickerRequest !== null}
+        initialColor={colorPickerRequest?.initialColor || "#000000"}
+        onPreview={colorPickerRequest?.onPreview}
+        onApply={colorPickerRequest?.onApply || (() => undefined)}
+        onCancel={colorPickerRequest?.onCancel}
+        onClose={() => {
+          setIsColorPickerOpen(false);
+          setColorPickerRequest(null);
+        }}
       />
       {/* Update Notification */}
       {isUpdateAvailable && !isUpdateAvailable.isClosed && (
@@ -487,7 +512,7 @@ function App() {
       {/* 2. Dynamic Header (Tool Options) */}
       {activeTab !== "home" && (
         <header className="bg-[#222] border-b border-bg-tertiary flex items-center">
-          <ToolOptions />
+          <ToolOptions onOpenColorPicker={openColorPicker} />
         </header>
       )}
       {/* 3. Main Area */}
@@ -497,7 +522,7 @@ function App() {
         ) : (
           <>
             <aside className="bg-[#222] border-r border-bg-tertiary">
-              <Toolbar onOpenColorPicker={openColorPicker} />
+              <Toolbar onOpenColorPicker={openToolbarColorPicker} />
             </aside>
 
             <CanvasViewport key={activeProjectId || "empty"} />

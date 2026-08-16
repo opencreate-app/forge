@@ -21,6 +21,8 @@ import {
   TypeOutline,
 } from "lucide-react";
 import { TextLayer } from "@/core/layers/TextLayer";
+import type { ToolOptionProps } from "../ToolOptions";
+import ColorPickerTrigger from "../ui/ColorPickerTrigger";
 
 const WEIGHT_LABELS: Record<string, string> = {
   "100": "Thin",
@@ -52,7 +54,7 @@ const TextOverflowIcon = ({ size = 16 }: { size?: number }) => (
   </svg>
 );
 
-export const TextOptions: React.FC = () => {
+export const TextOptions: React.FC<ToolOptionProps> = ({ onOpenColorPicker }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const toolSettings = useToolStore((state) => state.toolSettings);
@@ -296,11 +298,16 @@ export const TextOptions: React.FC = () => {
       {/* Color */}
       <div className="flex items-center gap-2">
         <Palette size={16} className="text-zinc-500" />
-        <input
-          type="color"
-          value={textSettings.color}
-          onChange={(e) => updateToolSettings("text", { color: e.target.value })}
-          className="border-none bg-none w-5 h-5 cursor-pointer rounded overflow-hidden"
+        <ColorPickerTrigger
+          color={textSettings.color}
+          label="Text Color"
+          onClick={() =>
+            onOpenColorPicker?.({
+              initialColor: textSettings.color,
+              onApply: (color) => updateToolSettings("text", { color }),
+            })
+          }
+          className="h-5 w-5 rounded-full"
         />
       </div>
 

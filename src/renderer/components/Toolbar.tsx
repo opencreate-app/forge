@@ -6,6 +6,7 @@ import { useToolStore } from "@store/toolStore";
 import { useUIStore } from "@store/uiStore";
 import { TOOLS } from "../constants/tools";
 import { RotateCcw, ArrowRightLeft } from "lucide-react";
+import ColorPickerTrigger from "./ui/ColorPickerTrigger";
 
 interface ToolbarProps {
   onOpenColorPicker: (target: "foreground" | "background") => void;
@@ -62,17 +63,17 @@ const Toolbar: React.FC<ToolbarProps> = ({ onOpenColorPicker }) => {
         {/* Color Picker Interface */}
         <div className="relative w-8 h-8">
           {/* Background Color Circle */}
-          <div
-            className="absolute bottom-0 right-0 w-6 h-6 rounded-full border border-bg-tertiary cursor-pointer overflow-hidden"
-            style={{ backgroundColor }}
-            title="Background Color"
+          <ColorPickerTrigger
+            color={backgroundColor}
+            label="Background Color"
+            className="absolute bottom-0 right-0 h-6 w-6 rounded-full"
             onClick={() => onOpenColorPicker("background")}
           />
           {/* Foreground Color Circle */}
-          <div
-            className="absolute top-0 left-0 w-6 h-6 rounded-full border border-bg-tertiary cursor-pointer overflow-hidden"
-            style={{ backgroundColor: foregroundColor }}
-            title="Foreground Color"
+          <ColorPickerTrigger
+            color={foregroundColor}
+            label="Foreground Color"
+            className="absolute left-0 top-0 h-6 w-6 rounded-full"
             onClick={() => onOpenColorPicker("foreground")}
           />
 
