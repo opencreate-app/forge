@@ -1144,6 +1144,27 @@ export class ForgeEngine {
   }
 
   /**
+   * Samples the currently rendered composite canvas at viewport coordinates.
+   * @param clientX The pointer X coordinate in window space.
+   * @param clientY The pointer Y coordinate in window space.
+   */
+  public sampleColorAtScreen(
+    clientX: number,
+    clientY: number,
+  ): { r: number; g: number; b: number; a: number } | null {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+
+    const x = Math.floor(((clientX - rect.left) / rect.width) * this.canvas.width);
+    const y = Math.floor(((clientY - rect.top) / rect.height) * this.canvas.height);
+
+    if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height) return null;
+
+    const pixel = this.ctx.getImageData(x, y, 1, 1).data;
+    return { r: pixel[0], g: pixel[1], b: pixel[2], a: pixel[3] };
+  }
+
+  /**
    * Handles mouse wheel events for zooming and panning.
    */
   private handleWheel(e: WheelEvent) {

@@ -7,7 +7,11 @@ import { useUIStore } from "@store/uiStore";
 import { ForgeEngine } from "@core/engine/ForgeEngine";
 import Ruler from "./Ruler";
 
-import { forgeEvents, FORGE_EVENTS } from "@utils/events";
+import {
+  ColorSampleRequest,
+  forgeEvents,
+  FORGE_EVENTS,
+} from "@utils/events";
 
 const CanvasViewport: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -21,6 +25,19 @@ const CanvasViewport: React.FC = () => {
     forgeEvents.addEventListener(FORGE_EVENTS.FIT_TO_SCREEN, handleFitToScreen);
     return () => {
       forgeEvents.removeEventListener(FORGE_EVENTS.FIT_TO_SCREEN, handleFitToScreen);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleColorSampleRequest = (event: Event) => {
+      const { x, y } = (event as CustomEvent<ColorSampleRequest>).detail;
+      const color = engineRef.current?.sampleColorAtScreen(x, y);
+      if (color) forgeEvents.emit(FORGE_EVENTS.COLOR_SAMPLED, color);
+    };
+
+    forgeEvents.addEventListener(FORGE_EVENTS.REQUEST_COLOR_SAMPLE, handleColorSampleRequest);
+    return () => {
+      forgeEvents.removeEventListener(FORGE_EVENTS.REQUEST_COLOR_SAMPLE, handleColorSampleRequest);
     };
   }, []);
 
@@ -231,7 +248,7 @@ const CanvasViewport: React.FC = () => {
           </>
         )}
         <div className="relative overflow-hidden">
-          <canvas ref={canvasRef} className="block w-full h-full" />
+          <canvas ref={canvasRef} id="forge-canvas" className="block w-full h-full" />
         </div>
       </div>
     </div>

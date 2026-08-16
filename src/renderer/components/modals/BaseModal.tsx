@@ -19,6 +19,7 @@ interface BaseModalProps {
   resizable?: boolean;
   centered?: boolean;
   closeOnOutsideClick?: boolean;
+  // backdropClassName?: string;
 }
 
 const BaseModal: React.FC<BaseModalProps> = ({
@@ -35,6 +36,7 @@ const BaseModal: React.FC<BaseModalProps> = ({
   resizable = false,
   centered = true,
   closeOnOutsideClick = true,
+  // backdropClassName,
 }) => {
   const [isRendered, setIsRendered] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
@@ -299,6 +301,7 @@ const BaseModal: React.FC<BaseModalProps> = ({
       <div
         ref={modalRef}
         style={modalStyle}
+        data-modal-id={id}
         className={`bg-[#252525] flex flex-col rounded-lg border border-border overflow-hidden shadow-2xl ${
           !draggable
             ? "transition-all duration-300"

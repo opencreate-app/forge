@@ -17,6 +17,7 @@ import { LayerStylesModal } from "./components/modals/LayerStylesModal";
 import { ColorFillModal } from "./components/modals/ColorFillModal";
 import { ImageSizeModal } from "./components/modals/ImageSizeModal";
 import { AboutModal } from "./components/modals/AboutModal";
+import ColorPickerModal, { ColorPickerTarget } from "./components/modals/ColorPickerModal";
 import { usePreferencesStore } from "./store/preferencesStore";
 import { useAutosave } from "./hooks/useAutosave";
 import { useToolStore } from "@store/toolStore";
@@ -65,6 +66,9 @@ function App() {
   const [isColorFillModalOpen, setIsColorFillModalOpen] = React.useState(false);
   const [isImageSizeModalOpen, setIsImageSizeModalOpen] = React.useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = React.useState(false);
+  const [colorPickerTarget, setColorPickerTarget] = React.useState<ColorPickerTarget>("foreground");
+  const [isColorPickerOpen, setIsColorPickerOpen] = React.useState(false);
+  const [colorPickerSession, setColorPickerSession] = React.useState(0);
 
   // Auto-update state
   const [isUpdateAvailable, setIsUpdateAvailable] = React.useState<UpdateInfo | null>(null);
@@ -139,6 +143,16 @@ function App() {
   const activeProject = useProjectStore((state) =>
     state.projects.find((p) => p.id === activeProjectId),
   );
+
+  const openColorPicker = React.useCallback((target: ColorPickerTarget) => {
+    setColorPickerTarget(target);
+    setColorPickerSession((session) => session + 1);
+    setIsColorPickerOpen(true);
+  }, []);
+
+  React.useEffect(() => {
+    if (activeTab === "home") setIsColorPickerOpen(false);
+  }, [activeTab]);
 
   // Restore mode when interaction ends
   React.useEffect(() => {
@@ -360,6 +374,12 @@ function App() {
         onClose={() => setIsImageSizeModalOpen(false)}
       />
       <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} />
+      <ColorPickerModal
+        key={colorPickerSession}
+        isOpen={isColorPickerOpen && activeTab !== "home"}
+        target={colorPickerTarget}
+        onClose={() => setIsColorPickerOpen(false)}
+      />
       {/* Update Notification */}
       {isUpdateAvailable && !isUpdateAvailable.isClosed && (
         <div
@@ -477,7 +497,7 @@ function App() {
         ) : (
           <>
             <aside className="bg-[#222] border-r border-bg-tertiary">
-              <Toolbar />
+              <Toolbar onOpenColorPicker={openColorPicker} />
             </aside>
 
             <CanvasViewport key={activeProjectId || "empty"} />

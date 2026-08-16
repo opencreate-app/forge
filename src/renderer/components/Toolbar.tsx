@@ -7,7 +7,11 @@ import { useUIStore } from "@store/uiStore";
 import { TOOLS } from "../constants/tools";
 import { RotateCcw, ArrowRightLeft } from "lucide-react";
 
-const Toolbar: React.FC = () => {
+interface ToolbarProps {
+  onOpenColorPicker: (target: "foreground" | "background") => void;
+}
+
+const Toolbar: React.FC<ToolbarProps> = ({ onOpenColorPicker }) => {
   const activeToolId = useToolStore((state) => state.activeToolId);
   const setActiveTool = useToolStore((state) => state.setActiveTool);
   const transformSettings = useToolStore((state) => state.toolSettings.transform);
@@ -18,8 +22,6 @@ const Toolbar: React.FC = () => {
   const backgroundColor = useToolStore((state) => state.backgroundColor);
   const swapColors = useToolStore((state) => state.swapColors);
   const resetColors = useToolStore((state) => state.resetColors);
-  const setForegroundColor = useToolStore((state) => state.setForegroundColor);
-  const setBackgroundColor = useToolStore((state) => state.setBackgroundColor);
 
   const handleToolClick = (id: string) => {
     const isTransformDirty = activeToolId === "transform" && transformSettings.isDirty;
@@ -63,27 +65,15 @@ const Toolbar: React.FC = () => {
           <div
             className="absolute bottom-0 right-0 w-6 h-6 rounded-full border border-bg-tertiary cursor-pointer overflow-hidden"
             style={{ backgroundColor }}
-            title="Background Color (Double-click to change)"
-            onClick={() => {
-              const input = document.createElement("input");
-              input.type = "color";
-              input.value = backgroundColor;
-              input.oninput = (e) => setBackgroundColor((e.target as HTMLInputElement).value);
-              input.click();
-            }}
+            title="Background Color"
+            onClick={() => onOpenColorPicker("background")}
           />
           {/* Foreground Color Circle */}
           <div
             className="absolute top-0 left-0 w-6 h-6 rounded-full border border-bg-tertiary cursor-pointer overflow-hidden"
             style={{ backgroundColor: foregroundColor }}
-            title="Foreground Color (Double-click to change)"
-            onClick={() => {
-              const input = document.createElement("input");
-              input.type = "color";
-              input.value = foregroundColor;
-              input.oninput = (e) => setForegroundColor((e.target as HTMLInputElement).value);
-              input.click();
-            }}
+            title="Foreground Color"
+            onClick={() => onOpenColorPicker("foreground")}
           />
 
           {/* Swap Button (X) */}
