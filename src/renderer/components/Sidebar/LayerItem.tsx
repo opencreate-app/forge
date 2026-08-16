@@ -251,13 +251,17 @@ const LayerItem: React.FC<LayerItemProps> = ({
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    // if (layer.type === "color_fill") {
-    //   setStylingLayerId(layer.id);
-    //   window.dispatchEvent(new CustomEvent("forge:open-color-fill-modal"));
-    //   return;
-    // }
     setStylingLayerId(layer.id);
     window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
+  };
+
+  const handleColorFillDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("forge:open-color-picker-for-layer", {
+        detail: { projectId, layerId: layer.id },
+      }),
+    );
   };
 
   const hasStylesEnabled = Object.values(layer.styles ?? {}).some(
@@ -333,16 +337,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
       )} */}
 
       {/* Thumbnail or Icon */}
-      <div
-        className="flex items-center gap-1 mr-2 shrink-0"
-        onDoubleClick={(e) => {
-          if (layer.type === "color_fill") {
-            e.stopPropagation();
-            setStylingLayerId(layer.id);
-            window.dispatchEvent(new CustomEvent("forge:open-color-fill-modal"));
-          }
-        }}
-      >
+      <div className="flex items-center gap-1 mr-2 shrink-0">
         {layer.type === "group" ? (
           <button
             className="pl-2 py-1 text-text"
@@ -371,8 +366,9 @@ const LayerItem: React.FC<LayerItemProps> = ({
               }
             }}
             onDoubleClick={(e) => {
-              e.stopPropagation(); // Prevent opening LayerStylesModal on double click
-              if (layer.type === "smart_object") {
+              if (layer.type === "color_fill") handleColorFillDoubleClick(e);
+              else if (layer.type === "smart_object") {
+                e.stopPropagation();
                 openSmartObject(projectId, layer.id);
               }
             }}
@@ -403,6 +399,9 @@ const LayerItem: React.FC<LayerItemProps> = ({
               } else {
                 handleThumbnailClick(e);
               }
+            }}
+            onDoubleClick={(e) => {
+              if (layer.type === "color_fill") handleColorFillDoubleClick(e);
             }}
             style={
               {

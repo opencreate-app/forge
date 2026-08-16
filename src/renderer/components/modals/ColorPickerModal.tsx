@@ -56,10 +56,16 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
   const hex = useMemo(() => rgbToHex(color), [color]);
 
   const setColor = useCallback(
-    (nextColor: RGBColor) => {
+    (nextColor: RGBColor, syncPositions = false) => {
       setColorState(nextColor);
       const nextHex = rgbToHex(nextColor);
       const nextHsb = rgbToHsb(nextColor);
+      if (syncPositions) {
+        setPickerPosition({
+          x: nextHsb.s / 100,
+          y: 1 - nextHsb.b / 100,
+        });
+      }
       if (nextHsb.s > 0) {
         setHuePosition({ x: 0, y: nextHsb.h / 360 });
       }
@@ -131,7 +137,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
 
     const handleColorSampled = (event: Event) => {
       const sampled = (event as CustomEvent<SampledColor>).detail;
-      setColor({ r: sampled.r, g: sampled.g, b: sampled.b });
+      setColor({ r: sampled.r, g: sampled.g, b: sampled.b }, true);
     };
 
     forgeEvents.addEventListener(FORGE_EVENTS.COLOR_SAMPLED, handleColorSampled);
@@ -142,13 +148,13 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return;
     const nextHsb = { ...hsb, [key]: clamp(parsed, key === "h" ? 0 : 0, key === "h" ? 360 : 100) };
-    setColor(hsbToRgb(nextHsb));
+    setColor(hsbToRgb(nextHsb), true);
   };
 
   const updateRgb = (key: keyof RGBColor, value: string) => {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return;
-    setColor({ ...color, [key]: clamp(parsed, 0, 255) });
+    setColor({ ...color, [key]: clamp(parsed, 0, 255) }, true);
   };
 
   const updatePicker = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -265,7 +271,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
   const handleHexChange = (value: string) => {
     setHexInput(value);
     const parsed = hexToRgb(value);
-    if (parsed) setColor(parsed);
+    if (parsed) setColor(parsed, true);
   };
 
   const handleHexBlur = () => {
@@ -273,7 +279,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     if (normalized) {
       setHexInput(normalized);
       const parsed = hexToRgb(normalized);
-      if (parsed) setColor(parsed);
+      if (parsed) setColor(parsed, true);
     } else {
       setHexInput(hex);
     }

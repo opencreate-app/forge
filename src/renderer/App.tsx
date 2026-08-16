@@ -39,6 +39,11 @@ interface UpdateInfo {
   isClosed: boolean;
 }
 
+interface ColorFillPickerRequestDetail {
+  projectId: string;
+  layerId: string;
+}
+
 function App() {
   useMenuHandler();
   useAutosave();
@@ -167,9 +172,40 @@ function App() {
     [backgroundColor, foregroundColor, openColorPicker, setBackgroundColor, setForegroundColor],
   );
 
+  const openColorFillColorPicker = React.useCallback(
+    (projectId: string, layerId: string) => {
+      const project = useProjectStore.getState().projects.find((item) => item.id === projectId);
+      const layer = project?.layers.find((item) => item.id === layerId);
+      if (!project || !layer || layer.type !== "color_fill") return;
+
+      openColorPicker({
+        initialColor: layer.colorFill?.color || "#000000",
+        onApply: (color) =>
+          useProjectStore.getState().updateLayer(project.id, layer.id, {
+            colorFill: { color },
+          }),
+      });
+    },
+    [openColorPicker],
+  );
+
   React.useEffect(() => {
     if (activeTab === "home") setIsColorPickerOpen(false);
   }, [activeTab]);
+
+  React.useEffect(() => {
+    const handleOpenColorPickerForLayer = (event: Event) => {
+      const { projectId, layerId } = (event as CustomEvent<ColorFillPickerRequestDetail>).detail;
+      openColorFillColorPicker(projectId, layerId);
+    };
+
+    window.addEventListener("forge:open-color-picker-for-layer", handleOpenColorPickerForLayer);
+    return () =>
+      window.removeEventListener(
+        "forge:open-color-picker-for-layer",
+        handleOpenColorPickerForLayer,
+      );
+  }, [openColorFillColorPicker]);
 
   // Restore mode when interaction ends
   React.useEffect(() => {

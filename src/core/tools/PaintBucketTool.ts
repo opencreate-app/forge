@@ -197,11 +197,16 @@ export class PaintBucketTool extends BaseTool {
     this.createColorFillLayer(context, maskCanvas.toDataURL());
   }
 
-  private async performFill(clickX: number, clickY: number, context: ToolContext, layer: any) {
+  private async performFill(clickX: number, clickY: number, context: ToolContext, layer: Layer) {
     const canvas = await context.ensureLayerCanvas(layer);
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
+
+    if (this.isCanvasEmpty(data)) {
+      this.convertEmptyRasterToColorFill(context, layer);
+      return;
+    }
 
     const localX = clickX - layer.x;
     const localY = clickY - layer.y;
@@ -273,6 +278,38 @@ export class PaintBucketTool extends BaseTool {
         state: this.historySnapshot,
       });
     }
+    context.updateProject({ layers, isDirty: true });
+  }
+
+  private isCanvasEmpty(data: Uint8ClampedArray): boolean {
+    for (let index = 3; index < data.length; index += 4) {
+      if (data[index] !== 0) return false;
+    }
+
+    return true;
+  }
+
+  private convertEmptyRasterToColorFill(context: ToolContext, layer: Layer): void {
+    if (this.historySnapshot) {
+      context.addHistoryEntry({
+        description: "Paint Bucket",
+        state: this.historySnapshot,
+      });
+    }
+
+    const layers = context.project.layers.map((currentLayer) =>
+      currentLayer.id === layer.id
+        ? {
+            ...currentLayer,
+            type: "color_fill" as const,
+            colorFill: { color: context.foregroundColor },
+            data: undefined,
+            dataOriginal: undefined,
+          }
+        : currentLayer,
+    );
+
+    context.invalidateCache(layer.id);
     context.updateProject({ layers, isDirty: true });
   }
 
