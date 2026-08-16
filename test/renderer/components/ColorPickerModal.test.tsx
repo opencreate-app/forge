@@ -83,10 +83,13 @@ describe("ColorPickerModal", () => {
       />,
     );
     await screen.findByLabelText("Hex color");
+    const picker = screen.getByRole("slider", { name: "Saturation and brightness" });
+    const marker = picker.querySelector("div.h-4.w-4");
 
     forgeEvents.emit(FORGE_EVENTS.COLOR_SAMPLED, { r: 255, g: 0, b: 0, a: 255 });
 
     await waitFor(() => expect(screen.getByLabelText("Hex color")).toHaveValue("ff0000"));
+    expect(marker).toHaveStyle({ left: "100%", top: "0%" });
     expect(onApply).not.toHaveBeenCalled();
   });
 

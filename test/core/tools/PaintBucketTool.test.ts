@@ -4,6 +4,7 @@ import { createMockToolContext } from "../../mocks";
 
 describe("PaintBucketTool", () => {
   let context: any;
+  let mockImageData: ImageData;
 
   beforeEach(() => {
     context = createMockToolContext();
@@ -19,15 +20,20 @@ describe("PaintBucketTool", () => {
     HTMLCanvasElement.prototype.toDataURL = vi.fn(() => "data:image/png;base64,mock");
 
     // Mock for canvas context used in performFill
+    mockImageData = {
+      data: new Uint8ClampedArray(100 * 100 * 4),
+      width: 100,
+      height: 100,
+    } as ImageData;
+    for (let index = 3; index < mockImageData.data.length; index += 4) {
+      mockImageData.data[index] = 255;
+    }
+
     const mockCtx = {
       drawImage: vi.fn(),
       fillRect: vi.fn(),
       putImageData: vi.fn(),
-      getImageData: vi.fn(() => ({
-        data: new Uint8ClampedArray(100 * 100 * 4).fill(0), // All black
-        width: 100,
-        height: 100,
-      })),
+      getImageData: vi.fn(() => mockImageData),
     };
 
     HTMLCanvasElement.prototype.getContext = vi.fn((type) => {
@@ -98,5 +104,41 @@ describe("PaintBucketTool", () => {
     ];
     tool.onMouseDown({ button: 0, offsetX: 50, offsetY: 50 } as MouseEvent, context);
     expect(context.updateProject).not.toHaveBeenCalled();
+  });
+
+  it("converts an empty raster layer into a color fill layer", async () => {
+    const tool = new PaintBucketTool();
+    context.foregroundColor = "#12ab34";
+    mockImageData.data.fill(0);
+    context.project.activeLayerId = "layer-1";
+
+    tool.onMouseDown({ button: 0, offsetX: 50, offsetY: 50 } as MouseEvent, context);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updates = context.updateProject.mock.calls[0][0];
+    const updatedLayer = updates.layers.find((layer: any) => layer.id === "layer-1");
+
+    expect(updatedLayer).toMatchObject({
+      id: "layer-1",
+      type: "color_fill",
+      colorFill: { color: "#12ab34" },
+    });
+    expect(updatedLayer.data).toBeUndefined();
+    expect(context.addHistoryEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ description: "Paint Bucket" }),
+    );
+  });
+
+  it("converts a fully transparent raster with data into a color fill layer", async () => {
+    const tool = new PaintBucketTool();
+    mockImageData.data.fill(0);
+    context.project.activeLayerId = "layer-1";
+    context.project.layers[0].data = "data:image/png;base64,transparent";
+
+    tool.onMouseDown({ button: 0, offsetX: 50, offsetY: 50 } as MouseEvent, context);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updates = context.updateProject.mock.calls[0][0];
+    expect(updates.layers[0].type).toBe("color_fill");
   });
 });
