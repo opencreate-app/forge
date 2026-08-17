@@ -16,6 +16,7 @@ import {
   Box,
   X,
   PaintBucket,
+  Blend,
   // ChevronRight,
   // ChevronDown,
   // Trash2,
@@ -264,6 +265,15 @@ const LayerItem: React.FC<LayerItemProps> = ({
     );
   };
 
+  const handleGradientDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("forge:open-gradient-editor-for-layer", {
+        detail: { projectId, layerId: layer.id },
+      }),
+    );
+  };
+
   const hasStylesEnabled = Object.values(layer.styles ?? {}).some(
     (style) => (style as BaseStyle)?.enabled === true,
   );
@@ -367,6 +377,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
             }}
             onDoubleClick={(e) => {
               if (layer.type === "color_fill") handleColorFillDoubleClick(e);
+              else if (layer.type === "gradient_fill") handleGradientDoubleClick(e);
               else if (layer.type === "smart_object") {
                 e.stopPropagation();
                 openSmartObject(projectId, layer.id);
@@ -402,10 +413,17 @@ const LayerItem: React.FC<LayerItemProps> = ({
             }}
             onDoubleClick={(e) => {
               if (layer.type === "color_fill") handleColorFillDoubleClick(e);
+              else if (layer.type === "gradient_fill") handleGradientDoubleClick(e);
             }}
             style={
               {
                 "--thumbnail-color-fill": layer.colorFill?.color || "#ffffff",
+                background:
+                  layer.type === "gradient_fill" && layer.gradientFill
+                    ? `linear-gradient(90deg, ${layer.gradientFill.colors
+                        .map((stop) => `${stop.color} ${stop.position * 100}%`)
+                        .join(", ")})`
+                    : undefined,
               } as React.CSSProperties
             }
           >
@@ -415,11 +433,16 @@ const LayerItem: React.FC<LayerItemProps> = ({
               >
                 <PaintBucket size={12} />
               </div>
-            )) || (
-              <div className="text-[0.6rem] text-[#555] pointer-events-none">
-                {layer.type[0].toUpperCase()}
-              </div>
-            )}
+            )) ||
+              (layer.type === "gradient_fill" && (
+                <div className="absolute right-0 bottom-0 w-4 h-4 bg-bg-secondary text-text rounded-tl flex items-center justify-center">
+                  <Blend size={12} />
+                </div>
+              )) || (
+                <div className="text-[0.6rem] text-[#555] pointer-events-none">
+                  {layer.type[0].toUpperCase()}
+                </div>
+              )}
           </div>
         )}
 

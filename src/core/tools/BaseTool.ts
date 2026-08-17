@@ -92,6 +92,10 @@ export abstract class BaseTool {
   onMouseMove(_e: MouseEvent, _context: ToolContext): void {}
   /** Called when the mouse button is released. */
   onMouseUp(_e: MouseEvent, _context: ToolContext): void {}
+  /** Called when the context menu is requested. Returns true when consumed by the tool. */
+  onContextMenu(_e: MouseEvent, _context: ToolContext): boolean {
+    return false;
+  }
 
   /** Called when the tool becomes the active tool. */
   onActivate(_context: ToolContext): void {}

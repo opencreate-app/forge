@@ -18,6 +18,7 @@ import { ColorFillModal } from "./components/modals/ColorFillModal";
 import { ImageSizeModal } from "./components/modals/ImageSizeModal";
 import { AboutModal } from "./components/modals/AboutModal";
 import ColorPickerModal from "./components/modals/ColorPickerModal";
+import GradientEditorModal from "./components/modals/GradientEditorModal";
 import { usePreferencesStore } from "./store/preferencesStore";
 import { useAutosave } from "./hooks/useAutosave";
 import { useToolStore } from "@store/toolStore";
@@ -27,6 +28,10 @@ import { useMenuHandler } from "./hooks/useMenuHandler";
 import { getClipboardImageDimensions } from "@utils/clipboardUtils";
 import { forgeEvents, FORGE_EVENTS } from "@utils/events";
 import type { ColorPickerOpenRequest } from "@utils/colorPicker";
+import type {
+  GradientEditorLayerRequestDetail,
+  GradientEditorOpenRequest,
+} from "@utils/gradientEditor";
 import { Box, X } from "lucide-react";
 
 // ... (imports remain)
@@ -72,10 +77,15 @@ function App() {
   const [isColorFillModalOpen, setIsColorFillModalOpen] = React.useState(false);
   const [isImageSizeModalOpen, setIsImageSizeModalOpen] = React.useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = React.useState(false);
-  const [colorPickerRequest, setColorPickerRequest] =
-    React.useState<ColorPickerOpenRequest | null>(null);
+  const [colorPickerRequest, setColorPickerRequest] = React.useState<ColorPickerOpenRequest | null>(
+    null,
+  );
   const [isColorPickerOpen, setIsColorPickerOpen] = React.useState(false);
   const [colorPickerSession, setColorPickerSession] = React.useState(0);
+  const [gradientEditorRequest, setGradientEditorRequest] =
+    React.useState<GradientEditorOpenRequest | null>(null);
+  const [isGradientEditorOpen, setIsGradientEditorOpen] = React.useState(false);
+  const [gradientEditorSession, setGradientEditorSession] = React.useState(0);
 
   // Auto-update state
   const [isUpdateAvailable, setIsUpdateAvailable] = React.useState<UpdateInfo | null>(null);
@@ -161,6 +171,69 @@ function App() {
     setIsColorPickerOpen(true);
   }, []);
 
+  const openGradientEditor = React.useCallback(
+    (request: GradientEditorOpenRequest) => {
+      if (request.target === "layer" && request.projectId && request.layerId) {
+        const project = useProjectStore
+          .getState()
+          .projects.find((item) => item.id === request.projectId);
+        const layer = project?.layers.find((item) => item.id === request.layerId);
+        let parentId = layer?.parentId;
+        let locked = layer?.locked ?? false;
+        while (!locked && parentId && project) {
+          const parent = project.layers.find((item) => item.id === parentId);
+          if (!parent) break;
+          locked = parent.locked;
+          parentId = parent.parentId;
+        }
+        if (locked) {
+          showToast("Unlock the layer to edit its gradient.", "warning");
+          return;
+        }
+      }
+
+      setGradientEditorRequest(request);
+      setGradientEditorSession((session) => session + 1);
+      setIsGradientEditorOpen(true);
+    },
+    [showToast],
+  );
+
+  const openGradientEditorForLayer = React.useCallback(
+    (projectId: string, layerId: string) => {
+      const project = useProjectStore.getState().projects.find((item) => item.id === projectId);
+      const layer = project?.layers.find((item) => item.id === layerId);
+      if (!project || !layer || layer.type !== "gradient_fill" || !layer.gradientFill) return;
+
+      let parentId = layer.parentId;
+      let locked = layer.locked;
+      while (!locked && parentId) {
+        const parent = project.layers.find((item) => item.id === parentId);
+        if (!parent) break;
+        locked = parent.locked;
+        parentId = parent.parentId;
+      }
+      if (locked) {
+        showToast("Unlock the layer to edit its gradient.", "warning");
+        return;
+      }
+
+      useProjectStore.getState().setActiveLayer(projectId, layerId);
+      openGradientEditor({
+        target: "layer",
+        projectId,
+        layerId,
+        initialPreset: {
+          id: layer.id,
+          name: layer.name,
+          type: layer.gradientFill.type,
+          colors: layer.gradientFill.colors.map((stop) => ({ ...stop })),
+        },
+      });
+    },
+    [openGradientEditor, showToast],
+  );
+
   const openToolbarColorPicker = React.useCallback(
     (target: "foreground" | "background") => {
       const initialColor = target === "foreground" ? foregroundColor : backgroundColor;
@@ -198,14 +271,28 @@ function App() {
       const { projectId, layerId } = (event as CustomEvent<ColorFillPickerRequestDetail>).detail;
       openColorFillColorPicker(projectId, layerId);
     };
+    const handleOpenGradientEditorForLayer = (event: Event) => {
+      const { projectId, layerId } = (event as CustomEvent<GradientEditorLayerRequestDetail>)
+        .detail;
+      openGradientEditorForLayer(projectId, layerId);
+    };
 
     window.addEventListener("forge:open-color-picker-for-layer", handleOpenColorPickerForLayer);
-    return () =>
+    window.addEventListener(
+      "forge:open-gradient-editor-for-layer",
+      handleOpenGradientEditorForLayer,
+    );
+    return () => {
       window.removeEventListener(
         "forge:open-color-picker-for-layer",
         handleOpenColorPickerForLayer,
       );
-  }, [openColorFillColorPicker]);
+      window.removeEventListener(
+        "forge:open-gradient-editor-for-layer",
+        handleOpenGradientEditorForLayer,
+      );
+    };
+  }, [openColorFillColorPicker, openGradientEditorForLayer]);
 
   // Restore mode when interaction ends
   React.useEffect(() => {
@@ -441,6 +528,16 @@ function App() {
           setColorPickerRequest(null);
         }}
       />
+      <GradientEditorModal
+        key={gradientEditorSession}
+        isOpen={isGradientEditorOpen && activeTab !== "home"}
+        request={gradientEditorRequest}
+        onOpenColorPicker={openColorPicker}
+        onClose={() => {
+          setIsGradientEditorOpen(false);
+          setGradientEditorRequest(null);
+        }}
+      />
       {/* Update Notification */}
       {isUpdateAvailable && !isUpdateAvailable.isClosed && (
         <div
@@ -548,7 +645,10 @@ function App() {
       {/* 2. Dynamic Header (Tool Options) */}
       {activeTab !== "home" && (
         <header className="bg-[#222] border-b border-bg-tertiary flex items-center">
-          <ToolOptions onOpenColorPicker={openColorPicker} />
+          <ToolOptions
+            onOpenColorPicker={openColorPicker}
+            onOpenGradientEditor={openGradientEditor}
+          />
         </header>
       )}
       {/* 3. Main Area */}

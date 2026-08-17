@@ -96,6 +96,20 @@ export interface LayerMask {
   linked: boolean;
 }
 
+export type GradientType = "linear" | "radial" | "angular";
+
+export interface GradientStop {
+  color: string;
+  position: number;
+}
+
+export interface GradientFill {
+  type: GradientType;
+  colors: GradientStop[];
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+}
+
 /**
  * Represents a layer in the project. Layers can be raster images, text, or groups.
  */
@@ -105,7 +119,7 @@ export interface Layer {
   /** Display name of the layer. */
   name: string;
   /** The type of layer content. */
-  type: "raster" | "text" | "group" | "smart_object" | "color_fill";
+  type: "raster" | "text" | "group" | "smart_object" | "color_fill" | "gradient_fill";
   /** Whether the layer is currently visible. */
   visible: boolean;
   /** Whether the layer is locked for editing. */
@@ -132,6 +146,8 @@ export interface Layer {
   colorFill?: {
     color: string;
   };
+  /** Non-destructive gradient fill settings. */
+  gradientFill?: GradientFill;
   /** Original transformation for smart objects (used for reset). */
   originalTransform?: {
     x: number;

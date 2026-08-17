@@ -16,9 +16,12 @@ import { CropOptions } from "./tools/CropOptions";
 import { TextOptions } from "./tools/TextOptions";
 import { PaintBucketOptions } from "./tools/PaintBucketOptions";
 import type { ColorPickerOpenRequest } from "@utils/colorPicker";
+import type { GradientEditorOpenRequest } from "@utils/gradientEditor";
+import { GradientOptions } from "./tools/GradientOptions";
 
 export interface ToolOptionProps {
   onOpenColorPicker?: (request: ColorPickerOpenRequest) => void;
+  onOpenGradientEditor?: (request: GradientEditorOpenRequest) => void;
 }
 
 const TOOL_COMPONENTS: Partial<Record<ToolId, React.FC<ToolOptionProps>>> = {
@@ -31,13 +34,15 @@ const TOOL_COMPONENTS: Partial<Record<ToolId, React.FC<ToolOptionProps>>> = {
   crop: CropOptions,
   text: TextOptions,
   paintBucket: PaintBucketOptions,
+  gradient: GradientOptions,
 };
 
 interface ToolOptionsProps {
   onOpenColorPicker: (request: ColorPickerOpenRequest) => void;
+  onOpenGradientEditor: (request: GradientEditorOpenRequest) => void;
 }
 
-const ToolOptions: React.FC<ToolOptionsProps> = ({ onOpenColorPicker }) => {
+const ToolOptions: React.FC<ToolOptionsProps> = ({ onOpenColorPicker, onOpenGradientEditor }) => {
   const activeToolId = useToolStore((state) => state.activeToolId);
 
   const activeTool = TOOLS.find((tool) => tool.id === activeToolId);
@@ -54,7 +59,10 @@ const ToolOptions: React.FC<ToolOptionsProps> = ({ onOpenColorPicker }) => {
       </div>
       <div className="flex-1 flex items-center h-full">
         {OptionsComponent ? (
-          <OptionsComponent onOpenColorPicker={onOpenColorPicker} />
+          <OptionsComponent
+            onOpenColorPicker={onOpenColorPicker}
+            onOpenGradientEditor={onOpenGradientEditor}
+          />
         ) : (
           <span className="text-[0.75rem] text-[#666]">No options for this tool</span>
         )}

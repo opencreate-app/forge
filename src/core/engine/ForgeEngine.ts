@@ -13,6 +13,7 @@ import { SelectTool } from "../tools/SelectTool";
 import { CropTool } from "../tools/CropTool";
 import { TextTool } from "../tools/TextTool";
 import { PaintBucketTool } from "../tools/PaintBucketTool";
+import { GradientTool } from "../tools/GradientTool";
 import { useToolStore } from "@/renderer/store/toolStore";
 import { useUIStore } from "@/renderer/store/uiStore";
 import UPNG from "upng-js";
@@ -28,6 +29,7 @@ import { TextLayer } from "../layers/TextLayer";
 import { GroupLayer, GroupRenderTransform } from "../layers/GroupLayer";
 import { SmartObjectLayer } from "../layers/SmartObjectLayer";
 import { ColorFillLayer } from "../layers/ColorFillLayer";
+import { GradientFillLayer } from "../layers/GradientFillLayer";
 
 /**
  * Represents the current state of the canvas viewport.
@@ -131,6 +133,7 @@ export class ForgeEngine {
       pencil: new PencilTool(),
       eraser: new EraserTool(),
       paintBucket: new PaintBucketTool(),
+      gradient: new GradientTool(),
       transform: new TransformTool(),
       crop: new CropTool(),
       text: new TextTool(),
@@ -139,6 +142,7 @@ export class ForgeEngine {
     this.handleWheel = this.handleWheel.bind(this);
     this.handleMouseDown = this.handleMouseDown.bind(this);
     this.handleDoubleClick = this.handleDoubleClick.bind(this);
+    this.handleContextMenu = this.handleContextMenu.bind(this);
     this.handleMouseMove = this.handleMouseMove.bind(this);
     this.handleMouseUp = this.handleMouseUp.bind(this);
     this.handleKeyDown = this.handleKeyDown.bind(this);
@@ -303,6 +307,7 @@ export class ForgeEngine {
       );
     });
     this.canvas.addEventListener("dblclick", this.handleDoubleClick);
+    this.canvas.addEventListener("contextmenu", this.handleContextMenu);
     window.addEventListener("mousemove", this.handleMouseMove);
     window.addEventListener("mouseup", this.handleMouseUp);
     window.addEventListener("keydown", this.handleKeyDown);
@@ -1249,6 +1254,15 @@ export class ForgeEngine {
     }
   }
 
+  private handleContextMenu(e: MouseEvent) {
+    if (!this.project) return;
+    const tool = this.getActiveTool();
+    const context = this.getToolContext();
+    if (tool && context && tool.onContextMenu(e, context)) {
+      e.preventDefault();
+    }
+  }
+
   /**
    * Stops any ongoing viewport animation.
    */
@@ -1412,6 +1426,7 @@ export class ForgeEngine {
     }
     this.canvas.removeEventListener("wheel", this.handleWheel);
     this.canvas.removeEventListener("mousedown", this.handleMouseDown);
+    this.canvas.removeEventListener("contextmenu", this.handleContextMenu);
     window.removeEventListener("mousemove", this.handleMouseMove);
     window.removeEventListener("mouseup", this.handleMouseUp);
     window.removeEventListener("keydown", this.handleKeyDown);
@@ -2215,6 +2230,9 @@ export class ForgeEngine {
         break;
       case "color_fill":
         ColorFillLayer.render(ctx, layer);
+        break;
+      case "gradient_fill":
+        GradientFillLayer.render(ctx, layer);
         break;
     }
   }

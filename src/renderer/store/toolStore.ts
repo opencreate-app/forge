@@ -11,6 +11,7 @@ export type ToolId =
   | "pencil"
   | "eraser"
   | "paintBucket"
+  | "gradient"
   | "text"
   | "transform"
   | "crop";
@@ -30,6 +31,9 @@ export interface ToolSettings {
     antiAliasing: boolean;
     contiguous: boolean;
     fillTarget: "raster" | "color_fill";
+  };
+  gradient: {
+    presetId: string;
   };
   text: {
     fontFamily: string;
@@ -100,6 +104,9 @@ export const useToolStore = create<ToolState>()(
           antiAliasing: true,
           contiguous: true,
           fillTarget: "raster",
+        },
+        gradient: {
+          presetId: "foreground-background",
         },
         text: {
           fontFamily: "Arial",
