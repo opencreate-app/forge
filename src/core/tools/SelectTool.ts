@@ -2,7 +2,7 @@
  * Purpose: Tool for creating and modifying selections using rectangular or elliptical shapes, supporting various modes like replace, unite, subtract, and intersect.
  */
 import { BaseTool, ToolContext, ToolId } from "./BaseTool";
-import { createHistoryState, HistoryState } from "@/renderer/store/projectStore";
+import { createHistoryState, HistoryState, useProjectStore } from "@/renderer/store/projectStore";
 import { useUIStore } from "@/renderer/store/uiStore";
 
 export class SelectTool extends BaseTool {
@@ -311,6 +311,31 @@ export class SelectTool extends BaseTool {
     this.historySnapshot = null;
   }
 
+  onKeyDown(e: KeyboardEvent, context: ToolContext): boolean {
+    if (e.key !== "Delete" && e.key !== "Backspace") return false;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (context.project.selection.hasSelection) {
+      void context.deleteSelectionContents();
+      return true;
+    }
+
+    const layerIds =
+      context.project.selectedLayerIds.length > 0
+        ? context.project.selectedLayerIds
+        : context.project.activeLayerId
+          ? [context.project.activeLayerId]
+          : [];
+
+    if (layerIds.length > 0) {
+      useProjectStore.getState().removeLayers(context.project.id, layerIds);
+    }
+
+    return true;
+  }
+
   private isPointInSelection(context: ToolContext, px: number, py: number): boolean {
     const { selection } = context.project;
     if (!selection.hasSelection || !selection.bounds) return false;
@@ -333,14 +358,14 @@ export class SelectTool extends BaseTool {
   }
 
   private async clearSelection(context: ToolContext) {
-    if (context.project.selection.hasSelection) {
-      if (this.historySnapshot) {
-        context.addHistoryEntry({
-          description: "Deselect Tool",
-          state: this.historySnapshot,
-        });
-      }
-    }
+    // if (context.project.selection.hasSelection) {
+    //   if (this.historySnapshot) {
+    //     context.addHistoryEntry({
+    //       description: "Deselect Tool",
+    //       state: this.historySnapshot,
+    //     });
+    //   }
+    // }
     await context.clearSelection();
   }
 

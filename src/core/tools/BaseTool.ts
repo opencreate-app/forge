@@ -57,6 +57,8 @@ export interface ToolContext {
   commitFloatingLayer: () => Promise<void>;
   /** Clears the current selection. */
   clearSelection: () => Promise<void>;
+  /** Deletes the selected pixels/content from the active layer. */
+  deleteSelectionContents: () => Promise<boolean>;
   /** Notifies the UI that the tool is currently performing an operation. */
   setInteracting: (isInteracting: boolean) => void;
   /** Changes the active tool. */

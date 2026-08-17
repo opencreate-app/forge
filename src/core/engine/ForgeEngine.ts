@@ -670,6 +670,108 @@ export class ForgeEngine {
   }
 
   /**
+   * Deletes the current selection from the active layer without deleting the layer itself.
+   * Raster layers are cleared destructively; procedural layers receive a non-destructive mask.
+   */
+  public async deleteSelectionContents(): Promise<boolean> {
+    if (!this.project || !this.project.selection.hasSelection || !this.project.selection.bounds) {
+      return false;
+    }
+
+    const { activeLayerId, selection } = this.project;
+    const bounds = selection.bounds;
+    if (!bounds) return false;
+    if (!activeLayerId) return false;
+
+    const layer = this.project.layers.find((candidate) => candidate.id === activeLayerId);
+    if (!layer) return false;
+
+    if (layer.locked || this.isAncestorLocked(layer)) {
+      useUIStore.getState().showToast("Unlock the layer to delete the selection.", "warning");
+      return false;
+    }
+
+    useProjectStore.getState().pushHistory(this.project.id, "Delete Selection");
+
+    if (this.project.activeMaskId === layer.id && layer.mask) {
+      const mask = await this.createSelectionDeletionMask(layer.mask);
+      useProjectStore.getState().updateLayer(this.project.id, layer.id, { mask });
+      return true;
+    }
+
+    if (layer.type === "raster" && layer.data) {
+      const layerCanvas = await this.ensureLayerCanvas(layer);
+      const layerCtx = layerCanvas.getContext("2d")!;
+      layerCtx.save();
+      layerCtx.globalCompositeOperation = "destination-out";
+      layerCtx.drawImage(
+        this.selectionCanvas,
+        bounds.x - layer.x,
+        bounds.y - layer.y,
+      );
+      layerCtx.restore();
+
+      const data = layerCanvas.toDataURL("image/png");
+      this.layerCanvasCache.set(layer.id, layerCanvas);
+      this.layerReadyCache.set(layer.id, true);
+      useProjectStore.getState().updateLayer(this.project.id, layer.id, { data });
+      return true;
+    }
+
+    const mask = await this.createSelectionDeletionMask(layer.mask);
+    useProjectStore.getState().updateLayer(this.project.id, layer.id, { mask });
+    return true;
+  }
+
+  private async createSelectionDeletionMask(
+    existingMask?: Layer["mask"],
+  ): Promise<NonNullable<Layer["mask"]>> {
+    if (!this.project || !this.project.selection.bounds) {
+      throw new Error("Cannot create a deletion mask without an active project selection.");
+    }
+
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = this.project.width;
+    maskCanvas.height = this.project.height;
+    const maskCtx = maskCanvas.getContext("2d")!;
+    maskCtx.fillStyle = "white";
+    maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+
+    if (existingMask?.data) {
+      const existingImage = await this.loadImage(existingMask.data);
+      // Clear the existing mask bounds first so transparent pixels in the mask
+      // remain transparent instead of revealing the white fallback underneath.
+      maskCtx.globalCompositeOperation = "destination-out";
+      maskCtx.fillRect(existingMask.x, existingMask.y, existingMask.width, existingMask.height);
+      maskCtx.globalCompositeOperation = "source-over";
+      maskCtx.drawImage(
+        existingImage,
+        existingMask.x,
+        existingMask.y,
+        existingMask.width,
+        existingMask.height,
+      );
+    }
+
+    maskCtx.globalCompositeOperation = "destination-out";
+    maskCtx.drawImage(
+      this.selectionCanvas,
+      this.project.selection.bounds.x,
+      this.project.selection.bounds.y,
+    );
+
+    return {
+      data: maskCanvas.toDataURL("image/png"),
+      x: 0,
+      y: 0,
+      width: this.project.width,
+      height: this.project.height,
+      enabled: true,
+      linked: existingMask?.linked ?? true,
+    };
+  }
+
+  /**
    * Handles keyboard press events for shortcuts and tool interactions.
    */
   private handleKeyDown = (e: KeyboardEvent) => {
@@ -1057,6 +1159,7 @@ export class ForgeEngine {
       floatSelection: (layerId: string) => this.floatSelection(layerId),
       commitFloatingLayer: () => this.commitFloatingLayer(),
       clearSelection: () => this.clearSelection(),
+      deleteSelectionContents: () => this.deleteSelectionContents(),
       setInteracting: (isInteracting: boolean) =>
         useToolStore.getState().setInteracting(isInteracting),
       setActiveTool: (id: any) => useToolStore.getState().setActiveTool(id),

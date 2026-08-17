@@ -77,6 +77,7 @@ export const createMockToolContext = (overrides: Partial<ToolContext> = {}): Too
     floatSelection: vi.fn().mockResolvedValue(true),
     commitFloatingLayer: vi.fn().mockResolvedValue(undefined),
     clearSelection: vi.fn().mockResolvedValue(undefined),
+    deleteSelectionContents: vi.fn().mockResolvedValue(false),
     setInteracting: vi.fn(),
     setActiveTool: vi.fn(),
     updateToolSettings: vi.fn(),
