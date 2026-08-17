@@ -48,6 +48,23 @@ const colorFillLayer: Layer = {
   },
 };
 
+const gradientLayer: Layer = {
+  ...colorFillLayer,
+  id: "gradient-1",
+  name: "Gradient",
+  type: "gradient_fill",
+  colorFill: undefined,
+  gradientFill: {
+    type: "linear",
+    colors: [
+      { color: "#ff0000", position: 0 },
+      { color: "#0000ff", position: 1 },
+    ],
+    start: { x: 0, y: 0 },
+    end: { x: 100, y: 100 },
+  },
+};
+
 describe("LayerItem", () => {
   beforeEach(() => {
     useProjectStore.setState({
@@ -96,5 +113,43 @@ describe("LayerItem", () => {
     expect(onOpenColorPicker).toHaveBeenCalledOnce();
 
     window.removeEventListener("forge:open-color-picker-for-layer", onOpenColorPicker);
+  });
+
+  it("opens the gradient editor when a gradient thumbnail is double-clicked", () => {
+    const onOpenGradientEditor = vi.fn();
+    window.addEventListener("forge:open-gradient-editor-for-layer", onOpenGradientEditor);
+
+    const view = render(
+      <LayerItem
+        layer={gradientLayer}
+        projectId="project-1"
+        isActive
+        isSelected
+        index={0}
+        depth={0}
+        isInheritedHidden={false}
+        draggedIndex={null}
+        onDragStart={vi.fn()}
+        onDragOver={vi.fn()}
+        onDrop={vi.fn()}
+        onClick={vi.fn()}
+        onVisibilityMouseDown={vi.fn()}
+        onVisibilityMouseEnter={vi.fn()}
+        onToggleExpansion={vi.fn()}
+        onContextMenu={vi.fn()}
+      />,
+    );
+
+    const thumbnail = view.container.querySelector("div.w-8.h-8");
+    expect(thumbnail).not.toBeNull();
+    fireEvent.doubleClick(thumbnail!);
+
+    expect(onOpenGradientEditor).toHaveBeenCalledOnce();
+    expect(onOpenGradientEditor.mock.calls[0][0].detail).toEqual({
+      projectId: "project-1",
+      layerId: "gradient-1",
+    });
+
+    window.removeEventListener("forge:open-gradient-editor-for-layer", onOpenGradientEditor);
   });
 });
