@@ -141,4 +141,72 @@ describe("PaintBucketTool", () => {
     const updates = context.updateProject.mock.calls[0][0];
     expect(updates.layers[0].type).toBe("color_fill");
   });
+
+  it("limits a raster flood fill to the active selection", async () => {
+    const tool = new PaintBucketTool();
+    const selectionWidth = 20;
+    const selectionHeight = 20;
+    const selectionData = new Uint8ClampedArray(selectionWidth * selectionHeight * 4);
+    for (let index = 3; index < selectionData.length; index += 4) {
+      selectionData[index] = 255;
+    }
+
+    context.project.activeLayerId = "layer-1";
+    context.project.selection = {
+      hasSelection: true,
+      bounds: { x: 25, y: 25, width: selectionWidth, height: selectionHeight },
+      mask: "data:image/png;base64,selection",
+    };
+    context.getSelectionCanvas = vi.fn(() => ({
+      canvas: { width: selectionWidth, height: selectionHeight } as HTMLCanvasElement,
+      ctx: { getImageData: vi.fn(() => ({ data: selectionData })) } as unknown as CanvasRenderingContext2D,
+    }));
+
+    tool.onMouseDown({ button: 0, offsetX: 30, offsetY: 30 } as MouseEvent, context);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const selectedPixel = (30 * 100 + 30) * 4;
+    const outsidePixel = 0;
+    expect(mockImageData.data[selectedPixel]).toBe(255);
+    expect(mockImageData.data[selectedPixel + 1]).toBe(0);
+    expect(mockImageData.data[outsidePixel]).toBe(0);
+    expect(context.updateProject).toHaveBeenCalled();
+  });
+
+  it("keeps the selection as a mask when converting an empty raster", async () => {
+    const tool = new PaintBucketTool();
+    const selectionWidth = 30;
+    const selectionHeight = 20;
+    const selectionData = new Uint8ClampedArray(selectionWidth * selectionHeight * 4);
+    for (let index = 3; index < selectionData.length; index += 4) {
+      selectionData[index] = 255;
+    }
+
+    mockImageData.data.fill(0);
+    context.project.activeLayerId = "layer-1";
+    context.project.selection = {
+      hasSelection: true,
+      bounds: { x: 40, y: 50, width: selectionWidth, height: selectionHeight },
+      mask: "data:image/png;base64,selection",
+    };
+    context.getSelectionCanvas = vi.fn(() => ({
+      canvas: { width: selectionWidth, height: selectionHeight } as HTMLCanvasElement,
+      ctx: { getImageData: vi.fn(() => ({ data: selectionData })) } as unknown as CanvasRenderingContext2D,
+    }));
+
+    tool.onMouseDown({ button: 0, offsetX: 45, offsetY: 55 } as MouseEvent, context);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updates = context.updateProject.mock.calls[0][0];
+    expect(updates.layers[0]).toMatchObject({
+      type: "color_fill",
+      mask: {
+        data: "data:image/png;base64,selection",
+        x: 40,
+        y: 50,
+        width: selectionWidth,
+        height: selectionHeight,
+      },
+    });
+  });
 });
