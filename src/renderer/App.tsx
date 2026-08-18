@@ -21,6 +21,8 @@ import ColorPickerModal from "./components/modals/ColorPickerModal";
 import GradientEditorModal from "./components/modals/GradientEditorModal";
 import { usePreferencesStore } from "./store/preferencesStore";
 import { useAutosave } from "./hooks/useAutosave";
+import { useSessionGuard } from "./hooks/useSessionGuard";
+import { useSafeQuit } from "./hooks/useSafeQuit";
 import { useToolStore } from "@store/toolStore";
 import Toast from "./components/ui/Toast";
 import { useMenuHandler } from "./hooks/useMenuHandler";
@@ -52,6 +54,8 @@ interface ColorFillPickerRequestDetail {
 function App() {
   useMenuHandler();
   useAutosave();
+  useSessionGuard();
+  useSafeQuit();
   const theme = usePreferencesStore((state) => state.theme);
 
   React.useEffect(() => {

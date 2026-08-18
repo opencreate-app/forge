@@ -346,6 +346,8 @@ interface ProjectState {
   setActiveProject: (id: string | null) => void;
   /** Reorders the projects list. */
   reorderProjects: (projects: Project[]) => void;
+  /** Restores an entire previously persisted renderer session. */
+  restoreSession: (projects: Project[], activeProjectId: string | null) => void;
   /** Updates project-level properties. */
   updateProject: (id: string, updates: Partial<Project>) => void;
   /** Adds a new layer to a specific project. */
@@ -625,6 +627,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   setActiveProject: (id) => set({ activeProjectId: id }),
 
   reorderProjects: (projects) => set({ projects }),
+
+  restoreSession: (projects, activeProjectId) =>
+    set({
+      projects: projects.map((project) => normalizeProject(project)),
+      activeProjectId,
+    }),
 
   updateProject: (id, updates) =>
     set((state) => ({

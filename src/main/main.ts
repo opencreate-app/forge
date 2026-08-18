@@ -30,6 +30,8 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(APP_ROOT, "public") : 
 
 let win: BrowserWindow | null;
 let splash: BrowserWindow | null;
+let safeQuitInProgress = false;
+let safeQuitRequestInFlight = false;
 let menuState = {
   hasProject: false,
   showRulers: true,
@@ -384,6 +386,13 @@ function createWindow() {
     },
   });
 
+  win.on("close", (event) => {
+    if (safeQuitInProgress) return;
+
+    event.preventDefault();
+    requestSafeQuit();
+  });
+
   // const startTime = Date.now();
 
   // Show splash screen until main window is ready
@@ -422,6 +431,26 @@ function createWindow() {
   createMenu();
   // win.setAutoHideMenuBar(true);
 }
+
+function requestSafeQuit() {
+  if (safeQuitRequestInFlight) return;
+
+  if (!win || win.isDestroyed()) {
+    safeQuitInProgress = true;
+    app.quit();
+    return;
+  }
+
+  safeQuitRequestInFlight = true;
+  win.webContents.send("app:request-safe-quit");
+}
+
+app.on("before-quit", (event) => {
+  if (safeQuitInProgress) return;
+
+  event.preventDefault();
+  requestSafeQuit();
+});
 
 app.on("window-all-closed", () => {
   app.quit();
@@ -594,6 +623,28 @@ app.whenReady().then(() => {
       detail: "Your changes will be lost if you don't save them.",
     });
     return response;
+  });
+
+  ipcMain.handle("dialog:confirmCloseAll", async (_event, projectCount: number) => {
+    const { response } = await dialog.showMessageBox({
+      type: "question",
+      buttons: ["Save All", "Don't Save", "Cancel"],
+      defaultId: 0,
+      cancelId: 2,
+      message: "You have unsaved changes.",
+      detail: `${projectCount} project${projectCount === 1 ? " has" : "s have"} unsaved changes.`,
+    });
+    return response;
+  });
+
+  ipcMain.handle("app:respond-safe-quit", (_event, approved: boolean) => {
+    safeQuitRequestInFlight = false;
+
+    if (!approved) return { success: true, approved: false };
+
+    safeQuitInProgress = true;
+    app.quit();
+    return { success: true, approved: true };
   });
 
   ipcMain.handle("fs:openProjectFromPath", async (_event, filePath) => {

@@ -544,37 +544,62 @@ export class ForgeEngine {
    * Handles direct image saving (Ctrl+S) for image-based projects.
    */
   private handleSaveImage = async (e: any) => {
-    const { filePath } = e.detail || {};
+    const { filePath, projectId } = e.detail || {};
 
     if (this.project && filePath) {
-      const ext = filePath.split(".").pop().toLowerCase() || "";
-      const formatMap: Record<string, string> = {
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        webp: "image/webp",
-        bmp: "image/bmp",
-      };
-      const format = formatMap[ext] || "image/png";
+      const saveProjectId = projectId || this.project.id;
 
-      const dataURL = await this.exportProject(
-        format,
-        1.0,
-        this.project.width,
-        this.project.height,
-      );
+      try {
+        const ext = filePath.split(".").pop().toLowerCase() || "";
+        const formatMap: Record<string, string> = {
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+          webp: "image/webp",
+          bmp: "image/bmp",
+        };
+        const format = formatMap[ext] || "image/png";
 
-      if ((window as any).electronAPI) {
+        const dataURL = await this.exportProject(
+          format,
+          1.0,
+          this.project.width,
+          this.project.height,
+        );
+
+        if (!(window as any).electronAPI) {
+          window.dispatchEvent(
+            new CustomEvent("forge:save-project-finished", {
+              detail: { projectId: saveProjectId, success: false },
+            }),
+          );
+          return;
+        }
+
         const result = await (window as any).electronAPI.saveImage({
           dataURL,
           filePath,
         });
 
         if (result.success) {
-          useProjectStore.getState().updateProject(this.project.id, { isDirty: false });
+          useProjectStore.getState().updateProject(saveProjectId, { isDirty: false });
           useUIStore.getState().showToast("Image saved successfully", "info");
         } else {
           useUIStore.getState().showToast(`Failed to save image: ${result.error}`, "error");
         }
+
+        window.dispatchEvent(
+          new CustomEvent("forge:save-project-finished", {
+            detail: { projectId: saveProjectId, success: result.success },
+          }),
+        );
+      } catch (error) {
+        console.error("Image save error:", error);
+        useUIStore.getState().showToast("Failed to save image", "error");
+        window.dispatchEvent(
+          new CustomEvent("forge:save-project-finished", {
+            detail: { projectId: saveProjectId, success: false },
+          }),
+        );
       }
     }
   };
@@ -704,11 +729,7 @@ export class ForgeEngine {
       const layerCtx = layerCanvas.getContext("2d")!;
       layerCtx.save();
       layerCtx.globalCompositeOperation = "destination-out";
-      layerCtx.drawImage(
-        this.selectionCanvas,
-        bounds.x - layer.x,
-        bounds.y - layer.y,
-      );
+      layerCtx.drawImage(this.selectionCanvas, bounds.x - layer.x, bounds.y - layer.y);
       layerCtx.restore();
 
       const data = layerCanvas.toDataURL("image/png");
@@ -2306,10 +2327,7 @@ export class ForgeEngine {
         );
         break;
       case "group": {
-        const groupTransform = this.getGroupRenderTransform(
-          layer,
-          options?.groupTransformOrigin,
-        );
+        const groupTransform = this.getGroupRenderTransform(layer, options?.groupTransformOrigin);
         GroupLayer.render(
           ctx,
           layer,
@@ -2402,9 +2420,10 @@ export class ForgeEngine {
     // aligns with 'padding, padding' in the buffer.
     bctx.save();
     bctx.translate(padding - x, padding - y);
-    const renderOptions: { skipStyles: boolean; groupTransformOrigin?: { x: number; y: number } } = {
-      skipStyles: true,
-    };
+    const renderOptions: { skipStyles: boolean; groupTransformOrigin?: { x: number; y: number } } =
+      {
+        skipStyles: true,
+      };
     if (layer.type === "group") {
       // GroupLayer composites its children in project coordinates into its own
       // project-sized buffer. The outer buffer translation happens only when

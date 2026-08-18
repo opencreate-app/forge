@@ -39,7 +39,11 @@ export const useMenuHandler = () => {
   useEffect(() => {
     if (!(window as any).electronAPI) return;
 
-    const handleAction = async (action: string) => {
+    const handleAction = async (action: string, requestedProjectId?: string) => {
+      const requestedProject = requestedProjectId
+        ? useProjectStore.getState().projects.find((project) => project.id === requestedProjectId)
+        : undefined;
+      const projectForSave = requestedProject || activeProject;
       const isInputFocused =
         document.activeElement?.tagName === "INPUT" ||
         document.activeElement?.tagName === "TEXTAREA" ||
@@ -49,7 +53,13 @@ export const useMenuHandler = () => {
 
       // Guard all other actions if a modal is open, except standard edit operations
       if (isModalOpen) {
-        if (action === "undo" || action === "redo" || action === "select-all") {
+        if (
+          action === "undo" ||
+          action === "redo" ||
+          action === "select-all" ||
+          action === "save-project" ||
+          action === "save-project-as"
+        ) {
           // Standard edit operations are allowed ONLY if an input is focused
           if (!isInputFocused) return;
         } else {
@@ -103,33 +113,37 @@ export const useMenuHandler = () => {
           break;
 
         case "save-project":
-          if (!activeProject) return;
+          if (!projectForSave) return;
 
-          if (activeProject.parentLayerId) {
+          if (projectForSave.parentLayerId) {
             try {
-              await syncSmartObject(activeProject.id);
-              updateProject(activeProject.id, { isDirty: false });
+              await syncSmartObject(projectForSave.id);
+              updateProject(projectForSave.id, { isDirty: false });
               showToast("Smart Object updated", "info");
               window.dispatchEvent(
-                new CustomEvent("forge:save-project-finished", { detail: { success: true } }),
+                new CustomEvent("forge:save-project-finished", {
+                  detail: { projectId: projectForSave.id, success: true },
+                }),
               );
             } catch (err: any) {
               console.error("Sync error:", err);
               showToast(`Failed to update Smart Object: ${err.message}`, "error");
               window.dispatchEvent(
-                new CustomEvent("forge:save-project-finished", { detail: { success: false } }),
+                new CustomEvent("forge:save-project-finished", {
+                  detail: { projectId: projectForSave.id, success: false },
+                }),
               );
             }
             return;
           }
 
-          if (activeProject.filePath) {
-            const isImage = /\.(png|jpg|jpeg|webp|bmp)$/i.test(activeProject.filePath);
+          if (projectForSave.filePath) {
+            const isImage = /\.(png|jpg|jpeg|webp|bmp)$/i.test(projectForSave.filePath);
 
             if (isImage) {
               window.dispatchEvent(
                 new CustomEvent("forge:save-image", {
-                  detail: { filePath: activeProject.filePath },
+                  detail: { filePath: projectForSave.filePath, projectId: projectForSave.id },
                 }),
               );
               return;
@@ -137,15 +151,15 @@ export const useMenuHandler = () => {
 
             try {
               const appVersion = await (window as any).electronAPI.getAppVersion();
-              const serializableProject = getSerializableProject(activeProject);
+              const serializableProject = getSerializableProject(projectForSave);
               const jsonString = JSON.stringify({ ...serializableProject, version: appVersion });
 
               const result = await (window as any).electronAPI.saveProject({
                 jsonString,
-                filePath: activeProject.filePath,
+                filePath: projectForSave.filePath,
               });
               if (result.success) {
-                updateProject(activeProject.id, { isDirty: false, version: appVersion });
+                updateProject(projectForSave.id, { isDirty: false, version: appVersion });
                 showToast("Project saved", "info");
 
                 // Request thumbnail and update recent projects
@@ -154,8 +168,8 @@ export const useMenuHandler = () => {
                     detail: {
                       callback: (thumbnail: string) => {
                         addRecentProject({
-                          id: activeProject.id,
-                          name: activeProject.name,
+                          id: projectForSave.id,
+                          name: projectForSave.name,
                           filePath: result.filePath,
                           thumbnail,
                           lastModified: result.updatedAt,
@@ -167,41 +181,48 @@ export const useMenuHandler = () => {
                 );
 
                 window.dispatchEvent(
-                  new CustomEvent("forge:save-project-finished", { detail: { success: true } }),
+                  new CustomEvent("forge:save-project-finished", {
+                    detail: { projectId: projectForSave.id, success: true },
+                  }),
                 );
               } else {
                 window.dispatchEvent(
-                  new CustomEvent("forge:save-project-finished", { detail: { success: false } }),
+                  new CustomEvent("forge:save-project-finished", {
+                    detail: { projectId: projectForSave.id, success: false },
+                  }),
                 );
               }
             } catch (err: any) {
               console.error("Save error:", err);
               showToast(`Failed to save project: ${err.message}`, "error");
               window.dispatchEvent(
-                new CustomEvent("forge:save-project-finished", { detail: { success: false } }),
+                new CustomEvent("forge:save-project-finished", {
+                  detail: { projectId: projectForSave.id, success: false },
+                }),
               );
             }
           } else {
-            handleAction("save-project-as");
+            handleAction("save-project-as", projectForSave.id);
           }
           break;
 
         case "save-project-as":
-          if (!activeProject) return;
+          if (!projectForSave) return;
           try {
             const appVersion = await (window as any).electronAPI.getAppVersion();
-            const serializableProject = getSerializableProject(activeProject);
+            const serializableProject = getSerializableProject(projectForSave);
             const jsonString = JSON.stringify({ ...serializableProject, version: appVersion });
 
             const isImage =
-              activeProject.filePath && /\.(png|jpg|jpeg|webp|bmp)$/i.test(activeProject.filePath);
+              projectForSave.filePath &&
+              /\.(png|jpg|jpeg|webp|bmp)$/i.test(projectForSave.filePath);
 
             const result = await (window as any).electronAPI.saveProjectAs({
               jsonString,
-              defaultName: isImage ? activeProject.name : `${activeProject.name}.ocfd`,
+              defaultName: isImage ? projectForSave.name : `${projectForSave.name}.ocfd`,
             });
             if (result.success) {
-              updateProject(activeProject.id, {
+              updateProject(projectForSave.id, {
                 isDirty: false,
                 filePath: result.filePath,
                 name: result.name,
@@ -215,7 +236,7 @@ export const useMenuHandler = () => {
                   detail: {
                     callback: (thumbnail: string) => {
                       addRecentProject({
-                        id: activeProject.id,
+                        id: projectForSave.id,
                         name: result.name,
                         filePath: result.filePath,
                         thumbnail,
@@ -228,18 +249,24 @@ export const useMenuHandler = () => {
               );
 
               window.dispatchEvent(
-                new CustomEvent("forge:save-project-finished", { detail: { success: true } }),
+                new CustomEvent("forge:save-project-finished", {
+                  detail: { projectId: projectForSave.id, success: true },
+                }),
               );
             } else {
               window.dispatchEvent(
-                new CustomEvent("forge:save-project-finished", { detail: { success: false } }),
+                new CustomEvent("forge:save-project-finished", {
+                  detail: { projectId: projectForSave.id, success: false },
+                }),
               );
             }
           } catch (err: any) {
             console.error("Save As error:", err);
             showToast(`Failed to save project: ${err.message}`, "error");
             window.dispatchEvent(
-              new CustomEvent("forge:save-project-finished", { detail: { success: false } }),
+              new CustomEvent("forge:save-project-finished", {
+                detail: { projectId: projectForSave.id, success: false },
+              }),
             );
           }
           break;
@@ -440,7 +467,10 @@ export const useMenuHandler = () => {
     };
 
     const cleanup = (window as any).electronAPI.onMenuAction(handleAction);
-    const handleSaveRequest = () => handleAction("save-project");
+    const handleSaveRequest = (event: Event) => {
+      const projectId = (event as CustomEvent<{ projectId?: string }>).detail?.projectId;
+      void handleAction("save-project", projectId);
+    };
     window.addEventListener("forge:save-project", handleSaveRequest);
 
     return () => {

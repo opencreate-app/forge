@@ -11,6 +11,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveImage: (data: any) => ipcRenderer.invoke("fs:saveImage", data),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   confirmClose: (projectName: string) => ipcRenderer.invoke("dialog:confirmClose", projectName),
+  confirmCloseAll: (projectCount: number) =>
+    ipcRenderer.invoke("dialog:confirmCloseAll", projectCount),
+  respondToSafeQuit: (approved: boolean) => ipcRenderer.invoke("app:respond-safe-quit", approved),
+  onSafeQuitRequested: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("app:request-safe-quit", listener);
+    return () => ipcRenderer.removeListener("app:request-safe-quit", listener);
+  },
   openProject: () => ipcRenderer.invoke("dialog:openProject"),
   openProjectFromPath: (filePath: string) => ipcRenderer.invoke("fs:openProjectFromPath", filePath),
   deleteFile: (filePath: string) => ipcRenderer.invoke("fs:deleteFile", filePath),
