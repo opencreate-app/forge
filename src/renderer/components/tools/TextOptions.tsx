@@ -346,8 +346,8 @@ export const TextOptions: React.FC<ToolOptionProps> = ({ onOpenColorPicker }) =>
           }
           className="bg-zinc-800 border-none text-[0.75rem] text-white px-2 py-1 rounded outline-none focus:ring-1 focus:ring-accent w-28"
         >
-          {availableWeights.map((w) => (
-            <option key={w} value={w}>
+          {availableWeights.map((w, index) => (
+            <option key={`font-weight:${w}:${index}`} value={w}>
               {WEIGHT_LABELS[w] || w}
             </option>
           ))}

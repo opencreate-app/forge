@@ -488,32 +488,39 @@ const HomeScreen: React.FC = () => {
           onClose={() => setContextMenu(null)}
           items={[
             {
+              id: "open-project",
               label: "Open Project",
               icon: FolderOpen,
               onClick: () => handleOpenRecent(contextMenu.project),
             },
             {
+              id: "rename-project",
               label: "Rename...",
               icon: Edit2,
               onClick: () => handleRenameRecent(contextMenu.project),
             },
             {
+              id: "project-actions-start",
               isSeparator: true,
             },
             {
+              id: "export-project",
               label: "Export...",
               icon: ImageDown,
               onClick: () => handleExportRecent(contextMenu.project),
             },
             {
+              id: "export-project-clipboard",
               label: "Export to Clipboard",
               icon: Images,
               onClick: () => handleExportRecent(contextMenu.project, true),
             },
             {
+              id: "project-actions-danger",
               isSeparator: true,
             },
             {
+              id: "remove-from-list",
               label: "Remove from List",
               icon: XCircle,
               danger: true,
@@ -528,6 +535,7 @@ const HomeScreen: React.FC = () => {
               },
             },
             {
+              id: "trash-project",
               label: "Trash Project",
               icon: Trash,
               danger: true,

@@ -8,6 +8,9 @@ import { useUIStore } from "@store/uiStore";
 export const SESSION_GUARD_STORAGE_KEY = "forge-session-guard";
 export const SESSION_GUARD_VERSION = 1;
 export const SESSION_GUARD_INTERVAL_MS = 30_000;
+export const RENDERER_RECOVERY_STORAGE_KEY = "forge-renderer-recovery";
+export const RENDERER_RECOVERY_VERSION = 1;
+const RENDERER_RECOVERY_STABILIZATION_MS = 5_000;
 
 let sessionGuardPaused = false;
 
@@ -19,6 +22,14 @@ export interface SessionSnapshot {
   activeTab: "home" | string;
 }
 
+export interface RendererRecoveryMarker {
+  version: number;
+  attempts: number;
+  message: string;
+  stack?: string;
+  savedAt: string;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
@@ -27,6 +38,16 @@ const isValidSnapshot = (value: unknown): value is SessionSnapshot => {
   if (value.version !== SESSION_GUARD_VERSION || !Array.isArray(value.projects)) return false;
   if (value.activeProjectId !== null && typeof value.activeProjectId !== "string") return false;
   return typeof value.activeTab === "string";
+};
+
+const isValidRecoveryMarker = (value: unknown): value is RendererRecoveryMarker => {
+  if (!isRecord(value)) return false;
+  return (
+    value.version === RENDERER_RECOVERY_VERSION &&
+    typeof value.attempts === "number" &&
+    typeof value.message === "string" &&
+    typeof value.savedAt === "string"
+  );
 };
 
 export const createSessionSnapshot = (): SessionSnapshot => {
@@ -57,6 +78,57 @@ export const saveSessionSnapshot = (): boolean => {
     return false;
   }
 };
+
+export const loadRendererRecoveryMarker = (): RendererRecoveryMarker | null => {
+  try {
+    const rawMarker = localStorage.getItem(RENDERER_RECOVERY_STORAGE_KEY);
+    if (!rawMarker) return null;
+
+    const parsedMarker: unknown = JSON.parse(rawMarker);
+    return isValidRecoveryMarker(parsedMarker) ? parsedMarker : null;
+  } catch (error) {
+    console.error("Failed to load renderer recovery marker:", error);
+    return null;
+  }
+};
+
+/**
+ * Saves the current session and records that the next renderer load is a recovery attempt.
+ * Returns false after one failed recovery attempt so the app cannot refresh forever.
+ */
+export const prepareRendererRecovery = (error: unknown): boolean => {
+  try {
+    const previousMarker = loadRendererRecoveryMarker();
+    if (previousMarker && previousMarker.attempts >= 1) return false;
+
+    if (!saveSessionSnapshot()) return false;
+
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    const marker: RendererRecoveryMarker = {
+      version: RENDERER_RECOVERY_VERSION,
+      attempts: (previousMarker?.attempts || 0) + 1,
+      message: normalizedError.message,
+      stack: normalizedError.stack,
+      savedAt: new Date().toISOString(),
+    };
+
+    localStorage.setItem(RENDERER_RECOVERY_STORAGE_KEY, JSON.stringify(marker));
+    return true;
+  } catch (recoveryError) {
+    console.error("Failed to prepare renderer recovery:", recoveryError);
+    return false;
+  }
+};
+
+export const clearRendererRecoveryMarker = (): void => {
+  try {
+    localStorage.removeItem(RENDERER_RECOVERY_STORAGE_KEY);
+  } catch (error) {
+    console.error("Failed to clear renderer recovery marker:", error);
+  }
+};
+
+export const getRendererRecoveryStabilizationMs = (): number => RENDERER_RECOVERY_STABILIZATION_MS;
 
 export const loadSessionSnapshot = (): SessionSnapshot | null => {
   try {

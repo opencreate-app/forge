@@ -525,6 +525,14 @@ app.whenReady().then(() => {
 
   ipcMain.handle("app:getVersion", () => app.getVersion());
 
+  ipcMain.handle("app:force-refresh", (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!senderWindow || senderWindow.isDestroyed()) return false;
+
+    senderWindow.webContents.reloadIgnoringCache();
+    return true;
+  });
+
   ipcMain.handle("shell:openExternal", (_event, url: string) => {
     // Allowlist only http/https URLs to prevent arbitrary protocol execution
     if (url.startsWith("https://") || url.startsWith("http://")) {

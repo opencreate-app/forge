@@ -580,6 +580,7 @@ const LayerList: React.FC = () => {
           onClose={() => setContextMenu(null)}
           items={[
             {
+              id: "layer-styles",
               label: "Layer Styles...",
               icon: EffectsIcon,
               onClick: () => {
@@ -587,13 +588,15 @@ const LayerList: React.FC = () => {
                 window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
               },
             },
-            { isSeparator: true },
+            { id: "layer-actions-start", isSeparator: true },
             {
+              id: "duplicate-layers",
               label: "Duplicate Layer(s)",
               icon: Copy,
               onClick: () => duplicateLayers(project.id, project.selectedLayerIds),
             },
             {
+              id: "toggle-layer-lock",
               label: contextMenu.layer.locked ? "Unlock Layer(s)" : "Lock Layer(s)",
               icon: contextMenu.layer.locked ? Unlock : Lock,
               onClick: () =>
@@ -606,13 +609,15 @@ const LayerList: React.FC = () => {
                 }),
             },
             {
+              id: "delete-layers",
               label: "Delete Layer(s)",
               icon: Trash2,
               danger: true,
               onClick: () => removeLayers(project.id, project.selectedLayerIds),
             },
-            { isSeparator: true },
+            { id: "group-actions-start", isSeparator: true },
             {
+              id: "group-layers",
               label: "Group Layer(s)",
               icon: Folder,
               onClick: () => groupLayers(project.id, project.selectedLayerIds),
@@ -620,6 +625,7 @@ const LayerList: React.FC = () => {
             ...(contextMenu.layer.type === "group"
               ? [
                   {
+                    id: "ungroup-layers",
                     label: "Ungroup Layer(s)",
                     icon: FolderOpen,
                     danger: true,
@@ -627,16 +633,18 @@ const LayerList: React.FC = () => {
                   },
                 ]
               : []),
-            { isSeparator: true },
+            { id: "smart-object-actions-start", isSeparator: true },
 
             ...(contextMenu.layer.type === "smart_object"
               ? [
                   {
+                    id: "reset-smart-object-transform",
                     label: "Reset Transform",
                     icon: RotateCcw,
                     onClick: () => resetSmartObjectTransform(project.id, contextMenu.layer.id),
                   },
                   {
+                    id: "rasterize-smart-object",
                     label: "Rasterize Layer",
                     icon: ImageIcon,
                     onClick: () => rasterizeSmartObject(project.id, contextMenu.layer.id),
@@ -644,15 +652,17 @@ const LayerList: React.FC = () => {
                 ]
               : [
                   {
+                    id: "convert-to-smart-object",
                     label: "Convert to Smart Object",
                     icon: Box,
                     onClick: () => convertToSmartObject(project.id, project.selectedLayerIds),
                   },
                 ]),
-            { isSeparator: true },
+            { id: "mask-actions-start", isSeparator: true },
             ...(contextMenu.layer.mask
               ? [
                   {
+                    id: "toggle-layer-mask",
                     label: contextMenu.layer.mask.enabled
                       ? "Disable Layer Mask"
                       : "Enable Layer Mask",
@@ -670,6 +680,7 @@ const LayerList: React.FC = () => {
                     },
                   },
                   {
+                    id: "delete-layer-mask",
                     label: "Delete Layer Mask",
                     icon: Trash2,
                     danger: true,
@@ -678,6 +689,7 @@ const LayerList: React.FC = () => {
                 ]
               : [
                   {
+                    id: "add-layer-mask",
                     label: "Add Layer Mask",
                     icon: CircleHalfDashed,
                     onClick: () => addLayerMask(project.id, contextMenu.layer.id),
