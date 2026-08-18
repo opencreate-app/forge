@@ -7,9 +7,14 @@ import { useSafeQuit } from "@/renderer/hooks/useSafeQuit";
 import { useSessionGuard } from "@/renderer/hooks/useSessionGuard";
 import {
   clearSessionSnapshot,
+  clearRendererRecoveryMarker,
   createSessionSnapshot,
+  getRendererRecoveryStabilizationMs,
+  loadRendererRecoveryMarker,
   loadSessionSnapshot,
+  prepareRendererRecovery,
   restoreSessionSnapshot,
+  RENDERER_RECOVERY_STORAGE_KEY,
   saveSessionSnapshot,
   SESSION_GUARD_STORAGE_KEY,
 } from "@/renderer/utils/sessionGuard";
@@ -83,6 +88,24 @@ describe("Session Guard", () => {
     expect(loadSessionSnapshot()).toBeNull();
   });
 
+  it("saves a recovery marker only for the first renderer failure", () => {
+    const project = createProject();
+    useProjectStore.setState({ projects: [project], activeProjectId: project.id });
+
+    expect(prepareRendererRecovery(new Error("first render failure"))).toBe(true);
+    expect(loadRendererRecoveryMarker()).toMatchObject({
+      attempts: 1,
+      message: "first render failure",
+    });
+    expect(loadSessionSnapshot()?.projects[0]?.id).toBe(project.id);
+
+    expect(prepareRendererRecovery(new Error("second render failure"))).toBe(false);
+    expect(loadRendererRecoveryMarker()?.attempts).toBe(1);
+
+    clearRendererRecoveryMarker();
+    expect(localStorage.getItem(RENDERER_RECOVERY_STORAGE_KEY)).toBeNull();
+  });
+
   it("keeps the periodic backup active under React StrictMode", () => {
     vi.useFakeTimers();
     try {
@@ -100,6 +123,34 @@ describe("Session Guard", () => {
       act(() => vi.advanceTimersByTime(30_000));
 
       expect(loadSessionSnapshot()?.projects[0]?.name).toBe("After interval");
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows a recovery toast and clears the marker after stabilization", () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.setItem(
+        RENDERER_RECOVERY_STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          attempts: 1,
+          message: "render failure",
+          savedAt: new Date().toISOString(),
+        }),
+      );
+
+      const { unmount } = renderHook(() => useSessionGuard());
+
+      expect(useUIStore.getState().toast).toMatchObject({
+        message: "O app foi recuperado após uma falha de renderização.",
+        type: "warning",
+      });
+
+      act(() => vi.advanceTimersByTime(getRendererRecoveryStabilizationMs()));
+      expect(loadRendererRecoveryMarker()).toBeNull();
       unmount();
     } finally {
       vi.useRealTimers();
