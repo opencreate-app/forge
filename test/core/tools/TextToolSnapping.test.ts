@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TextTool } from "@/core/tools/TextTool";
+import { TextLayer } from "@/core/layers/TextLayer";
+import { useTextEditorStore } from "@/renderer/store/textEditorStore";
 import { createMockToolContext } from "../../mocks";
 
 vi.mock("@/renderer/store/uiStore", () => ({
@@ -26,6 +28,7 @@ describe("TextTool Snapping", () => {
   let context: any;
 
   beforeEach(() => {
+    useTextEditorStore.getState().reset();
     context = createMockToolContext();
     context.project.guides = [
       { id: "g1", type: "vertical", position: 100 },
@@ -46,6 +49,61 @@ describe("TextTool Snapping", () => {
 
     expect((tool as any).startPos.x).toBe(100);
     expect((tool as any).activeSnapLines).toContainEqual({ type: "vertical", position: 100 });
+  });
+
+  it("anchors the text toolbar to the active formatting range", () => {
+    const tool = new TextTool();
+    tool.onActivate(context);
+
+    const textLayer = {
+      id: "text-layer",
+      name: "Text",
+      type: "text",
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 20,
+      y: 30,
+      width: 240,
+      height: 100,
+      blendMode: "source-over",
+      text: "First line\nSecond line",
+      textType: "point",
+      fontSize: 24,
+      fontFamily: "Arial",
+      fontWeight: "normal",
+      color: "#000000",
+      lineHeight: 1.2,
+    } as any;
+    const rangeStart = 0;
+    const rangeEnd = 5;
+    const expectedBounds = TextLayer.getTextRangeBounds(
+      context.ctx,
+      textLayer,
+      rangeStart,
+      rangeEnd,
+    );
+
+    (tool as any).editingLayerId = textLayer.id;
+    (tool as any).isEditing = true;
+    (tool as any).caretIndex = rangeEnd;
+    (tool as any).selectionStart = rangeStart;
+    (tool as any).lastContext = context;
+    (tool as any).syncEditorStore(textLayer);
+
+    expect(useTextEditorStore.getState().anchor).toEqual({
+      x: expectedBounds.x,
+      y: expectedBounds.y,
+    });
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { ctrlKey: true }));
+    expect(useTextEditorStore.getState().isCtrlPressed).toBe(true);
+    window.dispatchEvent(new KeyboardEvent("keyup", { ctrlKey: false }));
+    expect(useTextEditorStore.getState().isCtrlPressed).toBe(false);
+
+    (tool as any).isEditing = false;
+    tool.onDeactivate(context);
   });
 
   it("should snap text box creation to guides", () => {
