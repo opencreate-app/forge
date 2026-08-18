@@ -24,6 +24,8 @@ interface UIState {
   lastExportQuality: number;
   lastLockAspectRatio: boolean;
   activeModals: Set<string>;
+  modalOrder: string[];
+  activeModalId: string | null;
   stylingLayerId: string | null;
   lastLayerStyleEffects: Record<string, any>;
   modalSettings: Record<string, { x: number; y: number; width?: number; height?: number }>;
@@ -40,6 +42,7 @@ interface UIState {
   setSnapToLayers: (snap: boolean) => void;
   setExportSettings: (format: string, quality: number, lockAspectRatio: boolean) => void;
   setModalOpen: (modalId: string, isOpen: boolean) => void;
+  focusModal: (modalId: string) => void;
   isAnyModalOpen: () => boolean;
   setStylingLayerId: (layerId: string | null) => void;
   setLastLayerStyleEffect: (layerId: string, effectId: any) => void;
@@ -66,6 +69,8 @@ export const useUIStore = create<UIState>()(
       lastExportQuality: 100,
       lastLockAspectRatio: true,
       activeModals: new Set(),
+      modalOrder: [],
+      activeModalId: null,
       stylingLayerId: null,
       lastLayerStyleEffects: {},
       modalSettings: {},
@@ -107,12 +112,31 @@ export const useUIStore = create<UIState>()(
       setModalOpen: (modalId, isOpen) =>
         set((state) => {
           const newActiveModals = new Set(state.activeModals);
+          const newModalOrder = state.modalOrder.filter((id) => id !== modalId);
+
           if (isOpen) {
             newActiveModals.add(modalId);
+            newModalOrder.push(modalId);
           } else {
             newActiveModals.delete(modalId);
           }
-          return { activeModals: newActiveModals };
+
+          return {
+            activeModals: newActiveModals,
+            modalOrder: newModalOrder,
+            activeModalId: isOpen
+              ? modalId
+              : state.activeModalId === modalId
+                ? newModalOrder[newModalOrder.length - 1] || null
+                : state.activeModalId,
+          };
+        }),
+      focusModal: (modalId) =>
+        set((state) => {
+          if (!state.activeModals.has(modalId)) return state;
+
+          const newModalOrder = [...state.modalOrder.filter((id) => id !== modalId), modalId];
+          return { modalOrder: newModalOrder, activeModalId: modalId };
         }),
       isAnyModalOpen: () => get().activeModals.size > 0,
       setStylingLayerId: (layerId) => set({ stylingLayerId: layerId }),
