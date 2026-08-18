@@ -6,14 +6,16 @@ import { useProjectStore } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
 import { ForgeEngine } from "@core/engine/ForgeEngine";
 import Ruler from "./Ruler";
+import { RichTextToolbar } from "./tools/RichTextToolbar";
+import type { ColorPickerOpenRequest } from "@utils/colorPicker";
 
-import {
-  ColorSampleRequest,
-  forgeEvents,
-  FORGE_EVENTS,
-} from "@utils/events";
+import { ColorSampleRequest, forgeEvents, FORGE_EVENTS } from "@utils/events";
 
-const CanvasViewport: React.FC = () => {
+interface CanvasViewportProps {
+  onOpenColorPicker: (request: ColorPickerOpenRequest) => void;
+}
+
+const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<ForgeEngine | null>(null);
 
@@ -249,6 +251,7 @@ const CanvasViewport: React.FC = () => {
         )}
         <div className="relative overflow-hidden">
           <canvas ref={canvasRef} id="forge-canvas" className="block w-full h-full" />
+          <RichTextToolbar onOpenColorPicker={onOpenColorPicker} />
         </div>
       </div>
     </div>

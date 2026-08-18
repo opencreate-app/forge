@@ -3,6 +3,7 @@
  */
 import { Layer } from "@/renderer/store/projectStore";
 import { applyAlphaThreshold } from "../utils/imageUtils";
+import { getTextLineIndex } from "../utils/textSpans";
 
 /**
  * Specialized rendering engine for text layers.
@@ -64,7 +65,9 @@ export class TextLayer {
       layer.styles?.stroke?.enabled && !skipStyles
         ? `${layer.styles.stroke.size}|${layer.styles.stroke.position}|${layer.styles.stroke.color}|${layer.styles.stroke.opacity}|${layer.styles.stroke.rounded}|${layer.styles.stroke.antiAlias}`
         : "none";
-    const propsKey = `${layer.text}|${spansKey}|${layer.fontSize}|${layer.fontFamily}|${layer.fontWeight}|${layer.color}|${layer.textAlign}|${layer.tracking}|${layer.lineHeight}|${layer.width}|${layer.height}|${textRendering}|${textOverflow}|${strokeKey}`;
+    const lineAlignmentsKey = JSON.stringify(layer.textLineAlignments || {});
+    const lineHeightsKey = JSON.stringify(layer.textLineHeights || {});
+    const propsKey = `${layer.text}|${spansKey}|${lineAlignmentsKey}|${lineHeightsKey}|${layer.fontSize}|${layer.fontFamily}|${layer.fontWeight}|${layer.color}|${layer.textAlign}|${layer.tracking}|${layer.lineHeight}|${layer.width}|${layer.height}|${textRendering}|${textOverflow}|${strokeKey}`;
 
     let cachedCanvas = cache.get(layer.id);
     const isReady = readyCache.get(layer.id);
@@ -72,26 +75,25 @@ export class TextLayer {
 
     const metrics = this.calculateMetrics(ctx, layer);
 
-    // Width: For area text, it's constrained by layer.width, but point text can overflow.
-    // If textOverflow is true, we allow the canvas to grow to fit the content.
+    // The cache must contain the complete text even when overflow is disabled. The destination
+    // context applies the layer bounds as the clipping region; clipping the cache itself would
+    // cut a later line before that region is applied.
     const strokePadding =
       layer.styles?.stroke?.enabled && !skipStyles ? layer.styles.stroke.size * 2 : 0;
-    const targetWidth =
-      (textOverflow ? Math.max(layer.width, metrics.width) : Math.max(1, layer.width)) +
-      strokePadding * 2;
+    const targetWidth = Math.max(1, layer.width, metrics.width) + strokePadding * 2;
 
     // Height: Allow expansion if textOverflow is true.
     // We add a safety margin for character descents (like 'g', 'j', 'p', 'y').
-    const safetyMargin = (layer.fontSize || 24) * 0.5;
+    const baseFontSize = layer.fontSize || 24;
+    const maxFontSize = this.getMaxFontSize(layer);
+    const topPadding = Math.max(0, Math.ceil((maxFontSize - baseFontSize) * 0.8));
+    const safetyMargin = maxFontSize * 0.5;
     const targetHeight =
-      (textOverflow
-        ? Math.max(layer.height, metrics.height + safetyMargin)
-        : Math.max(1, layer.height)) +
-      strokePadding * 2;
+      Math.max(1, layer.height, metrics.height + topPadding + safetyMargin) + strokePadding * 2;
 
     // Calculate horizontal offset for center/right aligned text that overflows the left boundary
     let offsetX = strokePadding;
-    if (textOverflow) {
+    if (Object.keys(layer.textLineAlignments || {}).length === 0) {
       if (layer.textAlign === "center") {
         offsetX += Math.max(0, (metrics.width - layer.width) / 2);
       } else if (layer.textAlign === "right") {
@@ -117,7 +119,11 @@ export class TextLayer {
       textBuffer.width = cachedCanvas.width;
       textBuffer.height = cachedCanvas.height;
       const tbctx = textBuffer.getContext("2d")!;
-      this.drawTextToContext(tbctx, { ...layer, x: offsetX, y: strokePadding });
+      this.drawTextToContext(tbctx, {
+        ...layer,
+        x: offsetX,
+        y: strokePadding + topPadding,
+      });
 
       const stroke = layer.styles?.stroke;
       if (stroke?.enabled && stroke.size > 0 && !skipStyles) {
@@ -226,9 +232,18 @@ export class TextLayer {
     if (textRendering === "nearest") {
       ctx.imageSmoothingEnabled = false;
     }
+    if (!textOverflow) {
+      ctx.beginPath();
+      ctx.rect(layer.x, layer.y, layer.width, layer.height);
+      ctx.clip();
+    }
     // Draw the cached text, compensating for the horizontal offset and padding.
     // Use Math.round to ensure pixel alignment and consistent stroke thickness.
-    ctx.drawImage(cachedCanvas, Math.round(layer.x - offsetX), Math.round(layer.y - strokePadding));
+    ctx.drawImage(
+      cachedCanvas,
+      Math.round(layer.x - offsetX),
+      Math.round(layer.y - strokePadding - topPadding),
+    );
     ctx.restore();
   }
 
@@ -257,9 +272,7 @@ export class TextLayer {
     const fontFamily = layer.fontFamily || "Arial";
     const fontWeight = layer.fontWeight || "normal";
     const textAlign = layer.textAlign || "left";
-    const lineHeightMult = layer.lineHeight || 1.2;
     const tracking = layer.tracking || 0;
-    const lineHeight = fontSize * lineHeightMult;
 
     ctx.save();
 
@@ -282,15 +295,28 @@ export class TextLayer {
     let currentY = layer.y + fontSize;
 
     lines.forEach((line, lineIndex) => {
+      const lineStart = lines.slice(0, lineIndex).join("\n").length + (lineIndex > 0 ? 1 : 0);
+      const lineAlign = this.getLineAlignment(layer, lineStart);
+      const lineHeight = this.getLineHeightPixels(layer, lineStart);
       let currentX = layer.x;
-      if (textAlign === "center") {
+      if (lineAlign === "center") {
         currentX = layer.x + layer.width / 2;
-      } else if (textAlign === "right") {
+      } else if (lineAlign === "right") {
         currentX = layer.x + layer.width;
       }
 
       // Render Underlines (Visual Aid)
-      this.renderUnderline(ctx, line, currentX, currentY, textAlign, tracking, zoom, layer);
+      this.renderUnderline(
+        ctx,
+        line,
+        currentX,
+        currentY,
+        lineAlign,
+        tracking,
+        zoom,
+        layer,
+        lineStart,
+      );
 
       // Render Caret if editing this line
       if (
@@ -307,7 +333,7 @@ export class TextLayer {
           currentY,
           fontSize,
           lineHeight,
-          textAlign,
+          lineAlign,
           tracking,
           zoom,
           layer,
@@ -331,7 +357,6 @@ export class TextLayer {
         layer.y,
         layer.width,
         fontSize,
-        lineHeight,
         textAlign,
         tracking,
         layer,
@@ -355,12 +380,19 @@ export class TextLayer {
     tracking: number,
     zoom: number,
     layer: Layer,
+    lineStartIndex: number,
   ) {
     if (!lineText && layer.textType === "area") return;
 
     // For empty point text, draw a small underline representing the start
     const textToMeasure = lineText || " ";
-    const lineWidth = this.measureTextWithTracking(ctx, textToMeasure, tracking, layer);
+    const lineWidth = this.measureTextWithTracking(
+      ctx,
+      textToMeasure,
+      tracking,
+      layer,
+      lineStartIndex,
+    );
 
     let startX = lineX;
     if (textAlign === "center") {
@@ -407,8 +439,6 @@ export class TextLayer {
     const tracking = newProps?.tracking ?? layer.tracking ?? 0;
     const textAlign = newProps?.textAlign ?? layer.textAlign ?? "left";
     const text = newProps?.text ?? layer.text ?? "";
-    const lineHeightMult = newProps?.lineHeight ?? layer.lineHeight ?? 1.2;
-    const lineHeight = fontSize * lineHeightMult;
 
     ctx.save();
     // Use a temporary merged layer for layout calculation
@@ -423,7 +453,15 @@ export class TextLayer {
     });
 
     const newWidth = Math.round(Math.max(1, maxWidth));
-    const newHeight = Math.round(Math.max(1, lines.length * lineHeight));
+    const newHeight = Math.round(
+      Math.max(
+        1,
+        lines.reduce((height, _line, index) => {
+          const lineStart = lines.slice(0, index).join("\n").length + (index > 0 ? 1 : 0);
+          return height + this.getLineHeightPixels(mergedLayer, lineStart);
+        }, 0),
+      ),
+    );
 
     const result: { width: number; height: number; x?: number } = {
       width: newWidth,
@@ -453,13 +491,101 @@ export class TextLayer {
     return result;
   }
 
+  /**
+   * Calculates the project-space bounds of a text range using the same layout rules as rendering.
+   * A collapsed range returns the caret position with the current line height.
+   */
+  public static getTextRangeBounds(
+    ctx: CanvasRenderingContext2D,
+    layer: Layer,
+    start: number,
+    end: number,
+  ): { x: number; y: number; width: number; height: number } {
+    const text = layer.text || "";
+    const baseFontSize = layer.fontSize || 24;
+    const tracking = layer.tracking || 0;
+    const lines = this.layoutText(ctx, layer, text, baseFontSize, tracking);
+    const rangeStart = Math.max(0, Math.min(text.length, Math.min(start, end)));
+    const rangeEnd = Math.max(0, Math.min(text.length, Math.max(start, end)));
+
+    let lineTop = layer.y;
+    let lineStart = 0;
+    let bounds: { left: number; top: number; right: number; bottom: number } | null = null;
+
+    for (const line of lines) {
+      const lineEnd = lineStart + line.length;
+      const lineHeight = this.getLineHeightPixels(layer, lineStart);
+      const lineAlignment = this.getLineAlignment(layer, lineStart);
+      const lineWidth = this.measureTextWithTracking(ctx, line, tracking, layer, lineStart);
+      let lineX = layer.x;
+      if (lineAlignment === "center") {
+        lineX = layer.x + layer.width / 2 - lineWidth / 2;
+      } else if (lineAlignment === "right") {
+        lineX = layer.x + layer.width - lineWidth;
+      }
+
+      if (rangeStart === rangeEnd) {
+        if (rangeStart >= lineStart && rangeStart <= lineEnd) {
+          const caretOffset = this.measureTextWithTracking(
+            ctx,
+            line.substring(0, rangeStart - lineStart),
+            tracking,
+            layer,
+            lineStart,
+          );
+          return { x: lineX + caretOffset, y: lineTop, width: 0, height: lineHeight };
+        }
+      } else {
+        const intersectionStart = Math.max(rangeStart, lineStart);
+        const intersectionEnd = Math.min(rangeEnd, lineEnd);
+        if (intersectionStart < intersectionEnd) {
+          const offset = this.measureTextWithTracking(
+            ctx,
+            line.substring(0, intersectionStart - lineStart),
+            tracking,
+            layer,
+            lineStart,
+          );
+          const width = this.measureTextWithTracking(
+            ctx,
+            line.substring(intersectionStart - lineStart, intersectionEnd - lineStart),
+            tracking,
+            layer,
+            intersectionStart,
+          );
+          const left = lineX + offset;
+          const right = left + width;
+          bounds = bounds
+            ? {
+                left: Math.min(bounds.left, left),
+                top: Math.min(bounds.top, lineTop),
+                right: Math.max(bounds.right, right),
+                bottom: Math.max(bounds.bottom, lineTop + lineHeight),
+              }
+            : { left, top: lineTop, right, bottom: lineTop + lineHeight };
+        }
+      }
+
+      lineTop += lineHeight;
+      lineStart += line.length + 1;
+    }
+
+    if (bounds) {
+      return {
+        x: bounds.left,
+        y: bounds.top,
+        width: Math.max(0, bounds.right - bounds.left),
+        height: Math.max(0, bounds.bottom - bounds.top),
+      };
+    }
+
+    return { x: layer.x, y: layer.y, width: 0, height: this.getLineHeightPixels(layer, 0) };
+  }
+
   private static drawTextToContext(ctx: CanvasRenderingContext2D, layer: Layer) {
     const text = layer.text || "";
     const baseFontSize = layer.fontSize || 24;
-    const textAlign = layer.textAlign || "left";
-    const lineHeightMult = layer.lineHeight || 1.2;
     const tracking = layer.tracking || 0;
-    const lineHeight = baseFontSize * lineHeightMult;
 
     const lines = this.layoutText(ctx, layer, text, baseFontSize, tracking);
 
@@ -470,13 +596,15 @@ export class TextLayer {
     let currentY = layer.y + baseFontSize;
     let charsProcessed = 0;
 
-    lines.forEach((line) => {
+    lines.forEach((line, _lineIndex) => {
+      const lineAlign = this.getLineAlignment(layer, charsProcessed);
+      const lineHeight = this.getLineHeightPixels(layer, charsProcessed);
       let currentX = layer.x;
       const lineWidth = this.measureTextWithTracking(ctx, line, tracking, layer, charsProcessed);
 
-      if (textAlign === "center") {
+      if (lineAlign === "center") {
         currentX = layer.x + layer.width / 2 - lineWidth / 2;
-      } else if (textAlign === "right") {
+      } else if (lineAlign === "right") {
         currentX = layer.x + layer.width - lineWidth;
       }
 
@@ -507,19 +635,50 @@ export class TextLayer {
     for (let i = 0; i < text.length; i++) {
       const char = text[i];
       const style = this.getStyleAt(layer, lineStartIndex + i);
+      const charTracking = style.tracking ?? tracking;
 
       const fontSize = style.fontSize || baseFontSize;
       const fontFamily = style.fontFamily || baseFontFamily;
       const fontWeight = style.fontWeight || baseFontWeight;
       const color = style.color || baseColor;
+      const fontStyle = style.italic ? "italic " : "";
+      const verticalScale = style.verticalAlign && style.verticalAlign !== "baseline" ? 0.7 : 1;
+      const renderedFontSize = fontSize * verticalScale;
+      const baselineOffset =
+        style.verticalAlign === "superscript"
+          ? -fontSize * 0.28
+          : style.verticalAlign === "subscript"
+            ? fontSize * 0.16
+            : 0;
 
-      ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}"`;
+      ctx.font = `${fontStyle}${fontWeight} ${renderedFontSize}px "${fontFamily}"`;
       ctx.fillStyle = color;
 
       const roundedX = Math.round(currentX);
-      ctx.fillText(char, roundedX, roundedY);
+      const renderedY = Math.round(roundedY + baselineOffset);
+      ctx.fillText(char, roundedX, renderedY);
 
-      currentX += ctx.measureText(char).width + tracking;
+      const charWidth = ctx.measureText(char).width;
+      if (style.underline || style.strikethrough) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1, renderedFontSize / 14);
+        ctx.beginPath();
+        if (style.underline) {
+          const underlineY = renderedY + renderedFontSize * 0.08;
+          ctx.moveTo(roundedX, underlineY);
+          ctx.lineTo(roundedX + charWidth, underlineY);
+        }
+        if (style.strikethrough) {
+          const strikeY = renderedY - renderedFontSize * 0.3;
+          ctx.moveTo(roundedX, strikeY);
+          ctx.lineTo(roundedX + charWidth, strikeY);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      currentX += charWidth + charTracking;
     }
   }
 
@@ -537,6 +696,29 @@ export class TextLayer {
       currentPos += span.text.length;
     }
     return {};
+  }
+
+  private static getLineAlignment(layer: Layer, lineStartIndex: number): string {
+    const lineIndex = getTextLineIndex(layer.text || "", lineStartIndex);
+    return layer.textLineAlignments?.[lineIndex] || layer.textAlign || "left";
+  }
+
+  private static getLineHeight(layer: Layer, lineStartIndex: number): number {
+    const lineIndex = getTextLineIndex(layer.text || "", lineStartIndex);
+    return layer.textLineHeights?.[lineIndex] ?? layer.lineHeight ?? 1.2;
+  }
+
+  private static getLineHeightPixels(layer: Layer, lineStartIndex: number): number {
+    // Span font sizes affect glyph bounds, but must not change the baseline distance between
+    // lines. Extra visual space for larger spans is handled by the render cache bounds.
+    return (layer.fontSize || 24) * this.getLineHeight(layer, lineStartIndex);
+  }
+
+  private static getMaxFontSize(layer: Layer): number {
+    return (layer.textSpans || []).reduce(
+      (maxSize, span) => Math.max(maxSize, span.fontSize || 0),
+      layer.fontSize || 24,
+    );
   }
 
   private static renderPivot(ctx: CanvasRenderingContext2D, layer: Layer) {
@@ -578,7 +760,6 @@ export class TextLayer {
     layerY: number,
     layerWidth: number,
     fontSize: number,
-    lineHeight: number,
     textAlign: string,
     tracking: number,
     layer?: Layer, // Added layer for rich text measurement
@@ -591,8 +772,10 @@ export class TextLayer {
     ctx.fillStyle = "white";
 
     let charsProcessed = 0;
-    lines.forEach((line, lineIndex) => {
+    let lineTop = layerY;
+    lines.forEach((line, _lineIndex) => {
       const lineStart = charsProcessed;
+      const lineHeight = layer ? this.getLineHeightPixels(layer, lineStart) : fontSize * 1.2;
       const lineEnd = charsProcessed + line.length;
 
       const intersectionStart = Math.max(selStart, lineStart);
@@ -614,21 +797,23 @@ export class TextLayer {
           intersectionStart,
         );
 
+        const lineAlign = layer ? this.getLineAlignment(layer, lineStart) : textAlign;
         let currentX = layerX;
         const totalLineWidth = this.measureTextWithTracking(ctx, line, tracking, layer, lineStart);
-        if (textAlign === "center") {
+        if (lineAlign === "center") {
           currentX = layerX + layerWidth / 2 - totalLineWidth / 2;
-        } else if (textAlign === "right") {
+        } else if (lineAlign === "right") {
           currentX = layerX + layerWidth - totalLineWidth;
         }
 
         const rectX = currentX + offset;
-        const rectY = layerY + lineIndex * lineHeight;
+        const rectY = lineTop;
 
         ctx.fillRect(rectX, rectY, width, lineHeight);
       }
 
       charsProcessed += line.length + 1;
+      lineTop += lineHeight;
     });
 
     ctx.restore();
@@ -642,26 +827,34 @@ export class TextLayer {
   ): number {
     const text = layer.text || "";
     const fontSize = layer.fontSize || 24;
-    const textAlign = layer.textAlign || "left";
-    const lineHeightMult = layer.lineHeight || 1.2;
     const tracking = layer.tracking || 0;
-    const lineHeight = fontSize * lineHeightMult;
 
     const lines = this.layoutText(ctx, layer, text, fontSize, tracking);
 
-    const relativeY = y - (layer.y + fontSize - lineHeight / 2);
-    let lineIndex = Math.floor(relativeY / lineHeight);
-    lineIndex = Math.max(0, Math.min(lineIndex, lines.length - 1));
+    const relativeY = y - layer.y;
+    let lineIndex = 0;
+    let lineTop = 0;
+    let lineStartPos = 0;
+    for (let index = 0; index < lines.length; index++) {
+      const lineHeight = this.getLineHeightPixels(layer, lineStartPos);
+      if (relativeY < lineTop + lineHeight || index === lines.length - 1) {
+        lineIndex = index;
+        break;
+      }
+      lineTop += lineHeight;
+      lineStartPos += lines[index].length + 1;
+    }
 
     const line = lines[lineIndex];
-    let lineStartPos = 0;
+    lineStartPos = 0;
     for (let i = 0; i < lineIndex; i++) lineStartPos += lines[i].length + 1;
 
+    const lineAlign = this.getLineAlignment(layer, lineStartPos);
     let currentX = layer.x;
     const lineWidth = this.measureTextWithTracking(ctx, line, tracking, layer, lineStartPos);
-    if (textAlign === "center") {
+    if (lineAlign === "center") {
       currentX = layer.x + layer.width / 2 - lineWidth / 2;
-    } else if (textAlign === "right") {
+    } else if (lineAlign === "right") {
       currentX = layer.x + layer.width - lineWidth;
     }
 
@@ -759,6 +952,7 @@ export class TextLayer {
     }
 
     let width = 0;
+    let trailingTracking = 0;
     const baseFontSize = layer.fontSize || 24;
     const baseFontFamily = layer.fontFamily || "Arial";
     const baseFontWeight = layer.fontWeight || "normal";
@@ -768,13 +962,17 @@ export class TextLayer {
       const fontSize = style.fontSize || baseFontSize;
       const fontFamily = style.fontFamily || baseFontFamily;
       const fontWeight = style.fontWeight || baseFontWeight;
+      const fontStyle = style.italic ? "italic " : "";
+      const verticalScale = style.verticalAlign && style.verticalAlign !== "baseline" ? 0.7 : 1;
+      const charTracking = style.tracking ?? tracking;
 
       ctx.save();
-      ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}"`;
-      width += ctx.measureText(text[i]).width + tracking;
+      ctx.font = `${fontStyle}${fontWeight} ${fontSize * verticalScale}px "${fontFamily}"`;
+      width += ctx.measureText(text[i]).width + charTracking;
+      trailingTracking = charTracking;
       ctx.restore();
     }
-    return width > 0 ? width - tracking : 0;
+    return width > 0 ? width - trailingTracking : 0;
   }
 
   private static renderCaret(

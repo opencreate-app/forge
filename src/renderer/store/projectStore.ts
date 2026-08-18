@@ -74,7 +74,19 @@ export interface TextSpan {
   fontFamily?: string;
   /** Font weight (e.g., 'bold', 400). */
   fontWeight?: string | number;
+  /** Whether the span uses an italic font style. */
+  italic?: boolean;
+  /** Whether the span is underlined. */
+  underline?: boolean;
+  /** Whether the span has a line through it. */
+  strikethrough?: boolean;
+  /** Vertical positioning for mathematical or footnote-like text. */
+  verticalAlign?: "baseline" | "superscript" | "subscript";
+  /** Letter spacing in pixels for the span. */
+  tracking?: number;
 }
+
+export type TextAlignment = "left" | "center" | "right" | "justify";
 
 /**
  * Represents a non-destructive mask applied to a layer.
@@ -172,7 +184,11 @@ export interface Layer {
   /** Default text color. */
   color?: string;
   /** Horizontal alignment of text. */
-  textAlign?: "left" | "center" | "right" | "justify";
+  textAlign?: TextAlignment;
+  /** Alignment overrides for logical newline-delimited lines. */
+  textLineAlignments?: Record<number, TextAlignment>;
+  /** Line-height overrides for logical newline-delimited lines. */
+  textLineHeights?: Record<number, number>;
   /** Line height factor. */
   lineHeight?: number;
   /** Letter spacing in pixels. */
@@ -186,9 +202,19 @@ export interface Layer {
   /** Rotation in degrees. */
   rotation?: number;
   /** Internal undo stack for text editing. */
-  textUndoStack?: { text: string; textSpans?: TextSpan[] }[];
+  textUndoStack?: {
+    text: string;
+    textSpans?: TextSpan[];
+    textLineAlignments?: Record<number, TextAlignment>;
+    textLineHeights?: Record<number, number>;
+  }[];
   /** Internal redo stack for text editing. */
-  textRedoStack?: { text: string; textSpans?: TextSpan[] }[];
+  textRedoStack?: {
+    text: string;
+    textSpans?: TextSpan[];
+    textLineAlignments?: Record<number, TextAlignment>;
+    textLineHeights?: Record<number, number>;
+  }[];
   /** ID of the parent group, if any. */
   parentId?: string | null;
   /** Whether the group is expanded in the UI. */
@@ -1667,14 +1693,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const lastEntry = undoStack.pop()!;
         const redoStack = [
           ...(layer.textRedoStack || []),
-          { text: layer.text || "", textSpans: layer.textSpans },
+          {
+            text: layer.text || "",
+            textSpans: layer.textSpans,
+            textLineAlignments: layer.textLineAlignments,
+            textLineHeights: layer.textLineHeights,
+          },
         ];
 
         return {
           ...p,
           layers: p.layers.map((l) =>
             l.id === layerId
-              ? { ...l, ...lastEntry, textUndoStack: undoStack, textRedoStack: redoStack }
+              ? {
+                  ...l,
+                  ...lastEntry,
+                  textLineAlignments: lastEntry.textLineAlignments,
+                  textLineHeights: lastEntry.textLineHeights,
+                  textUndoStack: undoStack,
+                  textRedoStack: redoStack,
+                }
               : l,
           ),
           isDirty: true,
@@ -1693,14 +1731,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const nextEntry = redoStack.pop()!;
         const undoStack = [
           ...(layer.textUndoStack || []),
-          { text: layer.text || "", textSpans: layer.textSpans },
+          {
+            text: layer.text || "",
+            textSpans: layer.textSpans,
+            textLineAlignments: layer.textLineAlignments,
+            textLineHeights: layer.textLineHeights,
+          },
         ];
 
         return {
           ...p,
           layers: p.layers.map((l) =>
             l.id === layerId
-              ? { ...l, ...nextEntry, textUndoStack: undoStack, textRedoStack: redoStack }
+              ? {
+                  ...l,
+                  ...nextEntry,
+                  textLineAlignments: nextEntry.textLineAlignments,
+                  textLineHeights: nextEntry.textLineHeights,
+                  textUndoStack: undoStack,
+                  textRedoStack: redoStack,
+                }
               : l,
           ),
           isDirty: true,

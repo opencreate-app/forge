@@ -7,7 +7,7 @@ import { ChevronDown } from "lucide-react";
 interface ToolSettingInputProps {
   label: React.ReactNode;
   value: number;
-  onChange: (value: number) => void;
+  onChange: (value: number, gestureStartValue?: number, gestureId?: number) => void;
   min?: number;
   max?: number;
   step?: number;
@@ -30,6 +30,9 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
   const isDragging = useRef(false);
   const startX = useRef(0);
   const startValue = useRef(0);
+  const sliderStartValue = useRef(0);
+  const gestureSequence = useRef(0);
+  const sliderGestureId = useRef<number | null>(null);
 
   // Value converted for display (e.g., 0.5 * 100 = 50)
   const displayValue = Number((value * displayMultiplier).toFixed(displayMultiplier === 1 ? 0 : 2));
@@ -41,6 +44,7 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
 
   // Scrubbing logic (dragging on label)
   const handleMouseDown = (e: React.MouseEvent) => {
+    const gestureId = ++gestureSequence.current;
     isDragging.current = true;
     startX.current = e.clientX;
     startValue.current = value;
@@ -58,7 +62,8 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
       newDisplayValue = Math.round(newDisplayValue / step) * step;
 
       const newValue = newDisplayValue / displayMultiplier;
-      clampAndSave(newValue);
+      const clamped = Math.min(max, Math.max(min, newValue));
+      onChange(clamped, startValue.current, gestureId);
     };
 
     const handleMouseUp = () => {
@@ -153,9 +158,23 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
               max={max * displayMultiplier}
               step={step}
               value={displayValue}
+              onPointerDown={() => {
+                sliderGestureId.current = ++gestureSequence.current;
+                sliderStartValue.current = value;
+              }}
+              onPointerUp={() => {
+                sliderGestureId.current = null;
+              }}
+              onPointerCancel={() => {
+                sliderGestureId.current = null;
+              }}
               onChange={(e) => {
                 const val = parseFloat(e.target.value);
-                onChange(val / displayMultiplier);
+                onChange(
+                  val / displayMultiplier,
+                  sliderStartValue.current,
+                  sliderGestureId.current ?? undefined,
+                );
               }}
               className="w-full h-1.5 bg-[#333] rounded-lg appearance-none cursor-pointer accent-accent"
             />

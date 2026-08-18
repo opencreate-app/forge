@@ -661,7 +661,7 @@ function App() {
               <Toolbar onOpenColorPicker={openToolbarColorPicker} />
             </aside>
 
-            <CanvasViewport key={activeProjectId || "empty"} />
+            <CanvasViewport key={activeProjectId || "empty"} onOpenColorPicker={openColorPicker} />
 
             <RightSidebar />
           </>
