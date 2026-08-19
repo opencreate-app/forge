@@ -1,7 +1,7 @@
 /**
  * Purpose: Component that provides the main interactive canvas area, integrating the ForgeEngine and handling project-level events like file drops and zoom.
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { useProjectStore } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
 import { ForgeEngine } from "@core/engine/ForgeEngine";
@@ -50,7 +50,6 @@ const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) =>
 
   const showToast = useUIStore((state) => state.showToast);
   const showRulers = useUIStore((state) => state.showRulers);
-  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const RULER_SIZE = 25;
 
@@ -153,78 +152,67 @@ const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) =>
     e.stopPropagation();
   };
 
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(true);
-  };
+  const handleFileDrop = React.useCallback(
+    (files: File[]) => {
+      if (!activeProjectId || !project) return;
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
-  };
+      for (const file of files) {
+        if (file.type.startsWith("image/")) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const dataUrl = event.target?.result as string;
+            const img = new Image();
+            img.onload = () => {
+              // Viewport center coordinates
+              const viewportWidth = canvasRef.current?.clientWidth || 0;
+              const viewportHeight = canvasRef.current?.clientHeight || 0;
 
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
+              // Convert screen center to project coordinates,
+              // taking into account current zoom and pan
+              const projCenterX = (viewportWidth / 2 - project.panX) / project.zoom;
+              const projCenterY = (viewportHeight / 2 - project.panY) / project.zoom;
 
-    if (!activeProjectId || !project) return;
+              // Position image centered at this project point
+              const x = Math.round(projCenterX - img.naturalWidth / 2);
+              const y = Math.round(projCenterY - img.naturalHeight / 2);
 
-    const files = Array.from(e.dataTransfer.files);
-    for (const file of files) {
-      if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const dataUrl = event.target?.result as string;
-          const img = new Image();
-          img.onload = () => {
-            // Viewport center coordinates
-            const viewportWidth = canvasRef.current?.clientWidth || 0;
-            const viewportHeight = canvasRef.current?.clientHeight || 0;
-
-            // Convert screen center to project coordinates,
-            // taking into account current zoom and pan
-            const projCenterX = (viewportWidth / 2 - project.panX) / project.zoom;
-            const projCenterY = (viewportHeight / 2 - project.panY) / project.zoom;
-
-            // Position image centered at this project point
-            const x = Math.round(projCenterX - img.naturalWidth / 2);
-            const y = Math.round(projCenterY - img.naturalHeight / 2);
-
-            useProjectStore.getState().addLayer(activeProjectId, {
-              name: file.name.replace(/\.[^/.]+$/, ""),
-              type: "raster",
-              data: dataUrl,
-              width: img.naturalWidth,
-              height: img.naturalHeight,
-              x: x,
-              y: y,
-              visible: true,
-              opacity: 100,
-            });
+              useProjectStore.getState().addLayer(activeProjectId, {
+                name: file.name.replace(/\.[^/.]+$/, ""),
+                type: "raster",
+                data: dataUrl,
+                width: img.naturalWidth,
+                height: img.naturalHeight,
+                x: x,
+                y: y,
+                visible: true,
+                opacity: 100,
+              });
+            };
+            img.src = dataUrl;
           };
-          img.src = dataUrl;
-        };
-        reader.readAsDataURL(file);
-      } else {
-        showToast(`File "<b>${file.name}</b>" is not supported.`, "error");
+          reader.readAsDataURL(file);
+        } else {
+          showToast(`File "<b>${file.name}</b>" is not supported.`, "error");
+        }
       }
-    }
-  };
+    },
+    [activeProjectId, project, showToast],
+  );
+
+  React.useEffect(() => {
+    const handleEditorFileDrop = (event: Event) => {
+      const files = (event as CustomEvent<{ files: File[] }>).detail?.files || [];
+      handleFileDrop(files);
+    };
+
+    window.addEventListener("forge:editor-file-drop", handleEditorFileDrop);
+    return () => window.removeEventListener("forge:editor-file-drop", handleEditorFileDrop);
+  }, [handleFileDrop]);
 
   return (
     <div
-      className={`flex-1 relative overflow-hidden bg-[#111] transition-colors duration-200 ${
-        isDraggingOver
-          ? "ring-2 ring-accent ring-inset relative after:absolute after:inset-0 after:bg-accent after:opacity-[20%] after:pointer-events-none"
-          : ""
-      }`}
+      className="relative isolate flex-1 overflow-hidden bg-[#111] transition-colors duration-200"
       onDragOver={handleDragOver}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
     >
       <div
         className="w-full h-full grid"

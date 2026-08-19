@@ -111,8 +111,8 @@ const NewProject: React.FC<NewProjectProps> = ({ isOpen, onClose, initialDimensi
         undoStack: [{ description: "New Project", state: {} as any }],
         redoStack: [],
       };
-      addProject(newProject);
-      setActiveTab(id);
+      const projectId = addProject(newProject);
+      setActiveTab(projectId);
       onClose();
     },
     [addProject, background, height, name, onClose, setActiveTab, width],

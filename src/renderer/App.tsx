@@ -35,6 +35,7 @@ import type {
 } from "@utils/gradientEditor";
 import { Box, X } from "lucide-react";
 import ZoomControl from "./components/ZoomControl";
+import { isFileDragEvent } from "@utils/dragAndDrop";
 
 // ... (imports remain)
 
@@ -485,8 +486,46 @@ function App() {
     ? activeProject?.filePath.split(/[\\/]/).pop()
     : activeProject?.name || "Unknown";
 
+  const [isEditorFileDragOver, setIsEditorFileDragOver] = React.useState(false);
+
+  const handleEditorDragEnterCapture = (event: React.DragEvent) => {
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    setIsEditorFileDragOver(true);
+  };
+
+  const handleEditorDragOverCapture = (event: React.DragEvent) => {
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    setIsEditorFileDragOver(true);
+  };
+
+  const handleEditorDragLeaveCapture = (event: React.DragEvent) => {
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (relatedTarget && event.currentTarget.contains(relatedTarget)) return;
+
+    setIsEditorFileDragOver(false);
+  };
+
+  const handleEditorDropCapture = (event: React.DragEvent) => {
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    setIsEditorFileDragOver(false);
+
+    if (activeTab === "home") return;
+
+    window.dispatchEvent(
+      new CustomEvent("forge:editor-file-drop", {
+        detail: { files: Array.from(event.dataTransfer.files) },
+      }),
+    );
+  };
+
   return (
-    <div className="flex flex-col h-screen bg-bg-primary text-text overflow-hidden relative">
+    <div className="relative flex h-screen flex-col overflow-hidden bg-bg-primary text-text">
       <Toast />
       <NewProject
         isOpen={isNewProjectModalOpen}
@@ -646,31 +685,48 @@ function App() {
       )}
       {/* 1. Project Tabs */}
       <ProjectTabs />
-      {/* 2. Dynamic Header (Tool Options) */}
-      {activeTab !== "home" && (
-        <header className="bg-[#222] border-b border-bg-tertiary flex items-center">
-          <ToolOptions
-            onOpenColorPicker={openColorPicker}
-            onOpenGradientEditor={openGradientEditor}
-          />
-        </header>
-      )}
-      {/* 3. Main Area */}
-      <main className="flex-1 flex overflow-hidden">
-        {activeTab === "home" ? (
-          <HomeScreen />
-        ) : (
-          <>
-            <aside className="bg-[#222] border-r border-bg-tertiary">
-              <Toolbar onOpenColorPicker={openToolbarColorPicker} />
-            </aside>
-
-            <CanvasViewport key={activeProjectId || "empty"} onOpenColorPicker={openColorPicker} />
-
-            <RightSidebar />
-          </>
+      <div
+        className="relative flex min-h-0 flex-1 flex-col"
+        onDragEnterCapture={handleEditorDragEnterCapture}
+        onDragOverCapture={handleEditorDragOverCapture}
+        onDragLeaveCapture={handleEditorDragLeaveCapture}
+        onDropCapture={handleEditorDropCapture}
+      >
+        {/* 2. Dynamic Header (Tool Options) */}
+        {activeTab !== "home" && (
+          <header className="bg-[#222] border-b border-bg-tertiary flex items-center">
+            <ToolOptions
+              onOpenColorPicker={openColorPicker}
+              onOpenGradientEditor={openGradientEditor}
+            />
+          </header>
         )}
-      </main>
+        {/* 3. Main Area */}
+        <main className="flex flex-1 overflow-hidden">
+          {activeTab === "home" ? (
+            <HomeScreen />
+          ) : (
+            <>
+              <aside className="bg-[#222] border-r border-bg-tertiary">
+                <Toolbar onOpenColorPicker={openToolbarColorPicker} />
+              </aside>
+
+              <CanvasViewport
+                key={activeProjectId || "empty"}
+                onOpenColorPicker={openColorPicker}
+              />
+
+              <RightSidebar />
+            </>
+          )}
+        </main>
+        {isEditorFileDragOver && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-[900] border-2 border-accent bg-accent/20"
+          />
+        )}
+      </div>
       {/* 4. Footer / Status Bar */}
       <footer className="h-[25px] px-4 bg-[#222] border-t border-bg-tertiary text-[0.75rem] flex items-center justify-between text-[#888]">
         <div

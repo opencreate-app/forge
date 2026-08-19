@@ -21,6 +21,12 @@ import {
 } from "lucide-react";
 import ContextMenu from "../ui/ContextMenu";
 import ToolSettingInput from "../ui/ToolSettingInput";
+import {
+  createLayerDragPayload,
+  isLayerDragEvent,
+  LAYER_DRAG_MIME,
+  parseLayerDragPayload,
+} from "@utils/dragAndDrop";
 
 const BLEND_MODES: { label: string; value: GlobalCompositeOperation }[] = [
   { label: "Normal", value: "source-over" },
@@ -75,6 +81,7 @@ const LayerList: React.FC = () => {
   const removeLayers = useProjectStore((state) => state.removeLayers);
   const duplicateLayers = useProjectStore((state) => state.duplicateLayers);
   const reorderLayers = useProjectStore((state) => state.reorderLayers);
+  const importLayersFromProject = useProjectStore((state) => state.importLayersFromProject);
   const setSelectedLayers = useProjectStore((state) => state.setSelectedLayers);
   const setActiveLayer = useProjectStore((state) => state.setActiveLayer);
   const updateProject = useProjectStore((state) => state.updateProject);
@@ -219,12 +226,15 @@ const LayerList: React.FC = () => {
     const finalLayerIds = Array.from(expandedLayersToMove);
     setSelectedLayers(project.id, finalLayerIds);
 
+    const payload = createLayerDragPayload(project.id, finalLayerIds);
+    e.dataTransfer.setData(LAYER_DRAG_MIME, JSON.stringify(payload));
     e.dataTransfer.setData("text/plain", JSON.stringify(finalLayerIds));
-    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.effectAllowed = "copyMove";
     setDraggedIndex(index);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (!isLayerDragEvent(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   };
@@ -239,14 +249,20 @@ const LayerList: React.FC = () => {
     //   position = "below";
     // }
 
+    const layerPayload = parseLayerDragPayload(e.dataTransfer.getData(LAYER_DRAG_MIME));
     const data = e.dataTransfer.getData("text/plain");
     setDraggedIndex(null);
 
-    if (!data) return;
+    if (layerPayload && layerPayload.sourceProjectId !== project.id) {
+      importLayersFromProject(layerPayload.sourceProjectId, project.id, layerPayload.layerIds);
+      return;
+    }
 
-    let layerIds: string[] = [];
+    if (!data && !layerPayload) return;
+
+    let layerIds: string[] = layerPayload?.layerIds || [];
     try {
-      layerIds = JSON.parse(data);
+      if (!layerPayload) layerIds = JSON.parse(data);
     } catch {
       // Fallback for single index (compatibility with old data)
       const fromIndex = parseInt(data, 10);

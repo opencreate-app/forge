@@ -22,6 +22,7 @@ import {
   // Trash2,
   // Copy
 } from "lucide-react";
+import { isLayerDragEvent } from "@utils/dragAndDrop";
 
 interface LayerItemProps {
   layer: Layer;
@@ -136,6 +137,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
   }, [isEditing]);
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (!isLayerDragEvent(e)) return;
     e.preventDefault();
 
     // Prevent feedback on the item being dragged

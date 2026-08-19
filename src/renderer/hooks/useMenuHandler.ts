@@ -86,8 +86,8 @@ export const useMenuHandler = () => {
                 // Ensure it has the new fields and is not dirty
                 projectData.filePath = result.filePath;
                 projectData.isDirty = false;
-                addProject(projectData);
-                setActiveTab(projectData.id);
+                const projectId = addProject(projectData);
+                setActiveTab(projectId);
                 showToast("Project opened successfully", "info");
               } else if (result.type === "image") {
                 const img = await loadImage(result.dataURL);
@@ -102,8 +102,8 @@ export const useMenuHandler = () => {
                   name,
                   result.filePath,
                 );
-                addProject(newProject);
-                setActiveTab(newProject.id);
+                const projectId = addProject(newProject);
+                setActiveTab(projectId);
                 showToast("Image opened successfully", "info");
               }
             }

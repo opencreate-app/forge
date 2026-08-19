@@ -7,10 +7,18 @@ import { useProjectStore } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
 import { useRecentProjectsStore } from "@store/recentProjectsStore";
 import { Home, X, Box } from "lucide-react";
+import { createProjectFromImage, loadImage } from "@utils/projectUtils";
+import {
+  isFileDragEvent,
+  isLayerDragEvent,
+  LAYER_DRAG_MIME,
+  parseLayerDragPayload,
+} from "@utils/dragAndDrop";
 
 const ProjectTabs: React.FC = () => {
-  const { projects, removeProject, setActiveProject, reorderProjects } = useProjectStore();
-  const { activeTab, setActiveTab, removeFromHistory } = useUIStore();
+  const { projects, addProject, removeProject, setActiveProject, reorderProjects } =
+    useProjectStore();
+  const { activeTab, setActiveTab, removeFromHistory, showToast } = useUIStore();
   const recentProjects = useRecentProjectsStore((state) => state.recentProjects);
 
   const tabElementsRef = React.useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -33,6 +41,139 @@ const ProjectTabs: React.FC = () => {
 
   const [dragState, setDragState] = React.useState<DragState | null>(null);
   const [justDropped, setJustDropped] = React.useState(false);
+  const [isFileDragOver, setIsFileDragOver] = React.useState(false);
+  const [layerDropTarget, setLayerDropTarget] = React.useState<string | null>(null);
+
+  const handleFileDrop = React.useCallback(
+    (event: React.DragEvent) => {
+      const file = Array.from(event.dataTransfer.files)[0];
+      if (!file) return;
+
+      const electronAPI = (window as any).electronAPI;
+      const filePath =
+        typeof electronAPI?.getPathForFile === "function"
+          ? electronAPI.getPathForFile(file)
+          : undefined;
+      const isProject = file.name.toLowerCase().endsWith(".ocfd");
+
+      if (isProject) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const projectData = JSON.parse(reader.result as string);
+            projectData.filePath = filePath;
+            projectData.isDirty = false;
+            const projectId = addProject(projectData, true);
+            setActiveTab(projectId);
+            setActiveProject(projectId);
+            showToast("Project opened successfully", "info");
+          } catch (error) {
+            console.error("Failed to parse dropped project", error);
+            showToast("Failed to open project file", "error");
+          }
+        };
+        reader.readAsText(file);
+        return;
+      }
+
+      if (file.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          try {
+            const dataUrl = reader.result as string;
+            const image = await loadImage(dataUrl);
+            const project = createProjectFromImage(
+              dataUrl,
+              image.naturalWidth,
+              image.naturalHeight,
+              file.name.replace(/\.[^/.]+$/, ""),
+              filePath,
+            );
+            const projectId = addProject(project, true);
+            setActiveTab(projectId);
+            setActiveProject(projectId);
+          } catch (error) {
+            console.error("Failed to load dropped image", error);
+            showToast("Failed to open image", "error");
+          }
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      showToast(`File "<b>${file.name}</b>" is not supported.`, "error");
+    },
+    [addProject, setActiveProject, setActiveTab, showToast],
+  );
+
+  const handleTabsDragEnter = (event: React.DragEvent) => {
+    if (!isFileDragEvent(event) || isLayerDragEvent(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsFileDragOver(true);
+  };
+
+  const handleTabsDragOver = (event: React.DragEvent) => {
+    if (isLayerDragEvent(event)) return;
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setIsFileDragOver(true);
+  };
+
+  const handleTabsDragLeave = (event: React.DragEvent) => {
+    if (!isFileDragEvent(event) || isLayerDragEvent(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (relatedTarget && event.currentTarget.contains(relatedTarget)) return;
+
+    setIsFileDragOver(false);
+  };
+
+  const handleTabsDrop = (event: React.DragEvent) => {
+    if (isLayerDragEvent(event)) return;
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsFileDragOver(false);
+    setLayerDropTarget(null);
+    handleFileDrop(event);
+  };
+
+  const handleTabDragOver = (event: React.DragEvent, projectId: string) => {
+    if (!isLayerDragEvent(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setLayerDropTarget(projectId);
+  };
+
+  const handleTabDragLeave = (event: React.DragEvent, projectId: string) => {
+    if (!isLayerDragEvent(event)) return;
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (!relatedTarget || !event.currentTarget.contains(relatedTarget)) {
+      setLayerDropTarget((currentTarget) => (currentTarget === projectId ? null : currentTarget));
+    }
+  };
+
+  const handleTabDrop = (event: React.DragEvent, projectId: string) => {
+    if (!isLayerDragEvent(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const payload = parseLayerDragPayload(event.dataTransfer.getData(LAYER_DRAG_MIME));
+    setLayerDropTarget(null);
+    if (!payload || payload.sourceProjectId === projectId) return;
+
+    useProjectStore
+      .getState()
+      .importLayersFromProject(payload.sourceProjectId, projectId, payload.layerIds);
+    setActiveTab(projectId);
+    setActiveProject(projectId);
+  };
 
   const clearTabPreview = React.useCallback(() => {
     if (hoverTimeoutRef.current !== null) {
@@ -272,7 +413,13 @@ const ProjectTabs: React.FC = () => {
   }, [justDropped]);
 
   return (
-    <div className="flex bg-[#111] h-[35px] border-b border-bg-tertiary px-[5px] items-end overflow-y-hidden overflow-x-auto gap-1">
+    <div
+      className="relative isolate flex h-[35px] items-end gap-1 overflow-x-auto overflow-y-hidden border-b border-bg-tertiary bg-[#111] px-[5px]"
+      onDragEnter={handleTabsDragEnter}
+      onDragOver={handleTabsDragOver}
+      onDragLeave={handleTabsDragLeave}
+      onDrop={handleTabsDrop}
+    >
       {dragState && (
         <style>{`
           body, button, div, span, svg {
@@ -329,6 +476,9 @@ const ProjectTabs: React.FC = () => {
             onMouseDown={(e) => handleMouseDown(e, project.id, index)}
             onMouseEnter={(e) => handleTabMouseEnter(e, project)}
             onMouseLeave={handleTabMouseLeave}
+            onDragOver={(e) => handleTabDragOver(e, project.id)}
+            onDragLeave={(e) => handleTabDragLeave(e, project.id)}
+            onDrop={(e) => handleTabDrop(e, project.id)}
             style={{
               transform: tx !== 0 ? `translateX(${tx}px)` : undefined,
               transition: transitionStyle,
@@ -340,7 +490,11 @@ const ProjectTabs: React.FC = () => {
               activeTab === project.id
                 ? "bg-bg-primary text-text border-accent"
                 : "bg-transparent text-[#666] hover:bg-white/5 border-transparent cursor-grab"
-            } ${project.parentLayerId ? "italic" : ""} ${isDraggingThis ? "opacity-70 shadow-lg" : ""}`}
+            } ${project.parentLayerId ? "italic" : ""} ${isDraggingThis ? "opacity-70 shadow-lg" : ""} ${
+              layerDropTarget === project.id
+                ? "outline-2 outline-accent outline-offset-[-2px] bg-accent/15"
+                : ""
+            }`}
             onClick={() => handleTabClick(project.id)}
           >
             <div className="flex items-center gap-2 overflow-hidden pointer-events-none">
@@ -373,6 +527,12 @@ const ProjectTabs: React.FC = () => {
           </button>
         );
       })}
+      {isFileDragOver && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-[60] border-2 border-accent bg-accent/20"
+        />
+      )}
       {tabPreview &&
         createPortal(
           <div

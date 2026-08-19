@@ -86,7 +86,6 @@ const HomeScreen: React.FC = () => {
   const addProject = useProjectStore((state) => state.addProject);
   const setActiveTab = useUIStore((state) => state.setActiveTab);
   const recentProjects = useRecentProjectsStore((state) => state.recentProjects);
-  const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [projectToRename, setProjectToRename] = useState<RecentProject | null>(null);
   const [contextMenu, setContextMenu] = useState<{
@@ -120,8 +119,8 @@ const HomeScreen: React.FC = () => {
         projectData.filePath = recent.filePath;
         projectData.isDirty = false;
 
-        addProject(projectData);
-        setActiveTab(projectData.id);
+        const projectId = addProject(projectData);
+        setActiveTab(projectId);
         useUIStore.getState().showToast("Project opened successfully", "info");
       } else {
         useUIStore
@@ -281,8 +280,8 @@ const HomeScreen: React.FC = () => {
   const handleCreateFromImage = useCallback(
     (dataUrl: string, width: number, height: number, name: string, filePath?: string) => {
       const newProject = createProjectFromImage(dataUrl, width, height, name, filePath);
-      addProject(newProject);
-      setActiveTab(newProject.id);
+      const projectId = addProject(newProject);
+      setActiveTab(projectId);
     },
     [addProject, setActiveTab],
   );
@@ -322,22 +321,9 @@ const HomeScreen: React.FC = () => {
     e.stopPropagation();
   };
 
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
-  };
-
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDraggingOver(false);
 
     const files = Array.from(e.dataTransfer.files);
     for (const file of files) {
@@ -354,8 +340,8 @@ const HomeScreen: React.FC = () => {
             projectData.filePath = (window as any).electronAPI.getPathForFile(file);
             projectData.isDirty = false;
 
-            addProject(projectData);
-            setActiveTab(projectData.id);
+            const projectId = addProject(projectData);
+            setActiveTab(projectId);
             useUIStore.getState().showToast("Project opened successfully", "info");
           } catch (err) {
             console.error("Failed to parse project file", err);
@@ -394,14 +380,8 @@ const HomeScreen: React.FC = () => {
 
   return (
     <div
-      className={`flex-1 flex flex-col items-center justify-center bg-bg-primary text-text gap-8 ${
-        isDraggingOver
-          ? "ring-2 ring-accent ring-inset relative after:absolute after:inset-0 after:bg-accent after:opacity-[20%]"
-          : ""
-      }`}
+      className="relative isolate flex flex-1 flex-col items-center justify-center gap-8 bg-bg-primary text-text"
       onDragOver={handleDragOver}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <style>

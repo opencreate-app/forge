@@ -339,7 +339,7 @@ interface ProjectState {
   /** Initializes the store, fetching the app version from Electron. */
   initialize: () => Promise<void>;
   /** Adds a new project to the store. */
-  addProject: (project: Project) => void;
+  addProject: (project: Project, allowDuplicate?: boolean) => string;
   /** Removes a project from the store. */
   removeProject: (id: string) => void;
   /** Sets the active project. */
@@ -356,6 +356,12 @@ interface ProjectState {
     layer: Partial<Layer>,
     skipHistory?: boolean,
     insertAboveLayerId?: string,
+  ) => void;
+  /** Imports a copy of layers from one project into another project. */
+  importLayersFromProject: (
+    sourceProjectId: string,
+    targetProjectId: string,
+    layerIds: string[],
   ) => void;
   /** Removes a layer from a specific project. */
   removeLayer: (projectId: string, layerId: string, skipHistory?: boolean) => void;
@@ -557,18 +563,29 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  addProject: (project) =>
+  addProject: (project, allowDuplicate = false) => {
+    let resolvedProjectId = project.id;
+
     set((state) => {
       const existingProject = state.projects.find(
         (p) => p.id === project.id || (p.filePath && p.filePath === project.filePath),
       );
 
-      if (existingProject) {
+      if (existingProject && !allowDuplicate) {
+        resolvedProjectId = existingProject.id;
         return { activeProjectId: existingProject.id };
       }
 
       // Normalize project for legacy data
       const normalizedProject = normalizeProject(project);
+
+      if (allowDuplicate) {
+        let duplicateId = normalizedProject.id;
+        while (state.projects.some((candidate) => candidate.id === duplicateId)) {
+          duplicateId = `project-${Math.random().toString(36).slice(2, 11)}`;
+        }
+        normalizedProject.id = duplicateId;
+      }
 
       const initialState = createHistoryState(normalizedProject);
 
@@ -598,6 +615,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
 
       const now = new Date().toISOString();
+      resolvedProjectId = normalizedProject.id;
       return {
         projects: [
           ...state.projects,
@@ -612,7 +630,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ],
         activeProjectId: normalizedProject.id,
       };
-    }),
+    });
+
+    return resolvedProjectId;
+  },
 
   removeProject: (id) =>
     set((state) => {
@@ -625,6 +646,69 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }),
 
   setActiveProject: (id) => set({ activeProjectId: id }),
+
+  importLayersFromProject: (sourceProjectId, targetProjectId, layerIds) => {
+    if (sourceProjectId === targetProjectId || layerIds.length === 0) return;
+
+    const state = get();
+    const sourceProject = state.projects.find((project) => project.id === sourceProjectId);
+    const targetProject = state.projects.find((project) => project.id === targetProjectId);
+    if (!sourceProject || !targetProject) return;
+
+    const requestedLayerIds = new Set(layerIds);
+    const sourceLayers = sourceProject.layers.filter((layer) => requestedLayerIds.has(layer.id));
+    if (sourceLayers.length === 0) return;
+
+    const idMap = new Map<string, string>();
+    const createLayerId = () => {
+      let id = `layer-${Math.random().toString(36).slice(2, 11)}`;
+      while (targetProject.layers.some((layer) => layer.id === id) || idMap.has(id)) {
+        id = `layer-${Math.random().toString(36).slice(2, 11)}`;
+      }
+      return id;
+    };
+
+    sourceLayers.forEach((layer) => {
+      idMap.set(layer.id, createLayerId());
+    });
+
+    const importedLayers = sourceLayers.map((layer) => {
+      const clonedLayer = JSON.parse(JSON.stringify(layer)) as Layer;
+      clonedLayer.id = idMap.get(layer.id)!;
+      clonedLayer.parentId =
+        layer.parentId && idMap.has(layer.parentId) ? idMap.get(layer.parentId) : null;
+      return clonedLayer;
+    });
+
+    const historyState = createHistoryState(targetProject);
+    const newUndoStack = [
+      ...targetProject.undoStack,
+      {
+        description: importedLayers.length > 1 ? "Import Layers" : "Import Layer",
+        state: historyState,
+      },
+    ];
+    if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+
+    const importedIds = importedLayers.map((layer) => layer.id);
+    const newLayers = [...targetProject.layers, ...importedLayers];
+
+    set((currentState) => ({
+      projects: currentState.projects.map((project) =>
+        project.id === targetProjectId
+          ? {
+              ...project,
+              layers: newLayers,
+              activeLayerId: importedIds[importedIds.length - 1],
+              selectedLayerIds: importedIds,
+              isDirty: true,
+              undoStack: newUndoStack,
+              redoStack: [],
+            }
+          : project,
+      ),
+    }));
+  },
 
   reorderProjects: (projects) => set({ projects }),
 
