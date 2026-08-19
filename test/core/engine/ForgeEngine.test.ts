@@ -49,8 +49,35 @@ describe("ForgeEngine", () => {
     expect(engine.sampleColorAtScreen(500, 500)).toBeNull();
   });
 
+  it("keeps the logical viewport size while scaling the backing store for HiDPI", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+
+    engine.resizeViewport(400, 300, 2);
+
+    expect(canvas.width).toBe(800);
+    expect(canvas.height).toBe(600);
+  });
+
+  it("maps CSS coordinates to HiDPI backing-store pixels when sampling", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    engine.resizeViewport(400, 300, 2);
+    const context = canvas.getContext("2d")!;
+    Object.defineProperty(canvas, "getBoundingClientRect", {
+      value: () => ({ left: 10, top: 20, width: 400, height: 300, right: 410, bottom: 320 }),
+      configurable: true,
+    });
+    vi.spyOn(context, "getImageData").mockReturnValue({
+      data: new Uint8ClampedArray([12, 34, 56, 255]),
+    } as ImageData);
+
+    engine.sampleColorAtScreen(210, 170);
+
+    expect(context.getImageData).toHaveBeenCalledWith(400, 300, 1, 1);
+  });
+
   it("applies immediate zoom requests without animation", () => {
     const engine = new ForgeEngine(canvas, onViewportChange);
+    engine.resizeViewport(800, 600, 1);
     const project = createMockProject({ zoom: 1, panX: 0, panY: 0 });
     engine.setProject(project);
 
@@ -87,18 +114,21 @@ describe("ForgeEngine", () => {
     const loadImage = vi.spyOn(engine as any, "loadImage").mockResolvedValue(existingImage);
     const fillRectCalls: unknown[][] = [];
     const originalCreateElement = document.createElement.bind(document);
-    const createElement = vi
-      .spyOn(document, "createElement")
-      .mockImplementation(((tagName: string, options?: ElementCreationOptions) => {
-        const element = originalCreateElement(tagName, options);
-        if (tagName === "canvas") {
-          const context = (element as HTMLCanvasElement).getContext("2d")!;
-          vi.spyOn(context, "fillRect").mockImplementation((...args: [number, number, number, number]) => {
+    const createElement = vi.spyOn(document, "createElement").mockImplementation(((
+      tagName: string,
+      options?: ElementCreationOptions,
+    ) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName === "canvas") {
+        const context = (element as HTMLCanvasElement).getContext("2d")!;
+        vi.spyOn(context, "fillRect").mockImplementation(
+          (...args: [number, number, number, number]) => {
             fillRectCalls.push(args);
-          });
-        }
-        return element;
-      }) as typeof document.createElement);
+          },
+        );
+      }
+      return element;
+    }) as typeof document.createElement);
 
     try {
       await (engine as any).createSelectionDeletionMask({
