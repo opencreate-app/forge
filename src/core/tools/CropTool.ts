@@ -691,7 +691,7 @@ export class CropTool extends BaseTool {
 
     ctx.save();
     // Use project transform for easier drawing
-    ctx.setTransform(zoom, 0, 0, zoom, context.project.panX, context.project.panY);
+    context.setViewportTransform(zoom, context.project.panX, context.project.panY);
 
     // 1. Darken outside area
     ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
@@ -699,8 +699,8 @@ export class CropTool extends BaseTool {
     // Big rectangle (entire viewport area roughly)
     const viewL = -context.project.panX / zoom - 1000;
     const viewT = -context.project.panY / zoom - 1000;
-    const viewW = context.canvas.width / zoom + 2000;
-    const viewH = context.canvas.height / zoom + 2000;
+    const viewW = context.viewportWidth / zoom + 2000;
+    const viewH = context.viewportHeight / zoom + 2000;
     ctx.rect(viewL, viewT, viewW, viewH);
 
     // Punch out the crop rect
@@ -736,7 +736,7 @@ export class CropTool extends BaseTool {
     // We need to undo the crop rotation/translation to draw handles correctly if we use world coords
     ctx.restore();
     ctx.save();
-    ctx.setTransform(zoom, 0, 0, zoom, context.project.panX, context.project.panY);
+    context.setViewportTransform(zoom, context.project.panX, context.project.panY);
 
     for (const h of handles) {
       ctx.fillStyle = "white";
@@ -758,8 +758,8 @@ export class CropTool extends BaseTool {
       ctx.strokeStyle = "red";
       ctx.lineWidth = 1 / zoom;
 
-      const viewportWidth = context.canvas.width / zoom;
-      const viewportHeight = context.canvas.height / zoom;
+      const viewportWidth = context.viewportWidth / zoom;
+      const viewportHeight = context.viewportHeight / zoom;
       const startX = -context.project.panX / zoom;
       const startY = -context.project.panY / zoom;
 

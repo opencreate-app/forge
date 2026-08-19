@@ -666,10 +666,7 @@ export class EraserTool extends BaseTool {
 
     if (this.isMouseOver) {
       ctx.save();
-      ctx.setTransform(
-        context.project.zoom,
-        0,
-        0,
+      context.setViewportTransform(
         context.project.zoom,
         context.project.panX,
         context.project.panY,

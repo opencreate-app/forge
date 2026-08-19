@@ -22,6 +22,14 @@ export interface ToolContext {
   canvas: HTMLCanvasElement;
   /** The 2D rendering context for the main canvas. */
   ctx: CanvasRenderingContext2D;
+  /** The logical viewport width in CSS pixels. */
+  viewportWidth: number;
+  /** The logical viewport height in CSS pixels. */
+  viewportHeight: number;
+  /** The device pixel ratio used by the main viewport canvas. */
+  devicePixelRatio: number;
+  /** Applies a project viewport transform while accounting for device pixel ratio. */
+  setViewportTransform: (zoom: number, panX: number, panY: number) => void;
   /** Updates the project state. */
   updateProject: (updates: Partial<Project>) => void;
   /** Pushes a new entry to the undo history. */

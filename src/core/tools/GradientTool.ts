@@ -284,14 +284,14 @@ export class GradientTool extends BaseTool {
     const zoom = context.project.zoom;
 
     ctx.save();
-    ctx.setTransform(zoom, 0, 0, zoom, context.project.panX, context.project.panY);
+    context.setViewportTransform(zoom, context.project.panX, context.project.panY);
 
     if (this.activeSnapLines.length > 0) {
       ctx.save();
       ctx.lineWidth = 1 / zoom;
       ctx.strokeStyle = "#ff3b30";
-      const viewportWidth = context.canvas.width / zoom;
-      const viewportHeight = context.canvas.height / zoom;
+      const viewportWidth = context.viewportWidth / zoom;
+      const viewportHeight = context.viewportHeight / zoom;
       const viewportX = -context.project.panX / zoom;
       const viewportY = -context.project.panY / zoom;
       this.activeSnapLines.forEach((line) => {

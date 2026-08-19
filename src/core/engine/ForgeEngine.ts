@@ -64,6 +64,9 @@ export class ForgeEngine {
   private animationFrameId: number | null = null;
   private viewportAnimationId: number | null = null;
   private targetViewport: { zoom: number; panX: number; panY: number } | null = null;
+  private viewportWidth = 0;
+  private viewportHeight = 0;
+  private devicePixelRatio = 1;
 
   private isPanning = false;
   private startX = 0;
@@ -117,6 +120,7 @@ export class ForgeEngine {
     this.ctx = canvas.getContext("2d")!;
     this.onViewportChange = onViewportChange;
     this.options = options;
+    this.resizeViewport(canvas.clientWidth || canvas.width, canvas.clientHeight || canvas.height);
 
     this.selectionCanvas = document.createElement("canvas");
     this.selectionCtx = this.selectionCanvas.getContext("2d", {
@@ -284,8 +288,8 @@ export class ForgeEngine {
     const basePanY = this.targetViewport ? this.targetViewport.panY : this.project.panY;
 
     // Viewport-centered zoom
-    const viewportWidth = this.canvas.width;
-    const viewportHeight = this.canvas.height;
+    const viewportWidth = this.viewportWidth;
+    const viewportHeight = this.viewportHeight;
     const centerX = viewportWidth / 2;
     const centerY = viewportHeight / 2;
 
@@ -306,8 +310,8 @@ export class ForgeEngine {
     this.targetViewport = null;
 
     const baseZoom = this.project.zoom;
-    const centerX = this.canvas.width / 2;
-    const centerY = this.canvas.height / 2;
+    const centerX = this.viewportWidth / 2;
+    const centerY = this.viewportHeight / 2;
     const targetPanX = centerX - (centerX - this.project.panX) * (targetZoom / baseZoom);
     const targetPanY = centerY - (centerY - this.project.panY) * (targetZoom / baseZoom);
 
@@ -1071,8 +1075,8 @@ export class ForgeEngine {
 
             if (pasteX === null || pasteY === null) {
               // Center in viewport
-              const viewportWidth = this.canvas.width;
-              const viewportHeight = this.canvas.height;
+              const viewportWidth = this.viewportWidth;
+              const viewportHeight = this.viewportHeight;
               const projCenterX = (viewportWidth / 2 - this.project!.panX) / this.project!.zoom;
               const projCenterY = (viewportHeight / 2 - this.project!.panY) / this.project!.zoom;
               pasteX = Math.round(projCenterX - img.naturalWidth / 2);
@@ -1170,6 +1174,11 @@ export class ForgeEngine {
       },
       canvas: this.canvas,
       ctx: this.ctx,
+      viewportWidth: this.viewportWidth,
+      viewportHeight: this.viewportHeight,
+      devicePixelRatio: this.devicePixelRatio,
+      setViewportTransform: (zoom: number, panX: number, panY: number) =>
+        this.setViewportTransform(zoom, panX, panY),
       updateProject: (updates: Partial<Project>) => {
         if (this.project) {
           useProjectStore.getState().updateProject(this.project.id, updates);
@@ -1315,6 +1324,38 @@ export class ForgeEngine {
 
     const pixel = this.ctx.getImageData(x, y, 1, 1).data;
     return { r: pixel[0], g: pixel[1], b: pixel[2], a: pixel[3] };
+  }
+
+  /**
+   * Resizes the main viewport canvas for CSS pixels and device pixels separately.
+   * @param width The logical viewport width in CSS pixels.
+   * @param height The logical viewport height in CSS pixels.
+   * @param dpr The device pixel ratio, defaulting to the current browser value.
+   */
+  public resizeViewport(width: number, height: number, dpr = window.devicePixelRatio || 1) {
+    this.viewportWidth = Math.max(0, Math.round(width));
+    this.viewportHeight = Math.max(0, Math.round(height));
+    this.devicePixelRatio = Math.max(1, dpr);
+
+    const pixelWidth = Math.round(this.viewportWidth * this.devicePixelRatio);
+    const pixelHeight = Math.round(this.viewportHeight * this.devicePixelRatio);
+
+    if (this.canvas.width !== pixelWidth) this.canvas.width = pixelWidth;
+    if (this.canvas.height !== pixelHeight) this.canvas.height = pixelHeight;
+
+    this.ctx.setTransform(this.devicePixelRatio, 0, 0, this.devicePixelRatio, 0, 0);
+  }
+
+  /** Applies a project-space transform to the HiDPI viewport canvas. */
+  private setViewportTransform(zoom: number, panX: number, panY: number) {
+    this.ctx.setTransform(
+      this.devicePixelRatio * zoom,
+      0,
+      0,
+      this.devicePixelRatio * zoom,
+      this.devicePixelRatio * panX,
+      this.devicePixelRatio * panY,
+    );
   }
 
   /**
@@ -1768,14 +1809,7 @@ export class ForgeEngine {
     }
 
     this.ctx.save();
-    this.ctx.setTransform(
-      this.project.zoom,
-      0,
-      0,
-      this.project.zoom,
-      this.project.panX,
-      this.project.panY,
-    );
+    this.setViewportTransform(this.project.zoom, this.project.panX, this.project.panY);
 
     // If we have a floating layer, use its coordinates for the selection border
     const bounds = this.project.selection.floatingLayer || this.project.selection.bounds;
@@ -1839,14 +1873,7 @@ export class ForgeEngine {
     if (!showGuides && !this.draggingGuide) return;
 
     this.ctx.save();
-    this.ctx.setTransform(
-      this.project.zoom,
-      0,
-      0,
-      this.project.zoom,
-      this.project.panX,
-      this.project.panY,
-    );
+    this.setViewportTransform(this.project.zoom, this.project.panX, this.project.panY);
 
     this.ctx.lineWidth = 1 / this.project.zoom;
     this.ctx.strokeStyle = "#00ffff"; // Cyan guides
@@ -1880,8 +1907,8 @@ export class ForgeEngine {
     }
 
     // Viewport bounds in project space
-    const viewportWidth = this.canvas.width / this.project.zoom;
-    const viewportHeight = this.canvas.height / this.project.zoom;
+    const viewportWidth = this.viewportWidth / this.project.zoom;
+    const viewportHeight = this.viewportHeight / this.project.zoom;
     const startX = -this.project.panX / this.project.zoom;
     const startY = -this.project.panY / this.project.zoom;
 
@@ -1921,10 +1948,7 @@ export class ForgeEngine {
     if (!this.project || !this.canvas.parentElement) return;
     const cw = this.canvas.parentElement.clientWidth;
     const ch = this.canvas.parentElement.clientHeight;
-    if (this.canvas.width !== cw || this.canvas.height !== ch) {
-      this.canvas.width = cw;
-      this.canvas.height = ch;
-    }
+    this.resizeViewport(cw, ch);
     const padding = 40;
     const scaleX = (cw - padding * 2) / this.project.width;
     const scaleY = (ch - padding * 2) / this.project.height;
@@ -1944,6 +1968,7 @@ export class ForgeEngine {
     if (!this.project || !this.canvas.parentElement) return;
     const cw = this.canvas.parentElement.clientWidth;
     const ch = this.canvas.parentElement.clientHeight;
+    this.resizeViewport(cw, ch);
 
     const targetW = overrideWidth ?? this.project.width;
     const targetH = overrideHeight ?? this.project.height;
@@ -1975,8 +2000,8 @@ export class ForgeEngine {
     const startPanY = this.project.panY;
 
     // We want to interpolate the "project point" that is at the center of the viewport
-    const viewportWidth = this.canvas.width;
-    const viewportHeight = this.canvas.height;
+    const viewportWidth = this.viewportWidth;
+    const viewportHeight = this.viewportHeight;
     const centerX = viewportWidth / 2;
     const centerY = viewportHeight / 2;
 
@@ -2082,7 +2107,8 @@ export class ForgeEngine {
       }
     }
 
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.setTransform(this.devicePixelRatio, 0, 0, this.devicePixelRatio, 0, 0);
+    this.ctx.clearRect(0, 0, this.viewportWidth, this.viewportHeight);
     this.ctx.imageSmoothingEnabled = false;
 
     // --- STEP 1: COMPOSITE PROJECT IN 1:1 BUFFER ---
@@ -2116,14 +2142,7 @@ export class ForgeEngine {
 
     // --- STEP 2: DRAW BUFFER TO VIEWPORT ---
     this.ctx.save();
-    this.ctx.setTransform(
-      this.project.zoom,
-      0,
-      0,
-      this.project.zoom,
-      this.project.panX,
-      this.project.panY,
-    );
+    this.setViewportTransform(this.project.zoom, this.project.panX, this.project.panY);
 
     // Draw checkerboard background
     this.ctx.fillStyle = this.getCheckerPattern();
@@ -3094,14 +3113,7 @@ export class ForgeEngine {
   private renderPixelGrid() {
     if (!this.project) return;
     this.ctx.save();
-    this.ctx.setTransform(
-      this.project.zoom,
-      0,
-      0,
-      this.project.zoom,
-      this.project.panX,
-      this.project.panY,
-    );
+    this.setViewportTransform(this.project.zoom, this.project.panX, this.project.panY);
     this.ctx.lineWidth = 0.5 / this.project.zoom;
     this.ctx.strokeStyle = "rgba(128, 128, 128, 0.4)";
     this.ctx.beginPath();

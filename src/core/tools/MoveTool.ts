@@ -389,14 +389,14 @@ export class MoveTool extends BaseTool {
 
     const { project } = context;
     ctx.save();
-    ctx.setTransform(project.zoom, 0, 0, project.zoom, project.panX, project.panY);
+    context.setViewportTransform(project.zoom, project.panX, project.panY);
 
     ctx.lineWidth = 1 / project.zoom;
     ctx.strokeStyle = "red";
 
     // Viewport bounds in project space
-    const viewportWidth = context.canvas.width / project.zoom;
-    const viewportHeight = context.canvas.height / project.zoom;
+    const viewportWidth = context.viewportWidth / project.zoom;
+    const viewportHeight = context.viewportHeight / project.zoom;
     const startX = -project.panX / project.zoom;
     const startY = -project.panY / project.zoom;
 

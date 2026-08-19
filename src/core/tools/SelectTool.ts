@@ -517,10 +517,7 @@ export class SelectTool extends BaseTool {
   onRender(ctx: CanvasRenderingContext2D, context: ToolContext): void {
     if (this.isSelecting) {
       ctx.save();
-      ctx.setTransform(
-        context.project.zoom,
-        0,
-        0,
+      context.setViewportTransform(
         context.project.zoom,
         context.project.panX,
         context.project.panY,
@@ -565,10 +562,7 @@ export class SelectTool extends BaseTool {
 
     if (this.activeSnapLines.length > 0) {
       ctx.save();
-      ctx.setTransform(
-        context.project.zoom,
-        0,
-        0,
+      context.setViewportTransform(
         context.project.zoom,
         context.project.panX,
         context.project.panY,
@@ -576,8 +570,8 @@ export class SelectTool extends BaseTool {
       ctx.strokeStyle = "red";
       ctx.lineWidth = 1 / context.project.zoom;
 
-      const viewportWidth = context.canvas.width / context.project.zoom;
-      const viewportHeight = context.canvas.height / context.project.zoom;
+      const viewportWidth = context.viewportWidth / context.project.zoom;
+      const viewportHeight = context.viewportHeight / context.project.zoom;
       const startX = -context.project.panX / context.project.zoom;
       const startY = -context.project.panY / context.project.zoom;
 

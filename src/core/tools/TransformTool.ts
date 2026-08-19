@@ -129,7 +129,8 @@ export class TransformTool extends BaseTool {
     collect(groupId);
 
     const layers = project.layers.filter(
-      (candidate) => descendantIds.has(candidate.id) && candidate.visible && candidate.type !== "group",
+      (candidate) =>
+        descendantIds.has(candidate.id) && candidate.visible && candidate.type !== "group",
     );
     if (layers.length === 0) return { x: 0, y: 0, width: 1, height: 1 };
 
@@ -739,8 +740,8 @@ export class TransformTool extends BaseTool {
       ctx.strokeStyle = "red";
       ctx.lineWidth = 1 / scale;
 
-      const viewportWidth = context.canvas.width / scale;
-      const viewportHeight = context.canvas.height / scale;
+      const viewportWidth = context.viewportWidth / scale;
+      const viewportHeight = context.viewportHeight / scale;
       const startX = -context.project.panX / scale;
       const startY = -context.project.panY / scale;
 
@@ -892,11 +893,7 @@ export class TransformTool extends BaseTool {
 
       const updatedLayers: Layer[] = [];
       for (const candidate of context.project.layers) {
-        if (
-          !descendantIds.has(candidate.id) ||
-          candidate.type === "group" ||
-          !candidate.visible
-        ) {
+        if (!descendantIds.has(candidate.id) || candidate.type === "group" || !candidate.visible) {
           updatedLayers.push(candidate);
           continue;
         }

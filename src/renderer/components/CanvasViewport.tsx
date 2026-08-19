@@ -59,12 +59,7 @@ const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) =>
     if (canvasRef.current && !engineRef.current) {
       // Ensure correct initial size before creating the engine
       const parent = canvasRef.current.parentElement;
-      if (parent) {
-        canvasRef.current.width = parent.clientWidth;
-        canvasRef.current.height = parent.clientHeight;
-      }
-
-      engineRef.current = new ForgeEngine(canvasRef.current, (zoom, x, y) => {
+      const engine = new ForgeEngine(canvasRef.current, (zoom, x, y) => {
         const id = useProjectStore.getState().activeProjectId;
         if (id) {
           // Updates the store ONLY when zoom/pan changes via interaction
@@ -75,6 +70,8 @@ const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) =>
           });
         }
       });
+      engineRef.current = engine;
+      if (parent) engine.resizeViewport(parent.clientWidth, parent.clientHeight);
     }
 
     return () => {
@@ -130,26 +127,24 @@ const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) =>
     const parent = canvasRef.current.parentElement;
     if (!parent) return;
 
-    const resizeObserver = new ResizeObserver(() => {
+    const resizeViewport = () => {
       if (canvasRef.current && engineRef.current) {
         const newWidth = parent.clientWidth;
         const newHeight = parent.clientHeight;
 
-        // Only change size (and consequently clear canvas) if it really changed
-        if (canvasRef.current.width !== newWidth || canvasRef.current.height !== newHeight) {
-          canvasRef.current.width = newWidth;
-          canvasRef.current.height = newHeight;
-
-          // FORCE immediate synchronous render to avoid black/white screen
-          engineRef.current.render();
-        }
+        engineRef.current.resizeViewport(newWidth, newHeight);
+        engineRef.current.render();
       }
-    });
+    };
+
+    const resizeObserver = new ResizeObserver(resizeViewport);
 
     resizeObserver.observe(parent);
+    window.addEventListener("resize", resizeViewport);
 
     return () => {
       resizeObserver.disconnect();
+      window.removeEventListener("resize", resizeViewport);
     };
   }, []);
 
@@ -186,8 +181,8 @@ const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) =>
           const img = new Image();
           img.onload = () => {
             // Viewport center coordinates
-            const viewportWidth = canvasRef.current?.width || 0;
-            const viewportHeight = canvasRef.current?.height || 0;
+            const viewportWidth = canvasRef.current?.clientWidth || 0;
+            const viewportHeight = canvasRef.current?.clientHeight || 0;
 
             // Convert screen center to project coordinates,
             // taking into account current zoom and pan
