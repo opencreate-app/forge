@@ -46,6 +46,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
   const pickerRef = useRef<HTMLDivElement>(null);
   const hueRef = useRef<HTMLDivElement>(null);
   const activeSelection = useRef<"picker" | "hue" | null>(null);
+  const [isPickerDragging, setIsPickerDragging] = useState(false);
   const [pickerPosition, setPickerPosition] = useState(() => ({
     x: initialHsb.s / 100,
     y: 1 - initialHsb.b / 100,
@@ -119,13 +120,14 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
       const request: ColorSampleRequest = { x: event.clientX, y: event.clientY };
       forgeEvents.emit(FORGE_EVENTS.REQUEST_COLOR_SAMPLE, request);
       event.preventDefault();
+      event.stopPropagation();
     };
 
     window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("mousedown", handleMouseDown, true);
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("mousedown", handleMouseDown, true);
       const canvas = document.getElementById("forge-canvas");
       if (canvas) canvas.style.cursor = "";
       document.documentElement.style.cursor = "";
@@ -157,33 +159,39 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     setColor({ ...color, [key]: clamp(parsed, 0, 255) }, true);
   };
 
-  const updatePicker = (event: React.PointerEvent<HTMLDivElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+  const updatePicker = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
 
-    const offsetX = event.clientX - bounds.left;
-    const offsetY = event.clientY - bounds.top;
-    if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) return;
+      const offsetX = event.clientX - bounds.left;
+      const offsetY = event.clientY - bounds.top;
+      if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) return;
 
-    const nextPosition = {
-      x: clamp(offsetX / bounds.width, 0, 1),
-      y: clamp(offsetY / bounds.height, 0, 1),
-    };
-    setPickerPosition(nextPosition);
-    setColor(colorFromPositions(nextPosition, huePosition));
-  };
+      const nextPosition = {
+        x: clamp(offsetX / bounds.width, 0, 1),
+        y: clamp(offsetY / bounds.height, 0, 1),
+      };
+      setPickerPosition(nextPosition);
+      setColor(colorFromPositions(nextPosition, huePosition));
+    },
+    [colorFromPositions, huePosition, setColor],
+  );
 
-  const updateHue = (event: React.PointerEvent<HTMLDivElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    if (!bounds || bounds.height <= 0) return;
+  const updateHue = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      if (!bounds || bounds.height <= 0) return;
 
-    const offsetY = event.clientY - bounds.top;
-    if (!Number.isFinite(offsetY)) return;
+      const offsetY = event.clientY - bounds.top;
+      if (!Number.isFinite(offsetY)) return;
 
-    const nextPosition = { x: 0, y: clamp(offsetY / bounds.height, 0, 1) };
-    setHuePosition(nextPosition);
-    setColor(colorFromPositions(pickerPosition, nextPosition));
-  };
+      const nextPosition = { x: 0, y: clamp(offsetY / bounds.height, 0, 1) };
+      setHuePosition(nextPosition);
+      setColor(colorFromPositions(pickerPosition, nextPosition));
+    },
+    [colorFromPositions, pickerPosition, setColor],
+  );
 
   const beginPointerSelection = (
     event: React.PointerEvent<HTMLDivElement>,
@@ -191,6 +199,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     update: (event: React.PointerEvent<HTMLDivElement>) => void,
   ) => {
     activeSelection.current = selection;
+    setIsPickerDragging(selection === "picker");
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
@@ -205,16 +214,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     update: (event: React.PointerEvent<HTMLDivElement>) => void,
   ) => {
     if (activeSelection.current !== selection) return;
-
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const isOutside =
-      event.clientX < bounds.left ||
-      event.clientX > bounds.right ||
-      event.clientY < bounds.top ||
-      event.clientY > bounds.bottom;
-
     update(event);
-    if (isOutside) endPointerSelection(event, selection);
   };
 
   const endPointerSelection = (
@@ -223,6 +223,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
   ) => {
     if (activeSelection.current !== selection) return;
     activeSelection.current = null;
+    setIsPickerDragging(false);
     try {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
@@ -232,15 +233,49 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
     }
   };
 
-  const stopPointerSelectionAtBoundary = (
-    event: React.PointerEvent<HTMLDivElement>,
-    selection: "picker" | "hue",
-    update: (event: React.PointerEvent<HTMLDivElement>) => void,
-  ) => {
-    if (activeSelection.current !== selection) return;
-    update(event);
-    endPointerSelection(event, selection);
-  };
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const selection = activeSelection.current;
+      const target = selection === "picker" ? pickerRef.current : hueRef.current;
+      if (!selection || !target) return;
+      if (event.target === target) return;
+
+      const update = selection === "picker" ? updatePicker : updateHue;
+      update({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        currentTarget: target,
+      } as unknown as React.PointerEvent<HTMLDivElement>);
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      const selection = activeSelection.current;
+      const target = selection === "picker" ? pickerRef.current : hueRef.current;
+      if (!selection) return;
+
+      activeSelection.current = null;
+      setIsPickerDragging(false);
+      try {
+        if (target?.hasPointerCapture(event.pointerId)) {
+          target.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // Ignore browsers without pointer capture support.
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [isOpen, updateHue, updatePicker]);
+
   // const [pointerMoving, setPointerMoving] = useState(false);
 
   // useEffect(() => {
@@ -325,14 +360,14 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
                 onPointerMove={(event) => continuePointerSelection(event, "picker", updatePicker)}
                 onPointerUp={(event) => endPointerSelection(event, "picker")}
                 onPointerCancel={(event) => endPointerSelection(event, "picker")}
-                onPointerLeave={(event) =>
-                  stopPointerSelectionAtBoundary(event, "picker", updatePicker)
-                }
+                onPointerLeave={(event) => continuePointerSelection(event, "picker", updatePicker)}
               >
                 <div className="absolute rounded-[3px] inset-0 bg-gradient-to-r from-white to-transparent" />
                 <div className="absolute rounded-[3px] inset-0 bg-gradient-to-b from-transparent to-black" />
                 <div
-                  className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-1 border-white shadow-[0_0_0_1px_#333] hover:w-5 hover:h-5"
+                  className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-1 border-white shadow-[0_0_0_1px_#333] ${
+                    isPickerDragging ? "h-5 w-5" : "h-4 w-4 hover:h-5 hover:w-5"
+                  }`}
                   style={{
                     left: `${pickerPosition.x * 100}%`,
                     top: `${pickerPosition.y * 100}%`,
@@ -354,7 +389,7 @@ const ColorPickerModal: React.FC<ColorPickerModalProps> = ({
                 onPointerMove={(event) => continuePointerSelection(event, "hue", updateHue)}
                 onPointerUp={(event) => endPointerSelection(event, "hue")}
                 onPointerCancel={(event) => endPointerSelection(event, "hue")}
-                onPointerLeave={(event) => stopPointerSelectionAtBoundary(event, "hue", updateHue)}
+                onPointerLeave={(event) => continuePointerSelection(event, "hue", updateHue)}
               >
                 <div
                   className="pointer-events-none absolute left-[-3px] right-[-3px] h-1 rounded border border-white bg-transparent shadow-[0_0_0_1px_#333]"

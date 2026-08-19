@@ -12,14 +12,7 @@ describe("ColorPickerModal", () => {
   it("applies an edited hex color only after clicking OK", async () => {
     const onClose = vi.fn();
     const onApply = vi.fn();
-    render(
-      <ColorPickerModal
-        isOpen
-        initialColor="#000000"
-        onApply={onApply}
-        onClose={onClose}
-      />,
-    );
+    render(<ColorPickerModal isOpen initialColor="#000000" onApply={onApply} onClose={onClose} />);
 
     const hexInput = await screen.findByLabelText("Hex color");
     fireEvent.change(hexInput, { target: { value: "00ff00" } });
@@ -74,14 +67,7 @@ describe("ColorPickerModal", () => {
 
   it("updates the temporary color when the canvas reports a sampled pixel", async () => {
     const onApply = vi.fn();
-    render(
-      <ColorPickerModal
-        isOpen
-        initialColor="#000000"
-        onApply={onApply}
-        onClose={vi.fn()}
-      />,
-    );
+    render(<ColorPickerModal isOpen initialColor="#000000" onApply={onApply} onClose={vi.fn()} />);
     await screen.findByLabelText("Hex color");
     const picker = screen.getByRole("slider", { name: "Saturation and brightness" });
     const marker = picker.querySelector("div.h-4.w-4");
@@ -93,15 +79,37 @@ describe("ColorPickerModal", () => {
     expect(onApply).not.toHaveBeenCalled();
   });
 
-  it("continues calculating the selected color while dragging the picker", async () => {
-    render(
-      <ColorPickerModal
-        isOpen
-        initialColor="#000000"
-        onApply={vi.fn()}
-        onClose={vi.fn()}
-      />,
+  it("prevents a canvas sampling click from reaching the active tool", async () => {
+    const canvas = document.createElement("canvas");
+    canvas.id = "forge-canvas";
+    Object.defineProperty(canvas, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100 }),
+    });
+    document.body.appendChild(canvas);
+
+    const canvasMouseDown = vi.fn();
+    const colorSampleRequest = vi.fn();
+    canvas.addEventListener("mousedown", canvasMouseDown);
+    forgeEvents.addEventListener(FORGE_EVENTS.REQUEST_COLOR_SAMPLE, colorSampleRequest);
+
+    render(<ColorPickerModal isOpen initialColor="#000000" onApply={vi.fn()} onClose={vi.fn()} />);
+    await screen.findByLabelText("Hex color");
+
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 50, clientY: 50 });
+
+    expect(colorSampleRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: { x: 50, y: 50 } }),
     );
+    expect(canvasMouseDown).not.toHaveBeenCalled();
+
+    forgeEvents.removeEventListener(FORGE_EVENTS.REQUEST_COLOR_SAMPLE, colorSampleRequest);
+    canvas.removeEventListener("mousedown", canvasMouseDown);
+    canvas.remove();
+  });
+
+  it("continues calculating the selected color while dragging the picker", async () => {
+    render(<ColorPickerModal isOpen initialColor="#000000" onApply={vi.fn()} onClose={vi.fn()} />);
     const picker = await screen.findByRole("slider", { name: "Saturation and brightness" });
 
     Object.defineProperty(picker, "getBoundingClientRect", {
@@ -116,14 +124,7 @@ describe("ColorPickerModal", () => {
   });
 
   it("preserves the selected hue when the picker reaches zero brightness", async () => {
-    render(
-      <ColorPickerModal
-        isOpen
-        initialColor="#00ff00"
-        onApply={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
+    render(<ColorPickerModal isOpen initialColor="#00ff00" onApply={vi.fn()} onClose={vi.fn()} />);
     const picker = await screen.findByRole("slider", { name: "Saturation and brightness" });
 
     Object.defineProperty(picker, "getBoundingClientRect", {
@@ -137,26 +138,29 @@ describe("ColorPickerModal", () => {
     expect(picker).toHaveStyle({ backgroundColor: "hsl(120, 100%, 50%)" });
   });
 
-  it("stops dragging after the pointer leaves the picker bounds", async () => {
-    render(
-      <ColorPickerModal
-        isOpen
-        initialColor="#000000"
-        onApply={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
+  it("continues dragging to the picker boundary until pointerup", async () => {
+    render(<ColorPickerModal isOpen initialColor="#000000" onApply={vi.fn()} onClose={vi.fn()} />);
     const picker = await screen.findByRole("slider", { name: "Saturation and brightness" });
 
     Object.defineProperty(picker, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100 }),
     });
+    const marker = picker.querySelector("div.rounded-full");
+    expect(marker).toHaveClass("h-4", "w-4");
 
     fireEvent.pointerDown(picker, { clientX: 50, clientY: 50, pointerId: 1 });
-    fireEvent.pointerLeave(picker, { clientX: 150, clientY: 50, pointerId: 1 });
-    fireEvent.pointerMove(picker, { clientX: 0, clientY: 0, pointerId: 1 });
+    expect(marker).toHaveClass("h-5", "w-5");
+    fireEvent.pointerMove(picker, { clientX: 150, clientY: 0, pointerId: 1 });
+    expect(screen.getByLabelText("Hex color")).toHaveValue("ff0000");
 
-    expect(screen.getByLabelText("Hex color")).toHaveValue("800000");
+    fireEvent.pointerMove(picker, { clientX: 0, clientY: 0, pointerId: 1 });
+    expect(screen.getByLabelText("Hex color")).toHaveValue("ffffff");
+
+    fireEvent.pointerUp(picker, { clientX: 0, clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(picker, { clientX: 50, clientY: 50, pointerId: 1 });
+
+    expect(marker).toHaveClass("h-4", "w-4");
+    expect(screen.getByLabelText("Hex color")).toHaveValue("ffffff");
   });
 });
