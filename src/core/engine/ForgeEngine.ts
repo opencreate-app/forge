@@ -668,7 +668,33 @@ export class ForgeEngine {
     thumbCanvas.width = size;
     thumbCanvas.height = size;
     const thumbCtx = thumbCanvas.getContext("2d")!;
-    thumbCtx.imageSmoothingEnabled = true;
+    const isPixelArt = this.project.width < 32 && this.project.height < 32;
+    let thumbnailSource: HTMLCanvasElement = this.projectBuffer;
+    let thumbnailFormat = "image/jpeg";
+
+    if (isPixelArt) {
+      const pixelScale = 10;
+      const pixelCanvas = document.createElement("canvas");
+      pixelCanvas.width = this.project.width * pixelScale;
+      pixelCanvas.height = this.project.height * pixelScale;
+      const pixelCtx = pixelCanvas.getContext("2d")!;
+      pixelCtx.imageSmoothingEnabled = false;
+      pixelCtx.drawImage(
+        this.projectBuffer,
+        0,
+        0,
+        this.project.width,
+        this.project.height,
+        0,
+        0,
+        pixelCanvas.width,
+        pixelCanvas.height,
+      );
+      thumbnailSource = pixelCanvas;
+      thumbnailFormat = "image/png";
+    }
+
+    thumbCtx.imageSmoothingEnabled = !isPixelArt;
 
     // Dark background for the square
     thumbCtx.fillStyle = "#1a1a1a";
@@ -691,9 +717,9 @@ export class ForgeEngine {
       drawY = (size - drawH) / 2;
     }
 
-    thumbCtx.drawImage(this.projectBuffer, drawX, drawY, drawW, drawH);
+    thumbCtx.drawImage(thumbnailSource, drawX, drawY, drawW, drawH);
 
-    return thumbCanvas.toDataURL("image/jpeg", 0.9);
+    return thumbCanvas.toDataURL(thumbnailFormat, isPixelArt ? undefined : 0.9);
   }
 
   /**

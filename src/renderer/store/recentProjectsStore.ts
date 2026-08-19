@@ -9,7 +9,7 @@ export interface RecentProject {
   id: string;
   name: string;
   filePath: string;
-  thumbnail: string; // Base64 JPEG
+  thumbnail: string; // Base64 image data URL
   lastModified: string; // ISO string
   fileSize: number; // Bytes
 }

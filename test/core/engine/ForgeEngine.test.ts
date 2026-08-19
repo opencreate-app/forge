@@ -93,6 +93,51 @@ describe("ForgeEngine", () => {
     expect(onViewportChange).toHaveBeenCalledWith(2, -400, -300);
   });
 
+  it("upscales small project thumbnails with nearest-neighbor rendering", async () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    engine.setProject(createMockProject({ width: 16, height: 16, layers: [] }));
+    const createElementSpy = vi.spyOn(document, "createElement");
+    const toDataURLSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockReturnValue("data:image/png;base64,pixel-art");
+
+    await engine.generateThumbnail();
+
+    const generatedCanvases = createElementSpy.mock.results
+      .map((result) => result.value)
+      .filter((element): element is HTMLCanvasElement => element instanceof HTMLCanvasElement);
+    const pixelCanvas = generatedCanvases.find((element) => element.width === 160);
+
+    expect(pixelCanvas).toBeDefined();
+    expect(pixelCanvas?.height).toBe(160);
+    expect(pixelCanvas?.getContext("2d")?.imageSmoothingEnabled).toBe(false);
+    expect(toDataURLSpy).toHaveBeenCalledWith("image/png", undefined);
+
+    createElementSpy.mockRestore();
+    toDataURLSpy.mockRestore();
+  });
+
+  it("keeps the regular thumbnail pipeline for projects at least 32x32", async () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    engine.setProject(createMockProject({ width: 32, height: 32, layers: [] }));
+    const createElementSpy = vi.spyOn(document, "createElement");
+    const toDataURLSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockReturnValue("data:image/jpeg;base64,regular");
+
+    await engine.generateThumbnail();
+
+    const generatedCanvases = createElementSpy.mock.results
+      .map((result) => result.value)
+      .filter((element): element is HTMLCanvasElement => element instanceof HTMLCanvasElement);
+
+    expect(generatedCanvases.some((element) => element.width === 320)).toBe(false);
+    expect(toDataURLSpy).toHaveBeenCalledWith("image/jpeg", 0.9);
+
+    createElementSpy.mockRestore();
+    toDataURLSpy.mockRestore();
+  });
+
   it("keeps a freshly committed layer cache when synchronizing the project", () => {
     const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
     const project = createMockProject();
