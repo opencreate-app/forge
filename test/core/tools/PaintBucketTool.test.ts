@@ -159,7 +159,9 @@ describe("PaintBucketTool", () => {
     };
     context.getSelectionCanvas = vi.fn(() => ({
       canvas: { width: selectionWidth, height: selectionHeight } as HTMLCanvasElement,
-      ctx: { getImageData: vi.fn(() => ({ data: selectionData })) } as unknown as CanvasRenderingContext2D,
+      ctx: {
+        getImageData: vi.fn(() => ({ data: selectionData })),
+      } as unknown as CanvasRenderingContext2D,
     }));
 
     tool.onMouseDown({ button: 0, offsetX: 30, offsetY: 30 } as MouseEvent, context);
@@ -191,7 +193,9 @@ describe("PaintBucketTool", () => {
     };
     context.getSelectionCanvas = vi.fn(() => ({
       canvas: { width: selectionWidth, height: selectionHeight } as HTMLCanvasElement,
-      ctx: { getImageData: vi.fn(() => ({ data: selectionData })) } as unknown as CanvasRenderingContext2D,
+      ctx: {
+        getImageData: vi.fn(() => ({ data: selectionData })),
+      } as unknown as CanvasRenderingContext2D,
     }));
 
     tool.onMouseDown({ button: 0, offsetX: 45, offsetY: 55 } as MouseEvent, context);

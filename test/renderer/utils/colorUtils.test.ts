@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  hexToRgb,
-  hsbToRgb,
-  normalizeHex,
-  rgbToHex,
-  rgbToHsb,
-} from "@/renderer/utils/colorUtils";
+import { hexToRgb, hsbToRgb, normalizeHex, rgbToHex, rgbToHsb } from "@/renderer/utils/colorUtils";
 
 describe("colorUtils", () => {
   it("converts six and three digit hex values to RGB", () => {

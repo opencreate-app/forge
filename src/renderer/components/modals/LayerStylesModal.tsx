@@ -309,18 +309,22 @@ export const LayerStylesModal: React.FC<LayerStylesModalProps> = ({
                                   updateEffectOption(activeEffectId, opt.id, color),
                                 onApply: (color) => {
                                   if (
-                                    (localStylesRef.current[activeEffectId] as
-                                      | Record<string, unknown>
-                                      | undefined)?.[opt.id] !== color
+                                    (
+                                      localStylesRef.current[activeEffectId] as
+                                        | Record<string, unknown>
+                                        | undefined
+                                    )?.[opt.id] !== color
                                   ) {
                                     updateEffectOption(activeEffectId, opt.id, color);
                                   }
                                 },
                                 onCancel: () => {
                                   if (
-                                    (localStylesRef.current[activeEffectId] as
-                                      | Record<string, unknown>
-                                      | undefined)?.[opt.id] !== colorValue
+                                    (
+                                      localStylesRef.current[activeEffectId] as
+                                        | Record<string, unknown>
+                                        | undefined
+                                    )?.[opt.id] !== colorValue
                                   ) {
                                     updateEffectOption(activeEffectId, opt.id, colorValue);
                                   }

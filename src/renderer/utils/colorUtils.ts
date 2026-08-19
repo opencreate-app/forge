@@ -14,8 +14,7 @@ export interface HSBColor {
   b: number;
 }
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(max, Math.max(min, value));
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 export const rgbToHex = ({ r, g, b }: RGBColor): string =>
   `#${[r, g, b]

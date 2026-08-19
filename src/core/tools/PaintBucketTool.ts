@@ -512,12 +512,7 @@ export class PaintBucketTool extends BaseTool {
   private getSelectionAlpha(selection: SelectionConstraint, projectX: number, projectY: number) {
     const localX = Math.floor(projectX - selection.x);
     const localY = Math.floor(projectY - selection.y);
-    if (
-      localX < 0 ||
-      localX >= selection.width ||
-      localY < 0 ||
-      localY >= selection.height
-    ) {
+    if (localX < 0 || localX >= selection.width || localY < 0 || localY >= selection.height) {
       return 0;
     }
 
