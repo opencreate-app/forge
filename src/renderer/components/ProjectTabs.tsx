@@ -2,15 +2,26 @@
  * Purpose: Tab-based navigation bar for switching between open projects and managing project closing with save confirmation.
  */
 import React from "react";
+import { createPortal } from "react-dom";
 import { useProjectStore } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
+import { useRecentProjectsStore } from "@store/recentProjectsStore";
 import { Home, X, Box } from "lucide-react";
 
 const ProjectTabs: React.FC = () => {
   const { projects, removeProject, setActiveProject, reorderProjects } = useProjectStore();
   const { activeTab, setActiveTab, removeFromHistory } = useUIStore();
+  const recentProjects = useRecentProjectsStore((state) => state.recentProjects);
 
   const tabElementsRef = React.useRef<Map<string, HTMLButtonElement>>(new Map());
+  const hoverTimeoutRef = React.useRef<number | null>(null);
+
+  const [tabPreview, setTabPreview] = React.useState<{
+    id: string;
+    thumbnail: string;
+    left: number;
+    top: number;
+  } | null>(null);
 
   interface DragState {
     startIndex: number;
@@ -22,6 +33,49 @@ const ProjectTabs: React.FC = () => {
 
   const [dragState, setDragState] = React.useState<DragState | null>(null);
   const [justDropped, setJustDropped] = React.useState(false);
+
+  const clearTabPreview = React.useCallback(() => {
+    if (hoverTimeoutRef.current !== null) {
+      window.clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setTabPreview(null);
+  }, []);
+
+  const handleTabMouseEnter = React.useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>, project: (typeof projects)[number]) => {
+      clearTabPreview();
+      if (dragState) return;
+
+      if (activeTab === project.id) return;
+
+      const thumbnail = recentProjects.find(
+        (recent) => recent.id === project.id || recent.filePath === project.filePath,
+      )?.thumbnail;
+      if (!thumbnail) return;
+
+      const rect = event.currentTarget.getBoundingClientRect();
+      const previewWidth = 220;
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - previewWidth - 8));
+
+      hoverTimeoutRef.current = window.setTimeout(() => {
+        setTabPreview({
+          id: project.id,
+          thumbnail,
+          left,
+          top: rect.bottom + 8,
+        });
+        hoverTimeoutRef.current = null;
+      }, 700);
+    },
+    [activeTab, clearTabPreview, dragState, recentProjects],
+  );
+
+  const handleTabMouseLeave = React.useCallback(() => {
+    clearTabPreview();
+  }, [clearTabPreview]);
+
+  React.useEffect(() => clearTabPreview, [clearTabPreview]);
 
   const handleTabClick = (id: "home" | string) => {
     // Only switch tabs if not dragging
@@ -35,6 +89,7 @@ const ProjectTabs: React.FC = () => {
   const handleCloseTab = React.useCallback(
     async (e: React.MouseEvent | null, id: string) => {
       e?.stopPropagation();
+      clearTabPreview();
       const project = projects.find((p) => p.id === id);
       if (!project) return;
 
@@ -93,7 +148,15 @@ const ProjectTabs: React.FC = () => {
         }
       }
     },
-    [projects, removeFromHistory, removeProject, activeTab, setActiveTab, setActiveProject],
+    [
+      projects,
+      removeFromHistory,
+      removeProject,
+      activeTab,
+      setActiveTab,
+      setActiveProject,
+      clearTabPreview,
+    ],
   );
 
   React.useEffect(() => {
@@ -114,6 +177,8 @@ const ProjectTabs: React.FC = () => {
       return;
     }
     if (e.button !== 0) return; // Left click only
+
+    clearTabPreview();
 
     // Don't drag if clicking the close button
     const target = e.target as HTMLElement;
@@ -262,6 +327,8 @@ const ProjectTabs: React.FC = () => {
               else tabElementsRef.current.delete(project.id);
             }}
             onMouseDown={(e) => handleMouseDown(e, project.id, index)}
+            onMouseEnter={(e) => handleTabMouseEnter(e, project)}
+            onMouseLeave={handleTabMouseLeave}
             style={{
               transform: tx !== 0 ? `translateX(${tx}px)` : undefined,
               transition: transitionStyle,
@@ -306,6 +373,21 @@ const ProjectTabs: React.FC = () => {
           </button>
         );
       })}
+      {tabPreview &&
+        createPortal(
+          <div
+            role="tooltip"
+            className="pointer-events-none fixed z-[100] w-[150px] overflow-hidden rounded-lg border border-border"
+            style={{ left: tabPreview.left, top: tabPreview.top }}
+          >
+            <img
+              src={tabPreview.thumbnail}
+              alt="Project preview"
+              className="block aspect-square w-full object-contain"
+            />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 };
