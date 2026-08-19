@@ -74,6 +74,7 @@ export class ForgeEngine {
 
   private layerCanvasCache: Map<string, HTMLCanvasElement> = new Map();
   private layerReadyCache: Map<string, boolean> = new Map();
+  private maskCanvasCache: Map<string, { canvas: HTMLCanvasElement; dataUrl: string }> = new Map();
   private imageCache: Map<string, HTMLImageElement> = new Map();
 
   private selectionCanvas: HTMLCanvasElement;
@@ -1181,7 +1182,12 @@ export class ForgeEngine {
         this.setViewportTransform(zoom, panX, panY),
       updateProject: (updates: Partial<Project>) => {
         if (this.project) {
-          useProjectStore.getState().updateProject(this.project.id, updates);
+          const projectId = this.project.id;
+          useProjectStore.getState().updateProject(projectId, updates);
+          const updatedProject = useProjectStore
+            .getState()
+            .projects.find((project) => project.id === projectId);
+          if (updatedProject) this.applyProjectUpdate(updatedProject);
         }
       },
       pushHistory: (description: string) => {
@@ -1220,9 +1226,15 @@ export class ForgeEngine {
       updateToolSettings: (id: any, settings: any) =>
         useToolStore.getState().updateToolSettings(id, settings),
       subscribe: (listener: any) => useToolStore.subscribe((state) => listener(state.toolSettings)),
-      setLayerCache: (layerId: string, canvas: HTMLCanvasElement) => {
+      setLayerCache: (layerId: string, canvas: HTMLCanvasElement, dataUrl?: string) => {
+        if (dataUrl !== undefined) {
+          (canvas as HTMLCanvasElement & { _dataUrl?: string })._dataUrl = dataUrl;
+        }
         this.layerCanvasCache.set(layerId, canvas);
         this.layerReadyCache.set(layerId, true);
+      },
+      setMaskCache: (layerId: string, canvas: HTMLCanvasElement, dataUrl: string) => {
+        this.maskCanvasCache.set(layerId, { canvas, dataUrl });
       },
       getLayerCanvas: (layerId: string) => {
         const canvas = this.layerCanvasCache.get(layerId);
@@ -1672,6 +1684,7 @@ export class ForgeEngine {
       // Clear caches for new project
       this.layerCanvasCache.clear();
       this.layerReadyCache.clear();
+      this.maskCanvasCache.clear();
       this.imageCache.clear();
       this.draggingGuide = null;
       this.snappedLayerGuide = null;
@@ -1684,7 +1697,12 @@ export class ForgeEngine {
           !prevLayer ||
           prevLayer.data !== layer.data ||
           prevLayer.width !== layer.width ||
-          prevLayer.height !== layer.height
+          prevLayer.height !== layer.height ||
+          prevLayer.mask?.data !== layer.mask?.data ||
+          prevLayer.mask?.x !== layer.mask?.x ||
+          prevLayer.mask?.y !== layer.mask?.y ||
+          prevLayer.mask?.width !== layer.mask?.width ||
+          prevLayer.mask?.height !== layer.mask?.height
         ) {
           this.invalidateLayerCache(layer.id);
         }
@@ -1719,6 +1737,52 @@ export class ForgeEngine {
       // In case the mask hasn't changed (already synchronized by the Tool), but the edges don't exist yet
       this.updateSelectionEdges();
     }
+  }
+
+  /**
+   * Applies a store update to the engine before React delivers the next render.
+   * Painting tools populate their caches before calling updateProject, so those
+   * caches can be retained when their metadata matches the new layer state.
+   */
+  private applyProjectUpdate(project: Project) {
+    const previousProject = this.project;
+    if (!previousProject || previousProject.id !== project.id) {
+      this.project = project;
+      return;
+    }
+
+    for (const layer of project.layers) {
+      const previousLayer = previousProject.layers.find((candidate) => candidate.id === layer.id);
+      const layerChanged =
+        !previousLayer ||
+        previousLayer.data !== layer.data ||
+        previousLayer.width !== layer.width ||
+        previousLayer.height !== layer.height;
+
+      if (layerChanged) {
+        const cachedCanvas = this.layerCanvasCache.get(layer.id);
+        const cachedDataUrl = (
+          cachedCanvas as (HTMLCanvasElement & { _dataUrl?: string }) | undefined
+        )?._dataUrl;
+        const hasMatchingLayerCache =
+          !!cachedCanvas &&
+          cachedCanvas.width === layer.width &&
+          cachedCanvas.height === layer.height &&
+          cachedDataUrl === layer.data;
+
+        if (!hasMatchingLayerCache) this.invalidateLayerCache(layer.id);
+      }
+
+      const maskChanged = previousLayer?.mask?.data !== layer.mask?.data;
+      if (maskChanged) {
+        const cachedMask = this.maskCanvasCache.get(layer.id);
+        if (!cachedMask || cachedMask.dataUrl !== layer.mask?.data) {
+          this.maskCanvasCache.delete(layer.id);
+        }
+      }
+    }
+
+    this.project = project;
   }
 
   /**
@@ -2481,6 +2545,7 @@ export class ForgeEngine {
     if (layer.mask?.enabled || maskPreview) {
       this.applyLayerMask(
         bctx,
+        layer.id,
         layer.mask,
         buffer.width,
         buffer.height,
@@ -2649,6 +2714,7 @@ export class ForgeEngine {
    */
   private applyLayerMask(
     ctx: CanvasRenderingContext2D,
+    layerId: string,
     mask: any,
     width: number,
     height: number,
@@ -2664,8 +2730,14 @@ export class ForgeEngine {
 
     // 1. Draw base mask data
     if (mask?.enabled) {
+      const cachedMask = this.maskCanvasCache.get(layerId);
+      const cachedMaskMatches = cachedMask?.dataUrl === mask.data;
       const img = this.imageCache.get(mask.data);
-      if (img) {
+      if (cachedMaskMatches) {
+        const drawX = padding + (mask.x - layerX);
+        const drawY = padding + (mask.y - layerY);
+        mctx.drawImage(cachedMask!.canvas, drawX, drawY, mask.width, mask.height);
+      } else if (img) {
         // Align mask with the layer content in buffer space
         // mask.x, mask.y are in project coordinates
         // layerX, layerY are also project coordinates
@@ -3135,6 +3207,7 @@ export class ForgeEngine {
   public invalidateLayerCache(layerId: string) {
     this.layerCanvasCache.delete(layerId);
     this.layerReadyCache.delete(layerId);
+    this.maskCanvasCache.delete(layerId);
   }
 
   /**

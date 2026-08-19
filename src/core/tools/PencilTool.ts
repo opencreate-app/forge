@@ -188,9 +188,9 @@ export class PencilTool extends BaseTool {
         const dataUrl = croppedCanvas.toDataURL("image/png");
 
         if (!isEditingMask) {
-          context.setLayerCache(this.layerId, croppedCanvas);
+          context.setLayerCache(this.layerId, croppedCanvas, dataUrl);
         } else {
-          context.invalidateCache(this.layerId);
+          context.setMaskCache(this.layerId, croppedCanvas, dataUrl);
         }
 
         const layers = context.project.layers.map((l) => {

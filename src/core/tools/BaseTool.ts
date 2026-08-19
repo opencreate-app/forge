@@ -39,7 +39,9 @@ export interface ToolContext {
   /** Invalidates the rendered cache for a layer. */
   invalidateCache: (layerId: string) => void;
   /** Manually sets the cached canvas for a layer. */
-  setLayerCache: (layerId: string, canvas: HTMLCanvasElement) => void;
+  setLayerCache: (layerId: string, canvas: HTMLCanvasElement, dataUrl?: string) => void;
+  /** Manually sets the cached canvas for a layer mask. */
+  setMaskCache: (layerId: string, canvas: HTMLCanvasElement, dataUrl: string) => void;
   /** Retrieves the cached canvas for a layer. */
   getLayerCanvas: (layerId: string) => { canvas: HTMLCanvasElement; ready: boolean } | null;
   /** Ensures a layer has a cached canvas, creating it if necessary. */

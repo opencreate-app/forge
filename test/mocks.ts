@@ -69,6 +69,7 @@ export const createMockToolContext = (overrides: Partial<ToolContext> = {}): Too
     addHistoryEntry: vi.fn(),
     invalidateCache: vi.fn(),
     setLayerCache: vi.fn(),
+    setMaskCache: vi.fn(),
     getLayerCanvas: vi.fn().mockReturnValue(null),
     ensureLayerCanvas: vi.fn().mockResolvedValue(document.createElement("canvas")),
     screenToProject: vi.fn((x, y) => ({ x, y })),

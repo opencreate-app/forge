@@ -310,7 +310,7 @@ export class PaintBucketTool extends BaseTool {
 
     // Update layer
     const dataUrl = canvas.toDataURL("image/png");
-    context.setLayerCache(layer.id, canvas);
+    context.setLayerCache(layer.id, canvas, dataUrl);
 
     const layers = context.project.layers.map((l) => {
       if (l.id === layer.id) {
