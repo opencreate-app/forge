@@ -16,7 +16,7 @@ describe("ProjectTabs", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     useProjectStore.setState({ projects: [project], activeProjectId: project.id });
-    useUIStore.setState({ activeTab: project.id });
+    useUIStore.setState({ activeTab: "home" });
     useRecentProjectsStore.setState({
       recentProjects: [
         {
@@ -38,7 +38,7 @@ describe("ProjectTabs", () => {
 
   const getProjectTab = () => screen.getAllByRole("button")[1];
 
-  it("shows the project thumbnail after a 500ms hover delay", () => {
+  it("shows the project thumbnail after a 700ms hover delay", () => {
     render(<ProjectTabs />);
     const tab = getProjectTab();
     Object.defineProperty(tab, "getBoundingClientRect", {
@@ -49,7 +49,7 @@ describe("ProjectTabs", () => {
     fireEvent.mouseEnter(tab);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
-    act(() => vi.advanceTimersByTime(499));
+    act(() => vi.advanceTimersByTime(699));
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(1));
@@ -77,7 +77,7 @@ describe("ProjectTabs", () => {
     const tab = getProjectTab();
 
     fireEvent.mouseEnter(tab);
-    act(() => vi.advanceTimersByTime(500));
+    act(() => vi.advanceTimersByTime(700));
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
 
     fireEvent.mouseDown(tab, { button: 0, clientX: 50 });
@@ -90,7 +90,7 @@ describe("ProjectTabs", () => {
     render(<ProjectTabs />);
     fireEvent.mouseEnter(getProjectTab());
 
-    act(() => vi.advanceTimersByTime(500));
+    act(() => vi.advanceTimersByTime(700));
 
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });

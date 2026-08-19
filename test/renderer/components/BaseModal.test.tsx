@@ -43,7 +43,7 @@ describe("BaseModal focus management", () => {
     });
 
     expect(firstModal).toHaveStyle({
-      boxShadow: "0 0 24px color-mix(in srgb, var(--color-accent) 40%, transparent)",
+      boxShadow: "0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent)",
     });
     expect(secondModal).toHaveStyle({ boxShadow: "none" });
     expect(firstModal?.parentElement).toHaveStyle({ zIndex: "1001" });
