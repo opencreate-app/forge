@@ -49,6 +49,23 @@ describe("ForgeEngine", () => {
     expect(engine.sampleColorAtScreen(500, 500)).toBeNull();
   });
 
+  it("applies immediate zoom requests without animation", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange);
+    const project = createMockProject({ zoom: 1, panX: 0, panY: 0 });
+    engine.setProject(project);
+
+    window.dispatchEvent(
+      new CustomEvent("forge:zoom-to", {
+        detail: { zoom: 2, immediate: true },
+      }),
+    );
+
+    expect(project.zoom).toBe(2);
+    expect(project.panX).toBe(-400);
+    expect(project.panY).toBe(-300);
+    expect(onViewportChange).toHaveBeenCalledWith(2, -400, -300);
+  });
+
   it("preserves previous transparent areas when composing a deletion mask", async () => {
     const engine = new ForgeEngine(canvas, onViewportChange);
     const project = createMockProject({
