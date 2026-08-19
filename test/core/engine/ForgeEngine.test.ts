@@ -93,6 +93,90 @@ describe("ForgeEngine", () => {
     expect(onViewportChange).toHaveBeenCalledWith(2, -400, -300);
   });
 
+  it("keeps a freshly committed layer cache when synchronizing the project", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const project = createMockProject();
+    const dataUrl = "data:image/png;base64,painted-layer";
+    const cachedCanvas = document.createElement("canvas");
+    cachedCanvas.width = 120;
+    cachedCanvas.height = 90;
+    (cachedCanvas as HTMLCanvasElement & { _dataUrl?: string })._dataUrl = dataUrl;
+
+    engine.setProject(project);
+    const engineState = engine as any;
+    engineState.layerCanvasCache.set("layer-1", cachedCanvas);
+    engineState.layerReadyCache.set("layer-1", true);
+
+    const updatedProject = {
+      ...project,
+      layers: [
+        {
+          ...project.layers[0],
+          data: dataUrl,
+          width: 120,
+          height: 90,
+        },
+      ],
+    };
+
+    engineState.applyProjectUpdate(updatedProject);
+
+    expect(engineState.project).toBe(updatedProject);
+    expect(engineState.layerCanvasCache.get("layer-1")).toBe(cachedCanvas);
+    expect(engineState.layerReadyCache.get("layer-1")).toBe(true);
+  });
+
+  it("keeps a freshly committed mask cache when synchronizing the project", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const maskData = "data:image/png;base64,painted-mask";
+    const project = createMockProject({
+      layers: [
+        {
+          ...createMockProject().layers[0],
+          mask: {
+            data: "data:image/png;base64,old-mask",
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+            enabled: true,
+            linked: true,
+          },
+        },
+      ],
+    });
+    const cachedCanvas = document.createElement("canvas");
+    cachedCanvas.width = 80;
+    cachedCanvas.height = 60;
+
+    engine.setProject(project);
+    const engineState = engine as any;
+    engineState.maskCanvasCache.set("layer-1", { canvas: cachedCanvas, dataUrl: maskData });
+
+    const updatedProject = {
+      ...project,
+      layers: [
+        {
+          ...project.layers[0],
+          mask: {
+            ...project.layers[0].mask!,
+            data: maskData,
+            width: 80,
+            height: 60,
+          },
+        },
+      ],
+    };
+
+    engineState.applyProjectUpdate(updatedProject);
+
+    expect(engineState.project).toBe(updatedProject);
+    expect(engineState.maskCanvasCache.get("layer-1")).toEqual({
+      canvas: cachedCanvas,
+      dataUrl: maskData,
+    });
+  });
+
   it("preserves previous transparent areas when composing a deletion mask", async () => {
     const engine = new ForgeEngine(canvas, onViewportChange);
     const project = createMockProject({
