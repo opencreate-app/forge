@@ -4,19 +4,54 @@ TODO: OpenCreate Forge
 [-] Marcar como pendente
 [/] Marcar como parcialmente feito
 
+## Alpha 4
+
+- [ ]
+
 ## Alpha 3
 
-- [ ] Migração completa de `2d` para `webgl2` ([docs](docs/WEBGL2_MIGRATE.md))
-- [ ] Adicionar suporte para mostrar a miniatura do projeto na aba, usando o thumbnail gerado ao salvar o projeto
+<!-- - [ ] Migração completa de `2d` para `webgl2` ([docs](docs/WEBGL2_MIGRATE.md)) -->
 
-## Alpha 2.1 (Patch 1)
+- [x] Bug: Ao agrupar a camada, colocar estilos apenas no grupo, transformar camada filho, o render corta nos limites atuais do grupo
+- [x] Bug: Não é possivel transformar o grupo de camadas, apenas as camadas filhas. Transformar o grupo deve transformar todas as camadas filhas, e manter a posição relativa entre elas
+- [x] TransformTool: Suporte para historico temporário de transformações, para poder desfazer e refazer as transformações aplicadas na camada
+- [x] ColorPickerModal (igual Photoshop/Photopea):
+  - [x] Janela com comportamento de: poder mover, não poder redimensionar, e pegar cor ao clicar fora (mostrar um crosshair).
+  - [x] Mesmo Design System de outros modais
+  - [x] Aplicar a cor ao clicar no "OK"
+  - [x] Abrir ao clicar no foreground/background no sidebar
+  - [x] Abrir ao clicar na opção de cor em todos os campos de cor
+- [x] PaintBucket: Ao usar em RasterLayer vazia, preencher todo e mudar o tipo da camada pra `color_fill`
+  - [x] Se for tipo `color_fill`, ao clicar duas vezes na thumbnail da camada, abrir um modal para escolher a cor do preenchimento
+  - [x] Ser possivel preencher apenas na area selecionada pelo SelectTool, e não toda a camada
+- [x] Ferramenta de Degradê (GradientTool)
+  - [x] Ao clicar e arrastar no canvas, criar um degradê na direção do arraste, com as cores do degradê selecionado
+  - [x] Mostrar uma linha com dois losangulos no início e fim do arraste, para poder reposicionar o degradê
+  - [x] Mostrar pontos de controle do degradê, para poder adicionar (ao clicar duas vezes na linha com a cor mista corretas das duas cores), remover (ao clicar com botão direito no ponto de cor) e reposicionar as cores do degradê
+  - [x] Novo tipo de camada `gradient_fill` que tem as propriedades do degradê (type [linear, radial, angular], colors [array de {color, position}])
+  - [x] Tipos de degradê: Linear, Radial, Angular
+  - [x] Editor de degradê (GradientEditorModal, mesmo comportamento do LayerStyleModal) para criar e editar os degradês personalizados
+- [x] SelectTool: Ao teclar Delete ou Backspace, apagar a seleção (deletar a camada ou preencher com transparente) e previnir que delete a camada selecionada (se não tiver seleção, o Delete pode excluir a camada selecionada)
+- [x] TextTool: Suporte para RichText (negrito, itálico, sublinhado, tachado, sobrescrito, subscrito, etc.)
+- [x] Modals: Melhorar o gerenciamento de janelas dos modais
+  - [x] Ao clicar em um, dar foco e mover para frente (mostrar um box-shadow suave da cor accent no Modal)
+- [x] Adicionar "Session Guard", tecnologia propria para restaurar a ultima sessão do app (guardar em LocalStorage), mesmo que o app feche inesperadamente (crash, desligamento, etc.)
+  - [x] Garantir que o "backup" é limpo ao fechar o app normalmente (com SafeQuit), e que o backup é restaurado apenas em caso de crash
+  - [x] Ao abrir o app verificar o backup no LocalStorage, se houver restaure a sessão completa e limpa o backup
+  - [x] Ao fechar o app verificar se há projetos não salvos e perguntar se o usuário que realmente fechar o app
+- [x] Bug Critico: Alguns momentos, o React simplesmente crasha, sem nenhum erro no console, e o app fica todo cinza escuro
+- [x] Melhorar o zoom na barra de status do editor:
+  - [x] Agora ao clicar uma vez ele faz ZoomToFit, mas seria melhor se fosse DoubleClick
+  - [x] Ao clicar deve abrir um slider em cima (mesmo estilo dos sliders dos inputs do ToolOptions) para mudar o zoom (5% - 5000%)
+- [x] Corrigir o HDPI (Retina) no macOS, pois ele está renderizando o canvas com 2x de tamanho
+- [x] Ao pintar com Brush (e semelhantes) no Canvas (tanto em camada, mascara, etc.) da muitas piscadas (uso o Brush, solto o botão do mouse, some a camada num frame e volta atualizado no proximo frame)
+- [x] QoL ColorPickerModal:
+  - [x] Bug: Ao clicar fora do modal para pegar a cor, previnir que da gatilho de clique da ferramenta selecionada
+  - [x] Ao arrastar o ponto de cor do quadrado para fora é previnido, mas recomendo seguir até o limite até soltar o mouse
+- [x] Miniatura do projeto é gerada no editor para RecentProjects, mas em artes pixelart fica muito borrado (multiplicar por 10x para projetos menos que 32x32)
+- [x] Adicionar suporte para mostrar a miniatura do projeto na aba quando botar o mouse em cima (delay de 700ms)
 
-- [ ] Bug: Ao agrupar a camada, colocar estilos apenas no grupo, transformar camada filho, o render corta nos limites atuais do grupo.
-- [ ] Ferramenta de Degradê (GradientTool)
-  - [ ] Novo tipo de camada `gradient_fill` que tem as propriedades do degradê (type [linear, radial, angular], colors [array de {color, position}])
-  - [ ] Tipos de degradê: Linear, Radial, Angular
-  - [ ] Editor de degradê (Gradient Editor Modal) para criar e editar os degradês personalizados
-  - [ ] Aplicar o degradê na camada selecionada, respeitando a opacidade e os estilos da camada
+<!-- ## Alpha 2.1 (Patch 1) -->
 
 ## Alpha 2
 
