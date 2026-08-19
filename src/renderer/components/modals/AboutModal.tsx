@@ -230,7 +230,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             <Heart size={14} className="text-red-400 fill-red-400 flex-shrink-0 inline mb-1" /> by{" "}
             <button
               type="button"
-              onClick={() => openExternal("https://github.com/opencreate-app")}
+              onClick={() => openExternal("https://github.com/gabrielborgesweb")}
               className="underline text-accent hover:text-accent/80 !cursor-pointer bg-transparent border-none p-0 font-medium"
             >
               Gabriel Borges
