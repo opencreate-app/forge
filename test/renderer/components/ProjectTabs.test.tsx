@@ -1,10 +1,11 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProjectTabs from "@/renderer/components/ProjectTabs";
 import { createMockProject } from "../../mocks";
 import { useProjectStore } from "@store/projectStore";
 import { useRecentProjectsStore } from "@store/recentProjectsStore";
 import { useUIStore } from "@store/uiStore";
+import { LAYER_DRAG_MIME } from "@utils/dragAndDrop";
 
 describe("ProjectTabs", () => {
   const project = createMockProject({
@@ -32,7 +33,7 @@ describe("ProjectTabs", () => {
   });
 
   afterEach(() => {
-    vi.runOnlyPendingTimers();
+    if (vi.isFakeTimers()) vi.runOnlyPendingTimers();
     vi.useRealTimers();
   });
 
@@ -93,5 +94,95 @@ describe("ProjectTabs", () => {
     act(() => vi.advanceTimersByTime(700));
 
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("highlights a tab when a layer is dragged over it and imports the layer on drop", () => {
+    const targetProject = createMockProject({
+      id: "project-2",
+      name: "Target",
+      filePath: "/tmp/target.ocfd",
+      layers: [],
+      activeLayerId: null,
+      selectedLayerIds: [],
+    });
+    useProjectStore.setState({
+      projects: [project, targetProject],
+      activeProjectId: project.id,
+    });
+
+    render(<ProjectTabs />);
+    const targetTab = screen.getByText("target.ocfd").closest("button")!;
+    const payload = JSON.stringify({
+      type: "layer",
+      sourceProjectId: project.id,
+      layerIds: ["layer-1"],
+    });
+    const dataTransfer = {
+      types: [LAYER_DRAG_MIME],
+      dropEffect: "move",
+      getData: (type: string) => (type === LAYER_DRAG_MIME ? payload : '["layer-1"]'),
+    };
+
+    fireEvent.dragOver(targetTab, { dataTransfer });
+    expect(targetTab).toHaveClass("outline-2");
+
+    fireEvent.drop(targetTab, { dataTransfer });
+
+    const target = useProjectStore
+      .getState()
+      .projects.find((candidate) => candidate.id === targetProject.id)!;
+    expect(target.layers).toHaveLength(1);
+    expect(target.layers[0].name).toBe("Layer 1");
+    expect(useUIStore.getState().activeTab).toBe(targetProject.id);
+  });
+
+  it("opens a dropped project in a new tab", async () => {
+    vi.useRealTimers();
+    render(<ProjectTabs />);
+    const tabBar = getProjectTab().parentElement!;
+    const droppedProject = createMockProject({ id: "dropped-project", name: "Dropped" });
+    const file = new File([JSON.stringify(droppedProject)], "dropped.ocfd", {
+      type: "application/json",
+    });
+
+    fireEvent.drop(tabBar, {
+      dataTransfer: { types: ["Files"], files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(
+        useProjectStore.getState().projects.some((item) => item.id === droppedProject.id),
+      ).toBe(true);
+    });
+    expect(useUIStore.getState().activeTab).toBe(droppedProject.id);
+  });
+
+  it("opens a new tab when the same project is dropped again", async () => {
+    vi.useRealTimers();
+    render(<ProjectTabs />);
+    const tabBar = getProjectTab().parentElement!;
+    const droppedProject = createMockProject({ id: "dropped-project", name: "Dropped" });
+    const file = new File([JSON.stringify(droppedProject)], "dropped.ocfd", {
+      type: "application/json",
+    });
+    const dataTransfer = { types: ["Files"], files: [file] };
+
+    fireEvent.drop(tabBar, { dataTransfer });
+    await waitFor(() => {
+      expect(useProjectStore.getState().projects).toHaveLength(2);
+    });
+
+    const firstDroppedProjectId = useProjectStore.getState().projects[1].id;
+    fireEvent.drop(tabBar, { dataTransfer });
+
+    await waitFor(() => {
+      expect(useProjectStore.getState().projects).toHaveLength(3);
+    });
+
+    const projects = useProjectStore.getState().projects;
+    expect(projects[2].id).not.toBe(firstDroppedProjectId);
+    expect(projects[2].filePath).toBeUndefined();
+    expect(useUIStore.getState().activeTab).toBe(projects[2].id);
+    expect(useProjectStore.getState().activeProjectId).toBe(projects[2].id);
   });
 });

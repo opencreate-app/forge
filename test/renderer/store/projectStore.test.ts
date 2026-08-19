@@ -26,8 +26,88 @@ describe("projectStore", () => {
       undoStack: [],
       redoStack: [],
     };
-    store.addProject(newProject);
+    expect(store.addProject(newProject)).toBe("p1");
+    expect(store.addProject({ ...newProject, name: "Duplicate" })).toBe("p1");
     expect(useProjectStore.getState().projects).toHaveLength(1);
+  });
+
+  it("should import cloned layers into another project while preserving group hierarchy", () => {
+    const sourceProject: Project = {
+      id: "source",
+      name: "Source",
+      width: 800,
+      height: 600,
+      layers: [
+        {
+          id: "group-1",
+          name: "Group",
+          type: "group",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over",
+        },
+        {
+          id: "layer-1",
+          name: "Artwork",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 100,
+          data: "data:image/png;base64,artwork",
+          parentId: "group-1",
+          blendMode: "source-over",
+        },
+      ],
+      guides: [],
+      activeLayerId: "layer-1",
+      selectedLayerIds: ["group-1", "layer-1"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      undoStack: [],
+      redoStack: [],
+    };
+    const targetProject: Project = {
+      ...sourceProject,
+      id: "target",
+      name: "Target",
+      layers: [],
+      activeLayerId: null,
+      selectedLayerIds: [],
+    };
+
+    const store = useProjectStore.getState();
+    store.addProject(sourceProject);
+    store.addProject(targetProject);
+    store.importLayersFromProject("source", "target", ["group-1", "layer-1"]);
+
+    const source = useProjectStore.getState().projects.find((project) => project.id === "source")!;
+    const target = useProjectStore.getState().projects.find((project) => project.id === "target")!;
+    const importedGroup = target.layers.find((layer) => layer.type === "group")!;
+    const importedLayer = target.layers.find((layer) => layer.type === "raster")!;
+
+    expect(source.layers.map((layer) => layer.id)).toEqual(["group-1", "layer-1"]);
+    expect(importedGroup.id).not.toBe("group-1");
+    expect(importedLayer.id).not.toBe("layer-1");
+    expect(importedLayer.parentId).toBe(importedGroup.id);
+    expect(importedLayer.data).toBe("data:image/png;base64,artwork");
+    expect(target.selectedLayerIds).toEqual(target.layers.map((layer) => layer.id));
+    expect(target.activeLayerId).toBe(importedLayer.id);
+    expect(target.isDirty).toBe(true);
+    expect(target.undoStack.at(-1)?.description).toBe("Import Layers");
   });
 
   it("should insert a new layer above the active layer", () => {
