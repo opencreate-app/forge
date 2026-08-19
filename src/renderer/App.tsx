@@ -28,13 +28,13 @@ import Toast from "./components/ui/Toast";
 import { useMenuHandler } from "./hooks/useMenuHandler";
 
 import { getClipboardImageDimensions } from "@utils/clipboardUtils";
-import { forgeEvents, FORGE_EVENTS } from "@utils/events";
 import type { ColorPickerOpenRequest } from "@utils/colorPicker";
 import type {
   GradientEditorLayerRequestDetail,
   GradientEditorOpenRequest,
 } from "@utils/gradientEditor";
 import { Box, X } from "lucide-react";
+import ZoomControl from "./components/ZoomControl";
 
 // ... (imports remain)
 
@@ -692,14 +692,7 @@ function App() {
             <span>
               {activeProject.width} x {activeProject.height} px
             </span>
-            <button
-              className="text-accent font-bold"
-              onClick={() => {
-                forgeEvents.emit(FORGE_EVENTS.FIT_TO_SCREEN);
-              }}
-            >
-              Zoom: {Math.round(activeProject.zoom * 100)}%
-            </button>
+            <ZoomControl zoom={activeProject.zoom} />
           </div>
         )}
       </footer>

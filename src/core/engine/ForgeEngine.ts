@@ -232,7 +232,7 @@ export class ForgeEngine {
    * @param e Custom event containing zoom details.
    */
   private handleZoomTo = (e: any) => {
-    const { zoom, panX, panY, step } = e.detail;
+    const { zoom, panX, panY, step, immediate } = e.detail;
     if (!this.project) return;
 
     if (step !== undefined) {
@@ -263,6 +263,8 @@ export class ForgeEngine {
         this.animateFitToScreen();
       } else if (panX !== undefined && panY !== undefined) {
         this.animateToViewport(zoom, panX, panY);
+      } else if (immediate) {
+        this.setZoom(zoom);
       } else {
         this.animateZoom(zoom);
       }
@@ -291,6 +293,28 @@ export class ForgeEngine {
     const targetPanY = centerY - (centerY - basePanY) * (targetZoom / baseZoom);
 
     this.animateToViewport(targetZoom, targetPanX, targetPanY);
+  }
+
+  /**
+   * Updates the viewport zoom immediately, preserving the project point at the viewport center.
+   * @param targetZoom The target zoom level.
+   */
+  public setZoom(targetZoom: number) {
+    if (!this.project) return;
+
+    this.stopViewportAnimation();
+    this.targetViewport = null;
+
+    const baseZoom = this.project.zoom;
+    const centerX = this.canvas.width / 2;
+    const centerY = this.canvas.height / 2;
+    const targetPanX = centerX - (centerX - this.project.panX) * (targetZoom / baseZoom);
+    const targetPanY = centerY - (centerY - this.project.panY) * (targetZoom / baseZoom);
+
+    this.project.zoom = targetZoom;
+    this.project.panX = targetPanX;
+    this.project.panY = targetPanY;
+    this.onViewportChange?.(targetZoom, targetPanX, targetPanY);
   }
 
   /**

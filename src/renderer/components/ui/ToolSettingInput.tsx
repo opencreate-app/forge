@@ -3,6 +3,7 @@
  */
 import React, { useState, useRef, useEffect } from "react";
 import { ChevronDown } from "lucide-react";
+import SliderPopover from "./SliderPopover";
 
 interface ToolSettingInputProps {
   label: React.ReactNode;
@@ -136,53 +137,32 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
         />
       </div>
 
-      {isOpen && (
-        <div
-          className="absolute top-[calc(100%+8px)] left-[-20px] z-50 bg-[#1a1a1a] border border-[#333] p-3 rounded shadow-2xl min-w-[160px] animate-in fade-in slide-in-from-top-2 duration-200"
-          onWheel={(e) => e.stopPropagation()} // Allows parent container wheel to work or captures here
-        >
-          <div className="flex flex-col gap-2">
-            <div className="flex justify-between text-[0.65rem] text-[#666] uppercase font-bold px-0.5">
-              <span>
-                {Math.round(min * displayMultiplier)}
-                {unit}
-              </span>
-              <span>
-                {Math.round(max * displayMultiplier)}
-                {unit}
-              </span>
-            </div>
-            <input
-              type="range"
-              min={min * displayMultiplier}
-              max={max * displayMultiplier}
-              step={step}
-              value={displayValue}
-              onPointerDown={() => {
-                sliderGestureId.current = ++gestureSequence.current;
-                sliderStartValue.current = value;
-              }}
-              onPointerUp={() => {
-                sliderGestureId.current = null;
-              }}
-              onPointerCancel={() => {
-                sliderGestureId.current = null;
-              }}
-              onChange={(e) => {
-                const val = parseFloat(e.target.value);
-                onChange(
-                  val / displayMultiplier,
-                  sliderStartValue.current,
-                  sliderGestureId.current ?? undefined,
-                );
-              }}
-              className="w-full h-1.5 bg-[#333] rounded-lg appearance-none cursor-pointer accent-accent"
-            />
-          </div>
-          {/* Triangle arrow for the popup */}
-          <div className="absolute top-[-5px] left-[40px] w-2 h-2 bg-[#1a1a1a] border-t border-l border-[#333] rotate-45" />
-        </div>
-      )}
+      <SliderPopover
+        isOpen={isOpen}
+        min={min * displayMultiplier}
+        max={max * displayMultiplier}
+        step={step}
+        value={displayValue}
+        minLabel={`${Math.round(min * displayMultiplier)}${unit}`}
+        maxLabel={`${Math.round(max * displayMultiplier)}${unit}`}
+        onPointerDown={() => {
+          sliderGestureId.current = ++gestureSequence.current;
+          sliderStartValue.current = value;
+        }}
+        onPointerUp={() => {
+          sliderGestureId.current = null;
+        }}
+        onPointerCancel={() => {
+          sliderGestureId.current = null;
+        }}
+        onChange={(sliderValue) => {
+          onChange(
+            sliderValue / displayMultiplier,
+            sliderStartValue.current,
+            sliderGestureId.current ?? undefined,
+          );
+        }}
+      />
     </div>
   );
 };
