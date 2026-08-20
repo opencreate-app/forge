@@ -37,21 +37,22 @@
 
 1. Clone the repository:
 
-   ```bash
-   git clone https://github.com/opencreate-app/forge.git
-   cd opencreate-forge
-   ```
+```bash
+git clone https://github.com/opencreate-app/forge.git
+cd opencreate-forge
+```
 
 2. Install the dependencies:
 
-   ```bash
-   npm install
-   ```
+```bash
+npm install
+```
 
 3. Run in development mode:
-   ```bash
-   npm run dev
-   ```
+
+```bash
+npm run dev
+```
 
 ---
 
@@ -104,4 +105,4 @@ npm run prettier
 
 Created with ❤️ by [Gabriel Borges](https://github.com/gabrielborgesweb)
 
-Generated through [Gemini CLI](https://geminicli.com) (`gemini-3-flash-preview`)
+Generated through [Gemini CLI](https://geminicli.com) (`gemini-3-flash-preview`) and [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) (`gpt-5.6-luna`).
