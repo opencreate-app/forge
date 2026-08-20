@@ -1,9 +1,10 @@
 /**
  * Purpose: Validate the packaged macOS application before publishing release artifacts.
  */
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 
 const appPath = resolve(process.argv[2] ?? "dist/mac-arm64/OpenCreate Forge.app");
 const appName = basename(appPath, ".app");
@@ -12,6 +13,7 @@ const asarPath = join(appPath, "Contents", "Resources", "app.asar");
 const infoPlistPath = join(appPath, "Contents", "Info.plist");
 const asarCliPath = resolve("node_modules/.bin/asar");
 const reportPath = resolve("dist/macos-smoke.log");
+const startupLogPath = join(os.homedir(), "Library", "Logs", "OpenCreate Forge", "startup.log");
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: "utf8" });
@@ -105,5 +107,42 @@ const missingEntry = requiredEntries.find((entry) => !archiveEntries.has(entry))
 if (missingEntry) {
   fail(`Packaged macOS application is missing an app.asar entry: ${missingEntry}`);
 }
+
+const startupLogBeforeLaunch = existsSync(startupLogPath)
+  ? statSync(startupLogPath).mtimeMs
+  : 0;
+const launchResult = run("open", ["-n", appPath]);
+if (launchResult.status !== 0) {
+  fail("Packaged macOS application could not be opened through Launch Services.", launchResult.output);
+}
+
+const startupDeadline = Date.now() + 8000;
+let startupLog = "";
+while (Date.now() < startupDeadline) {
+  if (existsSync(startupLogPath)) {
+    const startupLogStat = statSync(startupLogPath);
+    startupLog = readFileSync(startupLogPath, "utf8");
+    if (
+      startupLogStat.mtimeMs > startupLogBeforeLaunch &&
+      startupLog.includes("Application ready") &&
+      startupLog.includes("Renderer finished loading")
+    ) {
+      break;
+    }
+  }
+
+  await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 250));
+}
+
+if (
+  !startupLog.includes("Application ready") ||
+  !startupLog.includes("Renderer finished loading")
+) {
+  fail("Packaged macOS application did not finish startup through Launch Services.", startupLog);
+}
+
+run("pkill", ["-TERM", "-x", appName]);
+await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1500));
+run("pkill", ["-KILL", "-x", appName]);
 
 console.log(`macOS bundle smoke test passed: ${appPath}`);

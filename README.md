@@ -60,9 +60,11 @@ npm run dev
 
 ### macOS Release Builds
 
-The macOS artifacts currently do not have an Apple Developer ID signature or notarization. On an Apple Silicon Mac, download the arm64 DMG and install the app in `/Applications`.
+The macOS artifacts use an ad-hoc signature and are not notarized. On an Apple Silicon Mac, download the arm64 DMG and install the app in `/Applications`.
 
-On the first launch, open the app from Finder. If macOS blocks it, try opening it once, then go to **System Settings → Privacy & Security → Open Anyway** and confirm **Open**. This manual approval is required for builds distributed without Apple notarization.
+Launch the app from Finder, the Dock, or with `open -a "OpenCreate Forge"`. If macOS blocks it, try opening it once, then go to **System Settings → Privacy & Security → Open Anyway** and confirm **Open**. This manual approval may be required for builds distributed without Apple notarization.
+
+Do not use `Contents/MacOS/OpenCreate Forge` as the normal launch command. That internal executable is useful for diagnostics, but macOS Launch Services must launch the application bundle. On macOS 26, direct execution can terminate inside Electron/AppKit before the application code starts.
 
 For local diagnostics, startup errors are written to:
 
