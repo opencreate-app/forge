@@ -14,6 +14,7 @@
     "tsc": "tsc --noEmit --pretty",
     "check": "npm run tsc && npm run lint",
     "check:cp": "node scripts/check.js",
+    "smoke:macos": "node scripts/smoke-macos.mjs",
     "test:all": "vitest run",
     "test:project": "vitest run test/renderer/store",
     "test:tools": "vitest run test/core/tools",
@@ -33,7 +34,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/ui": "^4.1.5",
-    "electron": "^41.8.0",
+    "electron": "43.3.0",
     "electron-builder": "^26.8.1",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
@@ -156,6 +157,6 @@
   "allowScripts": {
     "electron-winstaller@5.4.0": true,
     "fsevents@2.3.3": true,
-    "electron@41.10.4": true
+    "electron@43.3.0": true
   }
 }
