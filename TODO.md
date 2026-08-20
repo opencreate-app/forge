@@ -50,6 +50,11 @@ TODO: OpenCreate Forge
   - [x] Ao arrastar o ponto de cor do quadrado para fora é previnido, mas recomendo seguir até o limite até soltar o mouse
 - [x] Miniatura do projeto é gerada no editor para RecentProjects, mas em artes pixelart fica muito borrado (multiplicar por 10x para projetos menos que 32x32)
 - [x] Adicionar suporte para mostrar a miniatura do projeto na aba quando botar o mouse em cima (delay de 700ms)
+- [x] DragAndDrop de imagens, projetos, etc.:
+  - [x] Bug: Feedback visual está bugado do dragover
+  - [x] Feat: Ao arrastar um arquivo na area das abas de projetos, importar em um novo projeto, e não no projeto atual
+  - [x] Feat: Ao arrastar uma camada em uma aba de projeto diferente, importar a camada no projeto da aba
+  - [x] Feat: Poder importar multiplos arquivos (agora é possivel importar multiplos arquivos apenas dentro do projeto ativo)
 
 <!-- ## Alpha 2.1 (Patch 1) -->
 
