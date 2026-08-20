@@ -34,8 +34,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/ui": "^4.1.5",
-    "electron": "43.3.0",
-    "electron-builder": "^26.8.1",
+    "electron": "41.8.0",
+    "electron-builder": "26.8.1",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.0.1",
@@ -159,6 +159,6 @@
   "allowScripts": {
     "electron-winstaller@5.4.0": true,
     "fsevents@2.3.3": true,
-    "electron@43.3.0": true
+    "electron@41.8.0": true
   }
 }

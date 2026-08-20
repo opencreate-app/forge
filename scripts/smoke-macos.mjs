@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 
 const appPath = resolve(process.argv[2] ?? "dist/mac-arm64/OpenCreate Forge.app");
+const expectedArchitecture = process.argv[3] ?? "arm64";
 const appName = basename(appPath, ".app");
 const executablePath = join(appPath, "Contents", "MacOS", appName);
 const asarPath = join(appPath, "Contents", "Resources", "app.asar");
@@ -59,8 +60,10 @@ if (missingPath) {
 }
 
 const fileResult = run("file", [executablePath]);
-if (fileResult.status !== 0 || !fileResult.output.includes("arm64")) {
-  fail(`Expected an arm64 executable, received: ${fileResult.output}`);
+if (fileResult.status !== 0 || !fileResult.output.includes(expectedArchitecture)) {
+  fail(
+    `Expected a ${expectedArchitecture} executable, received: ${fileResult.output}`,
+  );
 }
 
 const signatureInfo = run("codesign", ["-dv", appPath]);
@@ -157,7 +160,9 @@ if (!launchedInGitHubActions) {
   await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1500));
   run("pkill", ["-KILL", "-x", appName]);
 } else {
-  console.log("GitHub Actions runner detected; skipping GUI startup and validating bundle structure only.");
+  console.log(
+    "GitHub Actions runner detected; skipping GUI startup and validating bundle structure only.",
+  );
 }
 
-console.log(`macOS bundle smoke test passed: ${appPath}`);
+console.log(`macOS ${expectedArchitecture} bundle smoke test passed: ${appPath}`);
