@@ -146,6 +146,7 @@ if (launchedInGitHubActions) {
   // GitHub's unsigned/ad-hoc CI runner rejects the app through Gatekeeper.
   // Start the executable directly there to validate Electron startup without Gatekeeper.
   childProcess = spawn(executablePath, ["--enable-logging=stderr"], {
+    cwd: resolve("."),
     env: { ...process.env, ELECTRON_ENABLE_LOGGING: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -155,6 +156,20 @@ if (launchedInGitHubActions) {
   childProcess.stderr.on("data", (chunk) => {
     launchDetails += chunk.toString();
   });
+
+  const childExitResult = await Promise.race([
+    new Promise((resolveExit) =>
+      childProcess.once("exit", (code, signal) => resolveExit({ code, signal })),
+    ),
+    new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(null), 8000)),
+  ]);
+
+  if (childExitResult !== null) {
+    fail(
+      `Packaged macOS application exited during CI startup: ${JSON.stringify(childExitResult)}`,
+      launchDetails.trim(),
+    );
+  }
 } else {
   const launchResult = run("open", ["-n", appPath]);
   if (launchResult.status !== 0) {
@@ -162,18 +177,14 @@ if (launchedInGitHubActions) {
   }
 }
 
-const startupResult = await waitForStartup(startupLogBeforeLaunch);
-if (!startupResult.success) {
-  if (childProcess && !childProcess.killed) {
-    childProcess.kill("SIGTERM");
+if (!launchedInGitHubActions) {
+  const startupResult = await waitForStartup(startupLogBeforeLaunch);
+  if (!startupResult.success) {
+    fail(
+      "Packaged macOS application did not finish startup through Launch Services.",
+      `${startupResult.log}\n${launchDetails}`.trim(),
+    );
   }
-
-  fail(
-    launchedInGitHubActions
-      ? "Packaged macOS application did not finish startup from the CI executable."
-      : "Packaged macOS application did not finish startup through Launch Services.",
-    `${startupResult.log}\n${launchDetails}`.trim(),
-  );
 }
 
 if (childProcess) {
