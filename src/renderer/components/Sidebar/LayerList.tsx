@@ -163,6 +163,12 @@ const LayerList: React.FC = () => {
     return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
   }, [visibilityDrag, activeProjectId, pushHistory]);
 
+  React.useEffect(() => {
+    // A cross-project drop changes the active project without dispatching a drop
+    // event to the source layer list. Clear the source-only visual state here.
+    setDraggedIndex(null);
+  }, [activeProjectId]);
+
   if (!project) return <div className="p-4 text-[#666]">No active project</div>;
 
   const handleVisibilityMouseDown = (e: React.MouseEvent, layerId: string) => {
