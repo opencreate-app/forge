@@ -3,7 +3,7 @@
  */
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 
 const appPath = resolve(process.argv[2] ?? "dist/mac-arm64/OpenCreate Forge.app");
@@ -108,41 +108,82 @@ if (missingEntry) {
   fail(`Packaged macOS application is missing an app.asar entry: ${missingEntry}`);
 }
 
+function hasFinishedStartup(log, logMtime, previousMtime) {
+  return (
+    logMtime > previousMtime &&
+    log.includes("Application ready") &&
+    log.includes("Renderer finished loading")
+  );
+}
+
+async function waitForStartup(previousMtime) {
+  const startupDeadline = Date.now() + 8000;
+  let startupLog = "";
+
+  while (Date.now() < startupDeadline) {
+    if (existsSync(startupLogPath)) {
+      const startupLogStat = statSync(startupLogPath);
+      startupLog = readFileSync(startupLogPath, "utf8");
+      if (hasFinishedStartup(startupLog, startupLogStat.mtimeMs, previousMtime)) {
+        return { success: true, log: startupLog };
+      }
+    }
+
+    await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 250));
+  }
+
+  return { success: false, log: startupLog };
+}
+
 const startupLogBeforeLaunch = existsSync(startupLogPath)
   ? statSync(startupLogPath).mtimeMs
   : 0;
-const launchResult = run("open", ["-n", appPath]);
-if (launchResult.status !== 0) {
-  fail("Packaged macOS application could not be opened through Launch Services.", launchResult.output);
+const launchedInGitHubActions = process.env.GITHUB_ACTIONS === "true";
+let childProcess;
+let launchDetails = "";
+
+if (launchedInGitHubActions) {
+  // GitHub's unsigned/ad-hoc CI runner rejects the app through Gatekeeper.
+  // Start the executable directly there to validate Electron startup without Gatekeeper.
+  childProcess = spawn(executablePath, ["--enable-logging=stderr"], {
+    env: { ...process.env, ELECTRON_ENABLE_LOGGING: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  childProcess.stdout.on("data", (chunk) => {
+    launchDetails += chunk.toString();
+  });
+  childProcess.stderr.on("data", (chunk) => {
+    launchDetails += chunk.toString();
+  });
+} else {
+  const launchResult = run("open", ["-n", appPath]);
+  if (launchResult.status !== 0) {
+    fail("Packaged macOS application could not be opened through Launch Services.", launchResult.output);
+  }
 }
 
-const startupDeadline = Date.now() + 8000;
-let startupLog = "";
-while (Date.now() < startupDeadline) {
-  if (existsSync(startupLogPath)) {
-    const startupLogStat = statSync(startupLogPath);
-    startupLog = readFileSync(startupLogPath, "utf8");
-    if (
-      startupLogStat.mtimeMs > startupLogBeforeLaunch &&
-      startupLog.includes("Application ready") &&
-      startupLog.includes("Renderer finished loading")
-    ) {
-      break;
-    }
+const startupResult = await waitForStartup(startupLogBeforeLaunch);
+if (!startupResult.success) {
+  if (childProcess && !childProcess.killed) {
+    childProcess.kill("SIGTERM");
   }
 
-  await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 250));
+  fail(
+    launchedInGitHubActions
+      ? "Packaged macOS application did not finish startup from the CI executable."
+      : "Packaged macOS application did not finish startup through Launch Services.",
+    `${startupResult.log}\n${launchDetails}`.trim(),
+  );
 }
 
-if (
-  !startupLog.includes("Application ready") ||
-  !startupLog.includes("Renderer finished loading")
-) {
-  fail("Packaged macOS application did not finish startup through Launch Services.", startupLog);
+if (childProcess) {
+  childProcess.kill("SIGTERM");
+  await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1500));
+  if (!childProcess.killed) childProcess.kill("SIGKILL");
+} else {
+  run("pkill", ["-TERM", "-x", appName]);
+  await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1500));
+  run("pkill", ["-KILL", "-x", appName]);
 }
-
-run("pkill", ["-TERM", "-x", appName]);
-await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1500));
-run("pkill", ["-KILL", "-x", appName]);
 
 console.log(`macOS bundle smoke test passed: ${appPath}`);
