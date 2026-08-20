@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-latest, windows-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -53,7 +53,9 @@ jobs:
             electron-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npx electron --version
 
       - name: Cache APT Packages
         if: matrix.os == 'ubuntu-latest'
@@ -94,7 +96,7 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" == "macos-15" ]; then
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
             npm run build -- --publish never --mac --x64 --arm64
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
             npm run build -- --publish never --win --x64
@@ -105,13 +107,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Smoke test macOS arm64 bundle
-        if: matrix.os == 'macos-15'
+        if: matrix.os == 'macos-latest'
         run: |
           npm run smoke:macos -- "dist/mac-arm64/OpenCreate Forge.app" arm64
           npm run smoke:macos -- "dist/mac/OpenCreate Forge.app" x86_64
 
       - name: Upload macOS smoke diagnostics
-        if: failure() && matrix.os == 'macos-15'
+        if: failure() && matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
           name: macos-smoke-diagnostics
