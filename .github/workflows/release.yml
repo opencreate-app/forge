@@ -157,6 +157,21 @@ jobs:
           TAG_NAME=${GITHUB_REF#refs/tags/}
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
+      - name: Remove duplicate draft releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.get_version.outputs.tag_name }}
+        run: |
+          DUPLICATE_RELEASE_IDS=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq '.[] | select(.draft == true and .tag_name == env.TAG_NAME) | .id')
+
+          while IFS= read -r RELEASE_ID; do
+            if [ -n "$RELEASE_ID" ]; then
+              echo "Deleting duplicate draft release $RELEASE_ID for tag $TAG_NAME"
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID"
+            fi
+          done <<< "$DUPLICATE_RELEASE_IDS"
+
       - name: Prepare Release Body
         id: release_body
         run: |
@@ -165,12 +180,10 @@ jobs:
           REPO="${{ github.repository }}"
           BASE_URL="https://github.com/$REPO/releases/download/$TAG"
 
-          # electron-builder naming conventions:
-          # Windows/AppImage: ProductName.Version.ext (spaces to dots)
-          # macOS: ProductName-Version-arch.ext (spaces to dots)
-          # Linux (deb/rpm): name_version_arch.ext or name-version.arch.ext
+          # electron-builder preserves spaces in this product's artifact names.
+          # Encode them for the release download URLs.
 
-          PRODUCT_NAME_DOTS="OpenCreate.Forge"
+          PRODUCT_NAME_URL="OpenCreate%20Forge"
           INTERNAL_NAME="opencreate-forge"
 
           cat <<EOF > body.md
@@ -188,33 +201,33 @@ jobs:
           <tr>
           <td rowspan="2"><strong>Windows</strong></td>
           <td rowspan="2">x64</td>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS.Setup.$VERSION.exe">Installer (EXE)</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_URL%20Setup%20$VERSION.exe">Installer (EXE)</a></td>
           </tr>
           <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS.$VERSION.exe">Portable (EXE)</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_URL%20$VERSION.exe">Portable (EXE)</a></td>
           </tr>
           <tr>
           <td rowspan="4"><strong>macOS</strong></td>
           <td rowspan="2">Intel (x64)</td>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION.dmg">Universal/Intel (DMG)</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_URL-$VERSION.dmg">Universal/Intel (DMG)</a></td>
           </tr>
           <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-mac.zip">Portable (ZIP/APP)</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_URL-$VERSION-mac.zip">Portable (ZIP/APP)</a></td>
           </tr>
           <tr>
           <td rowspan="2">Apple Silicon (arm64)</td>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-arm64.dmg">Download (DMG)</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_URL-$VERSION-arm64.dmg">Download (DMG)</a></td>
           </tr>
           <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-arm64-mac.zip">Portable (ZIP/APP)</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_URL-$VERSION-arm64-mac.zip">Portable (ZIP/APP)</a></td>
           </tr>
           <tr>
           <td rowspan="4"><strong>Linux</strong></td>
           <td rowspan="4">x64</td>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION.AppImage">AppImage</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_URL-$VERSION.AppImage">AppImage</a></td>
           </tr>
           <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-x86_64.flatpak">Flatpak</a></td>
+          <td><a href="$BASE_URL/$PRODUCT_NAME_URL-$VERSION-x86_64.flatpak">Flatpak</a></td>
           </tr>
           <tr>
           <td><a href="$BASE_URL/${INTERNAL_NAME}_${VERSION}_amd64.deb">Debian (DEB)</a></td>
