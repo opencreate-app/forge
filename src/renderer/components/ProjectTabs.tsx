@@ -5,9 +5,9 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { useProjectStore } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
-import { useRecentProjectsStore } from "@store/recentProjectsStore";
 import { Home, X, Box } from "lucide-react";
 import { createProjectFromImage, loadImage } from "@utils/projectUtils";
+import { generateProjectThumbnail } from "@utils/projectThumbnail";
 import {
   isFileDragEvent,
   isLayerDragEvent,
@@ -26,10 +26,13 @@ const ProjectTabs: React.FC = () => {
   const { projects, addProject, removeProject, setActiveProject, reorderProjects } =
     useProjectStore();
   const { activeTab, setActiveTab, removeFromHistory, showToast } = useUIStore();
-  const recentProjects = useRecentProjectsStore((state) => state.recentProjects);
 
   const tabElementsRef = React.useRef<Map<string, HTMLButtonElement>>(new Map());
   const hoverTimeoutRef = React.useRef<number | null>(null);
+  const previewRequestRef = React.useRef(0);
+  const previewCacheRef = React.useRef(
+    new Map<string, { project: (typeof projects)[number]; thumbnail: string }>(),
+  );
 
   const [tabPreview, setTabPreview] = React.useState<{
     id: string;
@@ -165,6 +168,7 @@ const ProjectTabs: React.FC = () => {
   };
 
   const clearTabPreview = React.useCallback(() => {
+    previewRequestRef.current += 1;
     if (hoverTimeoutRef.current !== null) {
       window.clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
@@ -179,26 +183,41 @@ const ProjectTabs: React.FC = () => {
 
       if (activeTab === project.id) return;
 
-      const thumbnail = recentProjects.find(
-        (recent) => recent.id === project.id || recent.filePath === project.filePath,
-      )?.thumbnail;
-      if (!thumbnail) return;
-
       const rect = event.currentTarget.getBoundingClientRect();
       const previewWidth = 220;
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - previewWidth - 8));
+      const requestId = previewRequestRef.current;
 
-      hoverTimeoutRef.current = window.setTimeout(() => {
-        setTabPreview({
-          id: project.id,
-          thumbnail,
-          left,
-          top: rect.bottom + 8,
-        });
+      hoverTimeoutRef.current = window.setTimeout(async () => {
         hoverTimeoutRef.current = null;
+
+        try {
+          const cachedPreview = previewCacheRef.current.get(project.id);
+          const thumbnail =
+            cachedPreview?.project === project
+              ? cachedPreview.thumbnail
+              : await generateProjectThumbnail(project);
+
+          const currentProject = useProjectStore
+            .getState()
+            .projects.find((candidate) => candidate.id === project.id);
+          if (previewRequestRef.current !== requestId || currentProject !== project) return;
+
+          previewCacheRef.current.set(project.id, { project, thumbnail });
+          setTabPreview({
+            id: project.id,
+            thumbnail,
+            left,
+            top: rect.bottom + 8,
+          });
+        } catch (error) {
+          if (previewRequestRef.current === requestId) {
+            console.warn(`Failed to generate preview for project ${project.id}`, error);
+          }
+        }
       }, 700);
     },
-    [activeTab, clearTabPreview, dragState, recentProjects],
+    [activeTab, clearTabPreview, dragState],
   );
 
   const handleTabMouseLeave = React.useCallback(() => {

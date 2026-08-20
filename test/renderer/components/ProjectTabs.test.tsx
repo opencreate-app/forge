@@ -3,9 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProjectTabs from "@/renderer/components/ProjectTabs";
 import { createMockProject } from "../../mocks";
 import { useProjectStore } from "@store/projectStore";
-import { useRecentProjectsStore } from "@store/recentProjectsStore";
 import { useUIStore } from "@store/uiStore";
 import { LAYER_DRAG_MIME } from "@utils/dragAndDrop";
+import { generateProjectThumbnail } from "@utils/projectThumbnail";
+
+vi.mock("@utils/projectThumbnail", () => ({
+  generateProjectThumbnail: vi.fn(),
+}));
 
 describe("ProjectTabs", () => {
   const project = createMockProject({
@@ -18,18 +22,8 @@ describe("ProjectTabs", () => {
     vi.useFakeTimers();
     useProjectStore.setState({ projects: [project], activeProjectId: project.id });
     useUIStore.setState({ activeTab: "home" });
-    useRecentProjectsStore.setState({
-      recentProjects: [
-        {
-          id: project.id,
-          name: project.name,
-          filePath: project.filePath!,
-          thumbnail: "data:image/png;base64,thumbnail",
-          lastModified: "2026-01-01T00:00:00.000Z",
-          fileSize: 1,
-        },
-      ],
-    });
+    vi.mocked(generateProjectThumbnail).mockReset();
+    vi.mocked(generateProjectThumbnail).mockResolvedValue("data:image/png;base64,rendered-preview");
   });
 
   afterEach(() => {
@@ -39,7 +33,7 @@ describe("ProjectTabs", () => {
 
   const getProjectTab = () => screen.getAllByRole("button")[1];
 
-  it("shows the project thumbnail after a 700ms hover delay", () => {
+  it("shows the rendered project preview after a 700ms hover delay", async () => {
     render(<ProjectTabs />);
     const tab = getProjectTab();
     Object.defineProperty(tab, "getBoundingClientRect", {
@@ -53,12 +47,15 @@ describe("ProjectTabs", () => {
     act(() => vi.advanceTimersByTime(699));
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
-    act(() => vi.advanceTimersByTime(1));
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Project preview" })).toHaveAttribute(
       "src",
-      "data:image/png;base64,thumbnail",
+      "data:image/png;base64,rendered-preview",
     );
+    expect(generateProjectThumbnail).toHaveBeenCalledWith(project);
   });
 
   it("cancels the preview when leaving before the delay", () => {
@@ -73,12 +70,14 @@ describe("ProjectTabs", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
-  it("hides the preview when starting to drag a tab", () => {
+  it("hides the preview when starting to drag a tab", async () => {
     render(<ProjectTabs />);
     const tab = getProjectTab();
 
     fireEvent.mouseEnter(tab);
-    act(() => vi.advanceTimersByTime(700));
+    await act(async () => {
+      vi.advanceTimersByTime(700);
+    });
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
 
     fireEvent.mouseDown(tab, { button: 0, clientX: 50 });
@@ -86,12 +85,55 @@ describe("ProjectTabs", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
-  it("does not show a preview when the project has no saved thumbnail", () => {
-    useRecentProjectsStore.setState({ recentProjects: [] });
+  it("shows a preview without a persisted project thumbnail", async () => {
     render(<ProjectTabs />);
     fireEvent.mouseEnter(getProjectTab());
 
+    await act(async () => {
+      vi.advanceTimersByTime(700);
+    });
+
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+  });
+
+  it("reuses the rendered preview while the project is unchanged", async () => {
+    render(<ProjectTabs />);
+    const tab = getProjectTab();
+
+    fireEvent.mouseEnter(tab);
+    await act(async () => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+
+    fireEvent.mouseLeave(tab);
+    fireEvent.mouseEnter(tab);
+    await act(async () => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+
+    expect(generateProjectThumbnail).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a preview that finishes after the pointer leaves the tab", async () => {
+    let resolvePreview: (thumbnail: string) => void = () => {};
+    vi.mocked(generateProjectThumbnail).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreview = resolve;
+        }),
+    );
+
+    render(<ProjectTabs />);
+    const tab = getProjectTab();
+    fireEvent.mouseEnter(tab);
     act(() => vi.advanceTimersByTime(700));
+    fireEvent.mouseLeave(tab);
+
+    await act(async () => {
+      resolvePreview("data:image/png;base64,stale-preview");
+    });
 
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
