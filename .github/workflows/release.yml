@@ -280,6 +280,7 @@ jobs:
         with:
           body_path: body.md
           files: artifacts/*
+          overwrite_files: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:
