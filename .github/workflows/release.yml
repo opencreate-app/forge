@@ -222,7 +222,7 @@ jobs:
           cat <<EOF > body.md
           ## Downloads
 
-          > macOS builds are currently unsigned and not notarized. On first launch, use Finder and approve the app in **System Settings → Privacy & Security → Open Anyway**.
+          > macOS builds use an ad-hoc signature and are not notarized. On first launch, use Finder and approve the app in **System Settings → Privacy & Security → Open Anyway** if macOS asks for confirmation.
 
           <table>
           <thead>

@@ -62,16 +62,21 @@ if (fileResult.status !== 0 || !fileResult.output.includes("arm64")) {
 }
 
 const signatureInfo = run("codesign", ["-dv", appPath]);
-const hasBundleSignature =
+const hasAdHocBundleSignature =
   signatureInfo.status === 0 &&
   signatureInfo.output.includes("Identifier=app.opencreate.forge") &&
-  signatureInfo.output.includes("Sealed Resources");
+  signatureInfo.output.includes("Signature=adhoc");
 
-if (hasBundleSignature) {
-  const signatureResult = run("codesign", ["--verify", "--deep", "--strict", appPath]);
-  if (signatureResult.status !== 0) {
-    fail("Packaged macOS application failed code-signature verification.", signatureResult.output);
-  }
+if (!hasAdHocBundleSignature) {
+  fail(
+    "Packaged macOS application is not ad-hoc signed as expected.",
+    signatureInfo.output || "codesign returned no diagnostics",
+  );
+}
+
+const signatureResult = run("codesign", ["--verify", "--deep", "--strict", appPath]);
+if (signatureResult.status !== 0) {
+  fail("Packaged macOS application failed code-signature verification.", signatureResult.output);
 }
 
 const plistResult = spawnSync("plutil", ["-lint", infoPlistPath], { encoding: "utf8" });
