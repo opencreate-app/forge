@@ -13,8 +13,30 @@ const infoPlistPath = join(appPath, "Contents", "Info.plist");
 const asarCliPath = resolve("node_modules/.bin/asar");
 const reportPath = resolve("dist/macos-smoke.log");
 
+function run(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8" });
+  return {
+    status: result.status,
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim(),
+  };
+}
+
+function collectDiagnostics() {
+  const codeSign = run("codesign", ["-dvvv", "--entitlements", ":-", appPath]);
+  const gatekeeper = run("spctl", ["--assess", "--type", "execute", "--verbose=4", appPath]);
+  const quarantine = run("xattr", ["-l", appPath]);
+
+  return [
+    `Executable: ${executablePath}`,
+    `Architecture:\n${run("file", [executablePath]).output}`,
+    `Code signing:\n${codeSign.output || "unsigned"}`,
+    `Gatekeeper assessment:\n${gatekeeper.output || "assessment unavailable"}`,
+    `Extended attributes:\n${quarantine.output || "none"}`,
+  ].join("\n\n");
+}
+
 function fail(message, details = "") {
-  const report = `${message}${details ? `\n${details}` : ""}\n`;
+  const report = `${message}${details ? `\n${details}` : ""}\n\n${collectDiagnostics()}\n`;
   console.error(report.trim());
   try {
     writeFileSync(reportPath, report);
@@ -34,19 +56,22 @@ if (missingPath) {
   fail(`Packaged macOS application is incomplete; missing: ${missingPath}`);
 }
 
-const fileResult = spawnSync("file", [executablePath], { encoding: "utf8" });
-if (fileResult.status !== 0 || !fileResult.stdout.includes("arm64")) {
-  fail(`Expected an arm64 executable, received: ${fileResult.stdout.trim()}`);
+const fileResult = run("file", [executablePath]);
+if (fileResult.status !== 0 || !fileResult.output.includes("arm64")) {
+  fail(`Expected an arm64 executable, received: ${fileResult.output}`);
 }
 
-const signatureResult = spawnSync("codesign", ["--verify", "--deep", "--strict", appPath], {
-  encoding: "utf8",
-});
-if (signatureResult.status !== 0) {
-  fail(
-    "Packaged macOS application failed code-signature verification.",
-    signatureResult.stderr.trim(),
-  );
+const signatureInfo = run("codesign", ["-dv", appPath]);
+const hasBundleSignature =
+  signatureInfo.status === 0 &&
+  signatureInfo.output.includes("Identifier=app.opencreate.forge") &&
+  signatureInfo.output.includes("Sealed Resources");
+
+if (hasBundleSignature) {
+  const signatureResult = run("codesign", ["--verify", "--deep", "--strict", appPath]);
+  if (signatureResult.status !== 0) {
+    fail("Packaged macOS application failed code-signature verification.", signatureResult.output);
+  }
 }
 
 const plistResult = spawnSync("plutil", ["-lint", infoPlistPath], { encoding: "utf8" });
@@ -58,12 +83,12 @@ if (!existsSync(asarCliPath)) {
   fail(`The local asar CLI is missing: ${asarCliPath}`);
 }
 
-const asarResult = spawnSync(asarCliPath, ["list", asarPath], { encoding: "utf8" });
+const asarResult = run(asarCliPath, ["list", asarPath]);
 if (asarResult.status !== 0) {
-  fail("Packaged macOS application has an unreadable app.asar.", asarResult.stderr.trim());
+  fail("Packaged macOS application has an unreadable app.asar.", asarResult.output);
 }
 
-const archiveEntries = new Set(asarResult.stdout.split(/\r?\n/).filter(Boolean));
+const archiveEntries = new Set(asarResult.output.split(/\r?\n/).filter(Boolean));
 const requiredEntries = [
   "/dist-electron/main.js",
   "/dist-electron/preload.mjs",

@@ -3,11 +3,41 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import path from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { checkForUpdates, downloadUpdate } from "./autoUpdater.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const startupLogPath = path.join(app.getPath("logs"), "startup.log");
+
+function formatError(error: unknown) {
+  return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}
+
+function logStartup(message: string, error?: unknown) {
+  const line = `[${new Date().toISOString()}] ${message}${error ? `\n${formatError(error)}` : ""}\n`;
+
+  try {
+    mkdirSync(path.dirname(startupLogPath), { recursive: true });
+    appendFileSync(startupLogPath, line);
+  } catch {
+    // Logging must never prevent the application from starting.
+  }
+
+  console.error(line.trim());
+}
+
+process.on("uncaughtException", (error) => {
+  logStartup("Uncaught exception during application startup.", error);
+  if (app.isReady()) {
+    dialog.showErrorBox("OpenCreate Forge could not start", formatError(error));
+  }
+});
+
+process.on("unhandledRejection", (reason) => {
+  logStartup("Unhandled promise rejection during application startup.", reason);
+});
 
 // The built directory structure
 //
@@ -65,7 +95,15 @@ function createSplashWindow() {
     ? path.join(process.env.VITE_PUBLIC!, "splash.html")
     : path.join(RENDERER_DIST, "splash.html");
 
-  splash.loadFile(splashPath);
+  splash.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    logStartup(
+      `Splash screen failed to load (${errorCode}: ${errorDescription}) at ${validatedURL}.`,
+    );
+  });
+
+  splash.loadFile(splashPath).catch((error) => {
+    logStartup("Splash screen load failed.", error);
+  });
 }
 
 function createMenu(
@@ -361,9 +399,9 @@ function createWindow() {
   const iconPath =
     process.platform === "win32"
       ? path.join(APP_ROOT, "shared/favicon/favicon-windows.ico")
-      : process.platform === "darwin"
-        ? path.join(APP_ROOT, "shared/favicon/favicon-darwin-liquid.icns")
-        : path.join(APP_ROOT, "shared/favicon/favicon-linux.png");
+      : process.platform === "linux"
+        ? path.join(APP_ROOT, "shared/favicon/favicon-linux.png")
+        : undefined;
 
   win = new BrowserWindow({
     width: 1400,
@@ -373,7 +411,7 @@ function createWindow() {
     backgroundColor: "#1a1a1a",
     center: true,
     darkTheme: true,
-    icon: iconPath,
+    ...(iconPath ? { icon: iconPath } : {}),
     show: false, // Start hidden, show when ready
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
@@ -413,6 +451,7 @@ function createWindow() {
 
   // Test active push message to Renderer-process.
   win.webContents.on("did-finish-load", () => {
+    logStartup("Renderer finished loading.");
     win?.webContents.send("main-process-message", new Date().toLocaleString());
 
     // Auto-update check (with delay to avoid competing with splash/load)
@@ -421,11 +460,27 @@ function createWindow() {
     }, 5000);
   });
 
+  win.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      logStartup(
+        `Renderer failed to load (${errorCode}: ${errorDescription}) at ${validatedURL}; main frame: ${isMainFrame}.`,
+      );
+    },
+  );
+
+  win.webContents.on("render-process-gone", (_event, details) => {
+    logStartup(`Renderer process exited (${details.reason}, exit code ${details.exitCode}).`);
+  });
+
   if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL);
+    win.loadURL(VITE_DEV_SERVER_URL).catch((error) => {
+      logStartup("Main window URL load failed.", error);
+    });
   } else {
-    // win.loadFile('dist/index.html')
-    win.loadFile(path.join(RENDERER_DIST, "index.html"));
+    win.loadFile(path.join(RENDERER_DIST, "index.html")).catch((error) => {
+      logStartup("Main window file load failed.", error);
+    });
   }
 
   createMenu();
@@ -458,292 +513,309 @@ app.on("window-all-closed", () => {
   // if (process.platform !== 'darwin') {}
 });
 
+app.on("child-process-gone", (_event, details) => {
+  logStartup(
+    `Electron child process exited (${details.type}, ${details.reason}, exit code ${details.exitCode}).`,
+  );
+});
+
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
 });
 
-app.whenReady().then(() => {
-  // IPC Handlers
-  ipcMain.handle("dialog:openFile", async () => {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
-      properties: ["openFile"],
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "bmp"] }],
-    });
-    if (canceled) return null;
-    return filePaths[0];
-  });
-
-  ipcMain.handle("app:updateMenu", (_event, state) => {
-    menuState = { ...menuState, ...state };
-
-    createMenu(
-      menuState.hasProject,
-      menuState.showRulers,
-      menuState.showGuides,
-      menuState.snapToGuides,
-      menuState.snapToLayers,
+app
+  .whenReady()
+  .then(() => {
+    logStartup(
+      `Application ready. Version: ${app.getVersion()}, platform: ${process.platform}, arch: ${process.arch}.`,
     );
-  });
 
-  ipcMain.on("main:update-status-changed", (_event, newStatus: string) => {
-    menuState.updateStatus = newStatus;
-
-    createMenu(
-      menuState.hasProject,
-      menuState.showRulers,
-      menuState.showGuides,
-      menuState.snapToGuides,
-      menuState.snapToLayers,
-      menuState.updateStatus,
-    );
-  });
-
-  ipcMain.handle("dialog:saveFile", async (_event, { dataURL, defaultName, filters }) => {
-    const { canceled, filePath } = await dialog.showSaveDialog({
-      title: "Export image",
-      defaultPath: defaultName || "export.png",
-      filters: filters || [
-        { name: "PNG", extensions: ["png"] },
-        { name: "JPEG", extensions: ["jpg", "jpeg"] },
-      ],
+    // IPC Handlers
+    ipcMain.handle("dialog:openFile", async () => {
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        properties: ["openFile"],
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "bmp"] }],
+      });
+      if (canceled) return null;
+      return filePaths[0];
     });
-    if (canceled || !filePath) return { success: false };
 
-    const matches = dataURL.match(/^data:(.+);base64,(.+)$/);
-    if (!matches) return { success: false, error: "Invalid dataURL format" };
+    ipcMain.handle("app:updateMenu", (_event, state) => {
+      menuState = { ...menuState, ...state };
 
-    const buffer = Buffer.from(matches[2], "base64");
-    try {
-      await fs.writeFile(filePath, buffer);
-      return { success: true, filePath };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle("app:getVersion", () => app.getVersion());
-
-  ipcMain.handle("app:force-refresh", (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!senderWindow || senderWindow.isDestroyed()) return false;
-
-    senderWindow.webContents.reloadIgnoringCache();
-    return true;
-  });
-
-  ipcMain.handle("shell:openExternal", (_event, url: string) => {
-    // Allowlist only http/https URLs to prevent arbitrary protocol execution
-    if (url.startsWith("https://") || url.startsWith("http://")) {
-      shell.openExternal(url);
-    }
-  });
-
-  ipcMain.handle("dialog:saveProjectAs", async (_event, { jsonString, defaultName }) => {
-    const { canceled, filePath } = await dialog.showSaveDialog({
-      title: "Save Project As...",
-      defaultPath: defaultName || "project.ocfd",
-      filters: [{ name: "OpenCreate Forge Document", extensions: ["ocfd"] }],
+      createMenu(
+        menuState.hasProject,
+        menuState.showRulers,
+        menuState.showGuides,
+        menuState.snapToGuides,
+        menuState.snapToLayers,
+      );
     });
-    if (canceled || !filePath) return { success: false, filePath: null };
 
-    try {
-      const projectData = JSON.parse(jsonString);
-      const name = path.basename(filePath, ".ocfd");
+    ipcMain.on("main:update-status-changed", (_event, newStatus: string) => {
+      menuState.updateStatus = newStatus;
 
-      // Clean up internal-only fields before saving to disk
-      const dataToSave = { ...projectData };
-      delete dataToSave.filePath;
-      delete dataToSave.isDirty;
-      dataToSave.name = name;
-      dataToSave.updatedAt = new Date().toISOString();
-
-      await fs.writeFile(filePath, JSON.stringify(dataToSave, null, 2));
-      const stats = await fs.stat(filePath);
-
-      return {
-        success: true,
-        filePath,
-        name,
-        fileSize: stats.size,
-        updatedAt: dataToSave.updatedAt,
-      };
-    } catch (err: any) {
-      return { success: false, error: err.message, filePath: null };
-    }
-  });
-
-  ipcMain.handle("fs:saveProject", async (_event, { jsonString, filePath }) => {
-    if (!filePath) return { success: false, error: "No file path provided." };
-    try {
-      const projectData = JSON.parse(jsonString);
-
-      // Clean up internal-only fields before saving to disk
-      const dataToSave = { ...projectData };
-      delete dataToSave.filePath;
-      delete dataToSave.isDirty;
-      dataToSave.updatedAt = new Date().toISOString();
-
-      await fs.writeFile(filePath, JSON.stringify(dataToSave, null, 2));
-      const stats = await fs.stat(filePath);
-
-      return {
-        success: true,
-        filePath,
-        fileSize: stats.size,
-        updatedAt: dataToSave.updatedAt,
-      };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle("fs:saveImage", async (_event, { dataURL, filePath }) => {
-    if (!filePath) return { success: false, error: "No file path provided." };
-
-    const matches = dataURL.match(/^data:(.+);base64,(.+)$/);
-    if (!matches) return { success: false, error: "Invalid dataURL format" };
-
-    const buffer = Buffer.from(matches[2], "base64");
-    try {
-      await fs.writeFile(filePath, buffer);
-      const stats = await fs.stat(filePath);
-
-      return {
-        success: true,
-        filePath,
-        fileSize: stats.size,
-        updatedAt: new Date().toISOString(),
-      };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle("dialog:confirmClose", async (_event, projectName) => {
-    const { response } = await dialog.showMessageBox({
-      type: "question",
-      buttons: ["Save", "Don't Save", "Cancel"],
-      defaultId: 0,
-      cancelId: 2,
-      message: `Do you want to save the changes to "${projectName}"?`,
-      detail: "Your changes will be lost if you don't save them.",
+      createMenu(
+        menuState.hasProject,
+        menuState.showRulers,
+        menuState.showGuides,
+        menuState.snapToGuides,
+        menuState.snapToLayers,
+        menuState.updateStatus,
+      );
     });
-    return response;
-  });
 
-  ipcMain.handle("dialog:confirmCloseAll", async (_event, projectCount: number) => {
-    const { response } = await dialog.showMessageBox({
-      type: "question",
-      buttons: ["Save All", "Don't Save", "Cancel"],
-      defaultId: 0,
-      cancelId: 2,
-      message: "You have unsaved changes.",
-      detail: `${projectCount} project${projectCount === 1 ? " has" : "s have"} unsaved changes.`,
-    });
-    return response;
-  });
+    ipcMain.handle("dialog:saveFile", async (_event, { dataURL, defaultName, filters }) => {
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: "Export image",
+        defaultPath: defaultName || "export.png",
+        filters: filters || [
+          { name: "PNG", extensions: ["png"] },
+          { name: "JPEG", extensions: ["jpg", "jpeg"] },
+        ],
+      });
+      if (canceled || !filePath) return { success: false };
 
-  ipcMain.handle("app:respond-safe-quit", (_event, approved: boolean) => {
-    safeQuitRequestInFlight = false;
+      const matches = dataURL.match(/^data:(.+);base64,(.+)$/);
+      if (!matches) return { success: false, error: "Invalid dataURL format" };
 
-    if (!approved) return { success: true, approved: false };
-
-    safeQuitInProgress = true;
-    app.quit();
-    return { success: true, approved: true };
-  });
-
-  ipcMain.handle("fs:openProjectFromPath", async (_event, filePath) => {
-    if (!filePath) return { success: false, error: "No file path provided." };
-    try {
-      const content = await fs.readFile(filePath, "utf8");
-      return { success: true, filePath, content };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle("fs:deleteFile", async (_event, filePath) => {
-    try {
-      await shell.trashItem(filePath);
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle("fs:renameFile", async (_event, { oldPath, newPath }) => {
-    try {
-      await fs.rename(oldPath, newPath);
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle("dialog:openProject", async () => {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: "Open Project or Image",
-      properties: ["openFile"],
-      filters: [
-        {
-          name: "All Supported Files",
-          extensions: ["ocfd", "png", "jpg", "jpeg", "bmp", "webp"],
-        },
-        { name: "OpenCreate Forge Document", extensions: ["ocfd"] },
-        { name: "Images", extensions: ["png", "jpg", "jpeg", "bmp", "webp"] },
-      ],
-    });
-    if (canceled || !filePaths[0]) return null;
-
-    const filePath = filePaths[0];
-    const ext = path.extname(filePath).toLowerCase();
-
-    try {
-      if (ext === ".ocfd") {
-        const content = await fs.readFile(filePath, "utf8");
-        return { success: true, filePath, type: "project", content };
-      } else {
-        // It's an image
-        const buffer = await fs.readFile(filePath);
-        const mimeType =
-          {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".bmp": "image/bmp",
-            ".webp": "image/webp",
-          }[ext] || "image/png";
-
-        const dataURL = `data:${mimeType};base64,${buffer.toString("base64")}`;
-        return { success: true, filePath, type: "image", dataURL };
+      const buffer = Buffer.from(matches[2], "base64");
+      try {
+        await fs.writeFile(filePath, buffer);
+        return { success: true, filePath };
+      } catch (err: any) {
+        return { success: false, error: err.message };
       }
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  });
+    });
 
-  // Auto-Update Handlers
-  ipcMain.handle("forge:update-download", async (_event, { version, assetName }) => {
-    if (win) downloadUpdate(win, version, assetName);
-  });
+    ipcMain.handle("app:getVersion", () => app.getVersion());
 
-  ipcMain.handle("forge:update-open-release-page", (_event, url: string) => {
-    if (url.startsWith("https://github.com/")) {
-      shell.openExternal(url);
-    }
-  });
+    ipcMain.handle("app:force-refresh", (event) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      if (!senderWindow || senderWindow.isDestroyed()) return false;
 
-  ipcMain.handle("forge:update-install", async (_event, filePath: string) => {
-    // Only allow opening paths within the temp directory for security
-    const tempDir = app.getPath("temp");
-    if (filePath.startsWith(tempDir)) {
-      shell.openPath(filePath);
-    }
-  });
+      senderWindow.webContents.reloadIgnoringCache();
+      return true;
+    });
 
-  createSplashWindow();
-  createWindow();
-});
+    ipcMain.handle("shell:openExternal", (_event, url: string) => {
+      // Allowlist only http/https URLs to prevent arbitrary protocol execution
+      if (url.startsWith("https://") || url.startsWith("http://")) {
+        shell.openExternal(url);
+      }
+    });
+
+    ipcMain.handle("dialog:saveProjectAs", async (_event, { jsonString, defaultName }) => {
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: "Save Project As...",
+        defaultPath: defaultName || "project.ocfd",
+        filters: [{ name: "OpenCreate Forge Document", extensions: ["ocfd"] }],
+      });
+      if (canceled || !filePath) return { success: false, filePath: null };
+
+      try {
+        const projectData = JSON.parse(jsonString);
+        const name = path.basename(filePath, ".ocfd");
+
+        // Clean up internal-only fields before saving to disk
+        const dataToSave = { ...projectData };
+        delete dataToSave.filePath;
+        delete dataToSave.isDirty;
+        dataToSave.name = name;
+        dataToSave.updatedAt = new Date().toISOString();
+
+        await fs.writeFile(filePath, JSON.stringify(dataToSave, null, 2));
+        const stats = await fs.stat(filePath);
+
+        return {
+          success: true,
+          filePath,
+          name,
+          fileSize: stats.size,
+          updatedAt: dataToSave.updatedAt,
+        };
+      } catch (err: any) {
+        return { success: false, error: err.message, filePath: null };
+      }
+    });
+
+    ipcMain.handle("fs:saveProject", async (_event, { jsonString, filePath }) => {
+      if (!filePath) return { success: false, error: "No file path provided." };
+      try {
+        const projectData = JSON.parse(jsonString);
+
+        // Clean up internal-only fields before saving to disk
+        const dataToSave = { ...projectData };
+        delete dataToSave.filePath;
+        delete dataToSave.isDirty;
+        dataToSave.updatedAt = new Date().toISOString();
+
+        await fs.writeFile(filePath, JSON.stringify(dataToSave, null, 2));
+        const stats = await fs.stat(filePath);
+
+        return {
+          success: true,
+          filePath,
+          fileSize: stats.size,
+          updatedAt: dataToSave.updatedAt,
+        };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle("fs:saveImage", async (_event, { dataURL, filePath }) => {
+      if (!filePath) return { success: false, error: "No file path provided." };
+
+      const matches = dataURL.match(/^data:(.+);base64,(.+)$/);
+      if (!matches) return { success: false, error: "Invalid dataURL format" };
+
+      const buffer = Buffer.from(matches[2], "base64");
+      try {
+        await fs.writeFile(filePath, buffer);
+        const stats = await fs.stat(filePath);
+
+        return {
+          success: true,
+          filePath,
+          fileSize: stats.size,
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle("dialog:confirmClose", async (_event, projectName) => {
+      const { response } = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["Save", "Don't Save", "Cancel"],
+        defaultId: 0,
+        cancelId: 2,
+        message: `Do you want to save the changes to "${projectName}"?`,
+        detail: "Your changes will be lost if you don't save them.",
+      });
+      return response;
+    });
+
+    ipcMain.handle("dialog:confirmCloseAll", async (_event, projectCount: number) => {
+      const { response } = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["Save All", "Don't Save", "Cancel"],
+        defaultId: 0,
+        cancelId: 2,
+        message: "You have unsaved changes.",
+        detail: `${projectCount} project${projectCount === 1 ? " has" : "s have"} unsaved changes.`,
+      });
+      return response;
+    });
+
+    ipcMain.handle("app:respond-safe-quit", (_event, approved: boolean) => {
+      safeQuitRequestInFlight = false;
+
+      if (!approved) return { success: true, approved: false };
+
+      safeQuitInProgress = true;
+      app.quit();
+      return { success: true, approved: true };
+    });
+
+    ipcMain.handle("fs:openProjectFromPath", async (_event, filePath) => {
+      if (!filePath) return { success: false, error: "No file path provided." };
+      try {
+        const content = await fs.readFile(filePath, "utf8");
+        return { success: true, filePath, content };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle("fs:deleteFile", async (_event, filePath) => {
+      try {
+        await shell.trashItem(filePath);
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle("fs:renameFile", async (_event, { oldPath, newPath }) => {
+      try {
+        await fs.rename(oldPath, newPath);
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle("dialog:openProject", async () => {
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: "Open Project or Image",
+        properties: ["openFile"],
+        filters: [
+          {
+            name: "All Supported Files",
+            extensions: ["ocfd", "png", "jpg", "jpeg", "bmp", "webp"],
+          },
+          { name: "OpenCreate Forge Document", extensions: ["ocfd"] },
+          { name: "Images", extensions: ["png", "jpg", "jpeg", "bmp", "webp"] },
+        ],
+      });
+      if (canceled || !filePaths[0]) return null;
+
+      const filePath = filePaths[0];
+      const ext = path.extname(filePath).toLowerCase();
+
+      try {
+        if (ext === ".ocfd") {
+          const content = await fs.readFile(filePath, "utf8");
+          return { success: true, filePath, type: "project", content };
+        } else {
+          // It's an image
+          const buffer = await fs.readFile(filePath);
+          const mimeType =
+            {
+              ".png": "image/png",
+              ".jpg": "image/jpeg",
+              ".jpeg": "image/jpeg",
+              ".bmp": "image/bmp",
+              ".webp": "image/webp",
+            }[ext] || "image/png";
+
+          const dataURL = `data:${mimeType};base64,${buffer.toString("base64")}`;
+          return { success: true, filePath, type: "image", dataURL };
+        }
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    });
+
+    // Auto-Update Handlers
+    ipcMain.handle("forge:update-download", async (_event, { version, assetName }) => {
+      if (win) downloadUpdate(win, version, assetName);
+    });
+
+    ipcMain.handle("forge:update-open-release-page", (_event, url: string) => {
+      if (url.startsWith("https://github.com/")) {
+        shell.openExternal(url);
+      }
+    });
+
+    ipcMain.handle("forge:update-install", async (_event, filePath: string) => {
+      // Only allow opening paths within the temp directory for security
+      const tempDir = app.getPath("temp");
+      if (filePath.startsWith(tempDir)) {
+        shell.openPath(filePath);
+      }
+    });
+
+    createSplashWindow();
+    createWindow();
+  })
+  .catch((error) => {
+    logStartup("Application initialization failed.", error);
+    dialog.showErrorBox("OpenCreate Forge could not start", formatError(error));
+    app.exit(1);
+  });

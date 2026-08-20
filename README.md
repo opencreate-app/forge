@@ -58,6 +58,18 @@ npm run dev
 
 ## 📦 How to Build and Run
 
+### macOS Release Builds
+
+The macOS artifacts currently do not have an Apple Developer ID signature or notarization. On an Apple Silicon Mac, download the arm64 DMG and install the app in `/Applications`.
+
+On the first launch, open the app from Finder. If macOS blocks it, try opening it once, then go to **System Settings → Privacy & Security → Open Anyway** and confirm **Open**. This manual approval is required for builds distributed without Apple notarization.
+
+For local diagnostics, startup errors are written to:
+
+```text
+~/Library/Logs/OpenCreate Forge/startup.log
+```
+
 ### Building
 
 ```bash

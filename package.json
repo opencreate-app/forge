@@ -68,6 +68,7 @@
     "files": [
       "dist-electron/**/*",
       "dist/**/*",
+      "shared/favicon/**/*",
       "package.json",
       "!dist/*.zip",
       "!dist/*.dmg",
@@ -113,6 +114,7 @@
     "mac": {
       "category": "public.app-category.graphics-design",
       "icon": "shared/favicon/favicon-darwin-liquid.icns",
+      "hardenedRuntime": false,
       "target": [
         {
           "target": "dmg",
@@ -129,7 +131,7 @@
           ]
         }
       ],
-      "identity": "-"
+      "identity": null
     },
     "dmg": {
       "sign": false,
