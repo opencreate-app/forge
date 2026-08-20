@@ -8,6 +8,7 @@ import { ForgeEngine } from "@core/engine/ForgeEngine";
 import Ruler from "./Ruler";
 import { RichTextToolbar } from "./tools/RichTextToolbar";
 import type { ColorPickerOpenRequest } from "@utils/colorPicker";
+import { getFileNameWithoutExtension, readFileAsDataUrl } from "@utils/fileDrop";
 
 import { ColorSampleRequest, forgeEvents, FORGE_EVENTS } from "@utils/events";
 
@@ -153,44 +154,48 @@ const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) =>
   };
 
   const handleFileDrop = React.useCallback(
-    (files: File[]) => {
+    async (files: File[]) => {
       if (!activeProjectId || !project) return;
 
       for (const file of files) {
         if (file.type.startsWith("image/")) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const dataUrl = event.target?.result as string;
-            const img = new Image();
-            img.onload = () => {
-              // Viewport center coordinates
-              const viewportWidth = canvasRef.current?.clientWidth || 0;
-              const viewportHeight = canvasRef.current?.clientHeight || 0;
+          try {
+            const dataUrl = await readFileAsDataUrl(file);
+            const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+              const image = new Image();
+              image.onload = () => resolve(image);
+              image.onerror = () => reject(new Error(`Failed to load ${file.name}`));
+              image.src = dataUrl;
+            });
 
-              // Convert screen center to project coordinates,
-              // taking into account current zoom and pan
-              const projCenterX = (viewportWidth / 2 - project.panX) / project.zoom;
-              const projCenterY = (viewportHeight / 2 - project.panY) / project.zoom;
+            // Viewport center coordinates
+            const viewportWidth = canvasRef.current?.clientWidth || 0;
+            const viewportHeight = canvasRef.current?.clientHeight || 0;
 
-              // Position image centered at this project point
-              const x = Math.round(projCenterX - img.naturalWidth / 2);
-              const y = Math.round(projCenterY - img.naturalHeight / 2);
+            // Convert screen center to project coordinates,
+            // taking into account current zoom and pan
+            const projCenterX = (viewportWidth / 2 - project.panX) / project.zoom;
+            const projCenterY = (viewportHeight / 2 - project.panY) / project.zoom;
 
-              useProjectStore.getState().addLayer(activeProjectId, {
-                name: file.name.replace(/\.[^/.]+$/, ""),
-                type: "raster",
-                data: dataUrl,
-                width: img.naturalWidth,
-                height: img.naturalHeight,
-                x: x,
-                y: y,
-                visible: true,
-                opacity: 100,
-              });
-            };
-            img.src = dataUrl;
-          };
-          reader.readAsDataURL(file);
+            // Position image centered at this project point
+            const x = Math.round(projCenterX - img.naturalWidth / 2);
+            const y = Math.round(projCenterY - img.naturalHeight / 2);
+
+            useProjectStore.getState().addLayer(activeProjectId, {
+              name: getFileNameWithoutExtension(file),
+              type: "raster",
+              data: dataUrl,
+              width: img.naturalWidth,
+              height: img.naturalHeight,
+              x,
+              y,
+              visible: true,
+              opacity: 100,
+            });
+          } catch (error) {
+            console.error(`Failed to import image ${file.name}`, error);
+            showToast(`Failed to import file "<b>${file.name}</b>".`, "error");
+          }
         } else {
           showToast(`File "<b>${file.name}</b>" is not supported.`, "error");
         }
@@ -202,7 +207,7 @@ const CanvasViewport: React.FC<CanvasViewportProps> = ({ onOpenColorPicker }) =>
   React.useEffect(() => {
     const handleEditorFileDrop = (event: Event) => {
       const files = (event as CustomEvent<{ files: File[] }>).detail?.files || [];
-      handleFileDrop(files);
+      void handleFileDrop(files);
     };
 
     window.addEventListener("forge:editor-file-drop", handleEditorFileDrop);

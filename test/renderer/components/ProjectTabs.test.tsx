@@ -185,4 +185,34 @@ describe("ProjectTabs", () => {
     expect(useUIStore.getState().activeTab).toBe(projects[2].id);
     expect(useProjectStore.getState().activeProjectId).toBe(projects[2].id);
   });
+
+  it("opens one tab per dropped project and keeps importing after unsupported files", async () => {
+    vi.useRealTimers();
+    render(<ProjectTabs />);
+    const tabBar = getProjectTab().parentElement!;
+    const firstProject = createMockProject({ id: "first-dropped", name: "First" });
+    const secondProject = createMockProject({ id: "second-dropped", name: "Second" });
+    const files = [
+      new File([JSON.stringify(firstProject)], "first.ocfd", { type: "application/json" }),
+      new File(["unsupported"], "notes.txt", { type: "text/plain" }),
+      new File([JSON.stringify(secondProject)], "second.ocfd", { type: "application/json" }),
+    ];
+
+    fireEvent.drop(tabBar, {
+      dataTransfer: { types: ["Files"], files },
+    });
+
+    await waitFor(() => {
+      expect(useProjectStore.getState().projects).toHaveLength(3);
+    });
+
+    const projects = useProjectStore.getState().projects;
+    expect(projects.map((item) => item.id)).toEqual([
+      project.id,
+      firstProject.id,
+      secondProject.id,
+    ]);
+    expect(useUIStore.getState().activeTab).toBe(secondProject.id);
+    expect(useProjectStore.getState().activeProjectId).toBe(secondProject.id);
+  });
 });

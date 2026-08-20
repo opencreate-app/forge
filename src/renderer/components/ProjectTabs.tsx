@@ -14,6 +14,13 @@ import {
   LAYER_DRAG_MIME,
   parseLayerDragPayload,
 } from "@utils/dragAndDrop";
+import {
+  getDroppedFilePath,
+  getFileNameWithoutExtension,
+  isForgeProjectFile,
+  readFileAsDataUrl,
+  readFileAsText,
+} from "@utils/fileDrop";
 
 const ProjectTabs: React.FC = () => {
   const { projects, addProject, removeProject, setActiveProject, reorderProjects } =
@@ -45,63 +52,45 @@ const ProjectTabs: React.FC = () => {
   const [layerDropTarget, setLayerDropTarget] = React.useState<string | null>(null);
 
   const handleFileDrop = React.useCallback(
-    (event: React.DragEvent) => {
-      const file = Array.from(event.dataTransfer.files)[0];
-      if (!file) return;
+    async (event: React.DragEvent) => {
+      const files = Array.from(event.dataTransfer.files);
+      for (const file of files) {
+        try {
+          const filePath = getDroppedFilePath(file);
 
-      const electronAPI = (window as any).electronAPI;
-      const filePath =
-        typeof electronAPI?.getPathForFile === "function"
-          ? electronAPI.getPathForFile(file)
-          : undefined;
-      const isProject = file.name.toLowerCase().endsWith(".ocfd");
-
-      if (isProject) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          try {
-            const projectData = JSON.parse(reader.result as string);
+          if (isForgeProjectFile(file)) {
+            const projectData = JSON.parse(await readFileAsText(file));
             projectData.filePath = filePath;
             projectData.isDirty = false;
             const projectId = addProject(projectData, true);
             setActiveTab(projectId);
             setActiveProject(projectId);
             showToast("Project opened successfully", "info");
-          } catch (error) {
-            console.error("Failed to parse dropped project", error);
-            showToast("Failed to open project file", "error");
+            continue;
           }
-        };
-        reader.readAsText(file);
-        return;
-      }
 
-      if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = async () => {
-          try {
-            const dataUrl = reader.result as string;
+          if (file.type.startsWith("image/")) {
+            const dataUrl = await readFileAsDataUrl(file);
             const image = await loadImage(dataUrl);
             const project = createProjectFromImage(
               dataUrl,
               image.naturalWidth,
               image.naturalHeight,
-              file.name.replace(/\.[^/.]+$/, ""),
+              getFileNameWithoutExtension(file),
               filePath,
             );
             const projectId = addProject(project, true);
             setActiveTab(projectId);
             setActiveProject(projectId);
-          } catch (error) {
-            console.error("Failed to load dropped image", error);
-            showToast("Failed to open image", "error");
+            continue;
           }
-        };
-        reader.readAsDataURL(file);
-        return;
-      }
 
-      showToast(`File "<b>${file.name}</b>" is not supported.`, "error");
+          showToast(`File "<b>${file.name}</b>" is not supported.`, "error");
+        } catch (error) {
+          console.error(`Failed to import dropped file ${file.name}`, error);
+          showToast(`Failed to import file "<b>${file.name}</b>".`, "error");
+        }
+      }
     },
     [addProject, setActiveProject, setActiveTab, showToast],
   );
@@ -140,7 +129,7 @@ const ProjectTabs: React.FC = () => {
     event.stopPropagation();
     setIsFileDragOver(false);
     setLayerDropTarget(null);
-    handleFileDrop(event);
+    void handleFileDrop(event);
   };
 
   const handleTabDragOver = (event: React.DragEvent, projectId: string) => {

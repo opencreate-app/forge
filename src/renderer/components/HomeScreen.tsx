@@ -8,6 +8,13 @@ import { useUIStore } from "@store/uiStore";
 import { useRecentProjectsStore, RecentProject } from "@store/recentProjectsStore";
 import { ShortcutSpan } from "./ui/Global";
 import { createProjectFromImage, loadImage } from "@utils/projectUtils";
+import {
+  getDroppedFilePath,
+  getFileNameWithoutExtension,
+  isForgeProjectFile,
+  readFileAsDataUrl,
+  readFileAsText,
+} from "@utils/fileDrop";
 import { getRelativeTime, formatFileSize, formatFullDateTime } from "@utils/dateUtils";
 import ContextMenu from "./ui/ContextMenu";
 import { FolderOpen, Edit2, ImageDown, Images, Trash, XCircle } from "lucide-react";
@@ -278,10 +285,18 @@ const HomeScreen: React.FC = () => {
   };
 
   const handleCreateFromImage = useCallback(
-    (dataUrl: string, width: number, height: number, name: string, filePath?: string) => {
+    (
+      dataUrl: string,
+      width: number,
+      height: number,
+      name: string,
+      filePath?: string,
+      allowDuplicate = false,
+    ) => {
       const newProject = createProjectFromImage(dataUrl, width, height, name, filePath);
-      const projectId = addProject(newProject);
+      const projectId = addProject(newProject, allowDuplicate);
       setActiveTab(projectId);
+      return projectId;
     },
     [addProject, setActiveTab],
   );
@@ -321,57 +336,44 @@ const HomeScreen: React.FC = () => {
     e.stopPropagation();
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
     const files = Array.from(e.dataTransfer.files);
     for (const file of files) {
-      const isProject = file.name.toLowerCase().endsWith(".ocfd");
+      try {
+        const filePath = getDroppedFilePath(file);
 
-      if (isProject) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          try {
-            const content = event.target?.result as string;
-            const projectData = JSON.parse(content);
+        if (isForgeProjectFile(file)) {
+          const projectData = JSON.parse(await readFileAsText(file));
+          projectData.filePath = filePath;
+          projectData.isDirty = false;
 
-            // In Electron, File objects path should be retrieved via webUtils (exposed as getPathForFile)
-            projectData.filePath = (window as any).electronAPI.getPathForFile(file);
-            projectData.isDirty = false;
+          const projectId = addProject(projectData, true);
+          setActiveTab(projectId);
+          useUIStore.getState().showToast("Project opened successfully", "info");
+          continue;
+        }
 
-            const projectId = addProject(projectData);
-            setActiveTab(projectId);
-            useUIStore.getState().showToast("Project opened successfully", "info");
-          } catch (err) {
-            console.error("Failed to parse project file", err);
-            useUIStore.getState().showToast("Failed to open project file", "error");
-          }
-        };
-        reader.readAsText(file);
-        break;
-      } else if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-          const dataUrl = event.target?.result as string;
-          try {
-            const img = await loadImage(dataUrl);
-            const filePath = (window as any).electronAPI.getPathForFile(file);
-            handleCreateFromImage(
-              dataUrl,
-              img.naturalWidth,
-              img.naturalHeight,
-              file.name.replace(/\.[^/.]+$/, ""),
-              filePath,
-            );
-          } catch (err) {
-            console.error("Failed to load dropped image", err);
-          }
-        };
-        reader.readAsDataURL(file);
-        break; // Just create one project for the first image
-      } else {
+        if (file.type.startsWith("image/")) {
+          const dataUrl = await readFileAsDataUrl(file);
+          const image = await loadImage(dataUrl);
+          handleCreateFromImage(
+            dataUrl,
+            image.naturalWidth,
+            image.naturalHeight,
+            getFileNameWithoutExtension(file),
+            filePath,
+            true,
+          );
+          continue;
+        }
+
         useUIStore.getState().showToast(`File "<b>${file.name}</b>" is not supported.`, "error");
+      } catch (error) {
+        console.error(`Failed to import dropped file ${file.name}`, error);
+        useUIStore.getState().showToast(`Failed to import file "<b>${file.name}</b>".`, "error");
       }
     }
   };
