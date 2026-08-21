@@ -55,6 +55,8 @@ TODO: OpenCreate Forge
   - [x] Feat: Ao arrastar um arquivo na area das abas de projetos, importar em um novo projeto, e não no projeto atual
   - [x] Feat: Ao arrastar uma camada em uma aba de projeto diferente, importar a camada no projeto da aba
   - [x] Feat: Poder importar multiplos arquivos (agora é possivel importar multiplos arquivos apenas dentro do projeto ativo)
+- [x] Brush, Pencil, Eraser: Poder clicar em um ponto do canvas, segurar Shift e clicar em outro ponto para criar uma linha reta entre os dois pontos, e pintar a linha reta
+- [x] Bug Crítico: LayerMask está com perfomance muito ruim e acaba dando baixo framerate em PCs fracos, mesmo com apenas uma camada com LayerMask.
 
 <!-- ## Alpha 2.1 (Patch 1) -->
 
