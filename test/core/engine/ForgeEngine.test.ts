@@ -222,6 +222,64 @@ describe("ForgeEngine", () => {
     });
   });
 
+  it("reuses the converted alpha canvas for an unchanged layer mask", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const engineState = engine as any;
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = 20;
+    sourceCanvas.height = 10;
+    const mask = {
+      data: "data:image/png;base64,mask",
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 10,
+      enabled: true,
+      linked: true,
+    };
+
+    engineState.maskCanvasCache.set("layer-1", {
+      canvas: sourceCanvas,
+      dataUrl: mask.data,
+    });
+
+    const firstAlphaCanvas = engineState.getMaskAlphaCanvas("layer-1", mask);
+    const secondAlphaCanvas = engineState.getMaskAlphaCanvas("layer-1", mask);
+
+    expect(firstAlphaCanvas).toBeDefined();
+    expect(secondAlphaCanvas).toBe(firstAlphaCanvas);
+    expect(engineState.maskCanvasCache.get("layer-1").alphaCanvas).toBe(firstAlphaCanvas);
+  });
+
+  it("reuses a layer render buffer until its dimensions change", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const engineState = engine as any;
+
+    const firstBuffer = engineState.getLayerRenderBuffer("layer-1", 120, 80);
+    const secondBuffer = engineState.getLayerRenderBuffer("layer-1", 120, 80);
+    const resizedBuffer = engineState.getLayerRenderBuffer("layer-1", 240, 80);
+
+    expect(secondBuffer).toBe(firstBuffer);
+    expect(resizedBuffer).not.toBe(firstBuffer);
+  });
+
+  it("invalidates the mask and render buffers together", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const engineState = engine as any;
+    const sourceCanvas = document.createElement("canvas");
+
+    engineState.maskCanvasCache.set("layer-1", {
+      canvas: sourceCanvas,
+      dataUrl: "data:image/png;base64,mask",
+    });
+    engineState.getLayerRenderBuffer("layer-1", 20, 20);
+
+    engine.invalidateLayerCache("layer-1");
+
+    expect(engineState.maskCanvasCache.has("layer-1")).toBe(false);
+    expect(engineState.layerRenderBufferCache.has("layer-1")).toBe(false);
+  });
+
   it("preserves previous transparent areas when composing a deletion mask", async () => {
     const engine = new ForgeEngine(canvas, onViewportChange);
     const project = createMockProject({

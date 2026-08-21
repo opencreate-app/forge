@@ -204,6 +204,44 @@ describe("ForgeEngine - Layer Styles", () => {
     expect(applyLayerMaskSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("should reuse the render buffer for a static layer mask without styles", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const project = createMockProject();
+    const maskedLayer = {
+      ...project.layers[0],
+      mask: {
+        data: "data:image/png;base64,mask",
+        x: 0,
+        y: 0,
+        width: project.layers[0].width,
+        height: project.layers[0].height,
+        enabled: true,
+        linked: true,
+      },
+    };
+
+    project.layers = [maskedLayer];
+    engine.setProject(project);
+
+    const engineState = engine as any;
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = maskedLayer.mask.width;
+    sourceCanvas.height = maskedLayer.mask.height;
+    engineState.maskCanvasCache.set(maskedLayer.id, {
+      canvas: sourceCanvas,
+      dataUrl: maskedLayer.mask.data,
+    });
+
+    const targetContext = canvas.getContext("2d")!;
+    engineState.renderLayerWithStyles(targetContext, maskedLayer);
+    const firstBuffer = engineState.layerRenderBufferCache.get(maskedLayer.id).canvas;
+
+    engineState.renderLayerWithStyles(targetContext, maskedLayer);
+    const secondBuffer = engineState.layerRenderBufferCache.get(maskedLayer.id).canvas;
+
+    expect(secondBuffer).toBe(firstBuffer);
+  });
+
   it("should size styled group bounds from a child's transform preview", () => {
     const engine = new ForgeEngine(canvas, onViewportChange);
     const project = createMockProject();

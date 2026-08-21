@@ -47,6 +47,18 @@ export interface EngineOptions {
   headless?: boolean;
 }
 
+interface MaskCanvasCacheEntry {
+  canvas: HTMLCanvasElement;
+  dataUrl: string;
+  alphaCanvas?: HTMLCanvasElement;
+}
+
+interface LayerRenderBufferCacheEntry {
+  canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+}
+
 /**
  * Core engine class responsible for project rendering, viewport management (zoom/pan),
  * tool orchestration, and selection handling. It manages the main rendering loop
@@ -74,7 +86,8 @@ export class ForgeEngine {
 
   private layerCanvasCache: Map<string, HTMLCanvasElement> = new Map();
   private layerReadyCache: Map<string, boolean> = new Map();
-  private maskCanvasCache: Map<string, { canvas: HTMLCanvasElement; dataUrl: string }> = new Map();
+  private maskCanvasCache: Map<string, MaskCanvasCacheEntry> = new Map();
+  private layerRenderBufferCache: Map<string, LayerRenderBufferCacheEntry> = new Map();
   private imageCache: Map<string, HTMLImageElement> = new Map();
 
   private selectionCanvas: HTMLCanvasElement;
@@ -1711,6 +1724,7 @@ export class ForgeEngine {
       this.layerCanvasCache.clear();
       this.layerReadyCache.clear();
       this.maskCanvasCache.clear();
+      this.layerRenderBufferCache.clear();
       this.imageCache.clear();
       this.draggingGuide = null;
       this.snappedLayerGuide = null;
@@ -1799,11 +1813,21 @@ export class ForgeEngine {
         if (!hasMatchingLayerCache) this.invalidateLayerCache(layer.id);
       }
 
-      const maskChanged = previousLayer?.mask?.data !== layer.mask?.data;
+      const maskChanged =
+        previousLayer?.mask?.data !== layer.mask?.data ||
+        previousLayer?.mask?.x !== layer.mask?.x ||
+        previousLayer?.mask?.y !== layer.mask?.y ||
+        previousLayer?.mask?.width !== layer.mask?.width ||
+        previousLayer?.mask?.height !== layer.mask?.height;
       if (maskChanged) {
         const cachedMask = this.maskCanvasCache.get(layer.id);
         if (!cachedMask || cachedMask.dataUrl !== layer.mask?.data) {
           this.maskCanvasCache.delete(layer.id);
+        } else if (
+          previousLayer?.mask?.width !== layer.mask?.width ||
+          previousLayer?.mask?.height !== layer.mask?.height
+        ) {
+          cachedMask.alphaCanvas = undefined;
         }
       }
     }
@@ -2541,11 +2565,45 @@ export class ForgeEngine {
     }
     // Inner shadow doesn't usually need padding outside the layer, but we use the same buffer logic.
 
+    const hasStyles =
+      stroke?.enabled === true || dropShadow?.enabled === true || innerShadow?.enabled === true;
+
+    // A static mask without styles does not need the full generic composition pipeline.
+    // Reuse one buffer and apply the precomputed alpha mask directly to it.
+    if (layer.mask?.enabled && !maskPreview && !hasStyles) {
+      const buffer = this.getLayerRenderBuffer(layer.id, width + padding * 2, height + padding * 2);
+      const bctx = buffer.getContext("2d")!;
+      bctx.setTransform(1, 0, 0, 1, 0, 0);
+      bctx.clearRect(0, 0, buffer.width, buffer.height);
+      bctx.imageSmoothingEnabled = false;
+
+      bctx.save();
+      bctx.translate(padding - x, padding - y);
+      const renderOptions: {
+        skipStyles: boolean;
+        groupTransformOrigin?: { x: number; y: number };
+      } = { skipStyles: true };
+      if (layer.type === "group") {
+        renderOptions.groupTransformOrigin = { x: 0, y: 0 };
+      }
+      this.renderLayerToContext(bctx, layer, editingState, renderOptions);
+      bctx.restore();
+
+      this.applyLayerMask(bctx, layer.id, layer.mask, buffer.width, buffer.height, padding, x, y);
+
+      const fillAlpha = (layer.fill ?? 100) / 100;
+      ctx.save();
+      ctx.globalAlpha *= fillAlpha;
+      ctx.drawImage(buffer, Math.round(x - padding), Math.round(y - padding));
+      ctx.restore();
+      return;
+    }
+
     // 1. Render layer content into an offscreen buffer
-    const buffer = document.createElement("canvas");
-    buffer.width = Math.ceil(width + padding * 2);
-    buffer.height = Math.ceil(height + padding * 2);
+    const buffer = this.getLayerRenderBuffer(layer.id, width + padding * 2, height + padding * 2);
     const bctx = buffer.getContext("2d")!;
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.clearRect(0, 0, buffer.width, buffer.height);
     bctx.imageSmoothingEnabled = false;
 
     // Adjust layer coordinates for the buffer
@@ -2738,6 +2796,81 @@ export class ForgeEngine {
   /**
    * Applies a layer mask to a context.
    */
+  private getLayerRenderBuffer(layerId: string, width: number, height: number): HTMLCanvasElement {
+    const targetWidth = Math.max(1, Math.ceil(width));
+    const targetHeight = Math.max(1, Math.ceil(height));
+    const cached = this.layerRenderBufferCache.get(layerId);
+
+    if (cached && cached.width === targetWidth && cached.height === targetHeight) {
+      return cached.canvas;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    this.layerRenderBufferCache.set(layerId, {
+      canvas,
+      width: targetWidth,
+      height: targetHeight,
+    });
+    return canvas;
+  }
+
+  /**
+   * Converts a grayscale layer mask into a reusable alpha canvas.
+   * The conversion is intentionally keyed by the mask data and dimensions so it
+   * never runs as part of the steady-state render loop.
+   */
+  private getMaskAlphaCanvas(layerId: string, mask: Layer["mask"]): HTMLCanvasElement | null {
+    if (!mask?.data || mask.width <= 0 || mask.height <= 0) return null;
+
+    const cached = this.maskCanvasCache.get(layerId);
+    if (
+      cached?.dataUrl === mask.data &&
+      cached.alphaCanvas?.width === mask.width &&
+      cached.alphaCanvas.height === mask.height
+    ) {
+      return cached.alphaCanvas;
+    }
+
+    let sourceCanvas = cached?.dataUrl === mask.data ? cached.canvas : null;
+    if (!sourceCanvas) {
+      const image = this.imageCache.get(mask.data);
+      if (!image || !image.complete || image.naturalWidth <= 0) return null;
+
+      sourceCanvas = document.createElement("canvas");
+      sourceCanvas.width = mask.width;
+      sourceCanvas.height = mask.height;
+      sourceCanvas.getContext("2d")!.drawImage(image, 0, 0, mask.width, mask.height);
+    }
+
+    const alphaCanvas = document.createElement("canvas");
+    alphaCanvas.width = mask.width;
+    alphaCanvas.height = mask.height;
+    const alphaCtx = alphaCanvas.getContext("2d")!;
+    alphaCtx.drawImage(sourceCanvas, 0, 0, mask.width, mask.height);
+
+    const imageData = alphaCtx.getImageData(0, 0, mask.width, mask.height);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const luminosity = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      data[i + 3] = (data[i + 3] * luminosity) / 255;
+    }
+    alphaCtx.putImageData(imageData, 0, 0);
+
+    if (cached?.dataUrl === mask.data) {
+      cached.alphaCanvas = alphaCanvas;
+    } else {
+      this.maskCanvasCache.set(layerId, {
+        canvas: sourceCanvas,
+        dataUrl: mask.data,
+        alphaCanvas,
+      });
+    }
+
+    return alphaCanvas;
+  }
+
   private applyLayerMask(
     ctx: CanvasRenderingContext2D,
     layerId: string,
@@ -2749,6 +2882,25 @@ export class ForgeEngine {
     layerY: number,
     maskPreview?: { canvas: HTMLCanvasElement; x: number; y: number } | null,
   ) {
+    if (mask?.enabled && !maskPreview) {
+      const alphaCanvas = this.getMaskAlphaCanvas(layerId, mask);
+      if (alphaCanvas) {
+        const drawX = padding + (mask.x - layerX);
+        const drawY = padding + (mask.y - layerY);
+
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(alphaCanvas, drawX, drawY, mask.width, mask.height);
+        ctx.restore();
+        return;
+      }
+
+      if (mask.data && !this.imageCache.has(mask.data)) {
+        void this.preloadImage(mask.data).then(() => this.render());
+      }
+      return;
+    }
+
     const maskCanvas = document.createElement("canvas");
     maskCanvas.width = width;
     maskCanvas.height = height;
@@ -2772,12 +2924,9 @@ export class ForgeEngine {
         mctx.drawImage(img, drawX, drawY, mask.width, mask.height);
       } else {
         // Load it for next time
-        const newImg = new Image();
-        newImg.onload = () => {
-          this.imageCache.set(mask.data, newImg);
-          this.render();
-        };
-        newImg.src = mask.data;
+        if (!this.imageCache.has(mask.data)) {
+          void this.preloadImage(mask.data).then(() => this.render());
+        }
         // While loading, treat as fully opaque (white)
         mctx.fillStyle = "white";
         mctx.fillRect(0, 0, width, height);
@@ -3234,6 +3383,7 @@ export class ForgeEngine {
     this.layerCanvasCache.delete(layerId);
     this.layerReadyCache.delete(layerId);
     this.maskCanvasCache.delete(layerId);
+    this.layerRenderBufferCache.delete(layerId);
   }
 
   /**
