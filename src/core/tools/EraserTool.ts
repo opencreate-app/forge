@@ -1,7 +1,7 @@
 /**
  * Purpose: Tool for removing content from raster layers, supporting both brush and pencil modes for soft or hard erasure.
  */
-import { BaseTool, ToolContext, ToolId } from "./BaseTool";
+import { BaseTool, getAxisLock, ToolContext, ToolId } from "./BaseTool";
 import { createHistoryState, HistoryState } from "@/renderer/store/projectStore";
 import { useUIStore } from "@store/uiStore";
 
@@ -31,6 +31,9 @@ export class EraserTool extends BaseTool {
   private maxY = -Infinity;
 
   private historySnapshot: HistoryState | null = null;
+  private lastPoint: { x: number; y: number; layerId: string } | null = null;
+  private isLineDrawing = false;
+  private axisLock: "horizontal" | "vertical" | null = null;
 
   private isLoadingBaseImage = false;
 
@@ -99,22 +102,26 @@ export class EraserTool extends BaseTool {
 
     if (isEditingMask && !layer.mask) return;
 
-    this.historySnapshot = createHistoryState(context.project);
-
-    this.isDrawing = true;
-    this.layerId = activeLayerId;
-
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
     const settings = context.settings.eraser;
 
     // If in pencil mode, snap to pixel
     const drawX = settings.mode === "pencil" ? Math.floor(x) : x;
     const drawY = settings.mode === "pencil" ? Math.floor(y) : y;
+    const lineStart =
+      e.shiftKey && this.lastPoint?.layerId === activeLayerId ? this.lastPoint : null;
+
+    this.historySnapshot = createHistoryState(context.project);
+
+    this.isDrawing = true;
+    this.layerId = activeLayerId;
+    this.isLineDrawing = lineStart !== null;
+    this.axisLock = null;
 
     this.mouseX = drawX;
     this.mouseY = drawY;
-    this.lastX = drawX;
-    this.lastY = drawY;
+    this.lastX = lineStart?.x ?? drawX;
+    this.lastY = lineStart?.y ?? drawY;
 
     if (settings.mode === "brush") {
       this.initBrush(settings.size, settings.hardness);
@@ -123,12 +130,14 @@ export class EraserTool extends BaseTool {
     this.initOffscreen(layer, context);
 
     const pad = settings.size;
-    this.minX = drawX - pad;
-    this.minY = drawY - pad;
-    this.maxX = drawX + pad;
-    this.maxY = drawY + pad;
+    this.minX = Math.min(this.lastX, drawX) - pad;
+    this.minY = Math.min(this.lastY, drawY) - pad;
+    this.maxX = Math.max(this.lastX, drawX) + pad;
+    this.maxY = Math.max(this.lastY, drawY) + pad;
 
     this.draw(drawX, drawY, context);
+    this.lastX = drawX;
+    this.lastY = drawY;
   }
 
   onMouseMove(e: MouseEvent, context: ToolContext): void {
@@ -154,9 +163,30 @@ export class EraserTool extends BaseTool {
       context.canvas.style.cursor = "default";
     }
 
-    if (!this.isDrawing) return;
+    if (!this.isDrawing || this.isLineDrawing) return;
 
     const pad = settings.size;
+
+    if (e.shiftKey) {
+      if (!this.axisLock) {
+        this.axisLock = getAxisLock({ x: this.lastX, y: this.lastY }, { x: drawX, y: drawY });
+      }
+
+      const constrainedX = this.axisLock === "horizontal" ? drawX : this.lastX;
+      const constrainedY = this.axisLock === "horizontal" ? this.lastY : drawY;
+
+      this.minX = Math.min(this.minX, constrainedX - pad);
+      this.minY = Math.min(this.minY, constrainedY - pad);
+      this.maxX = Math.max(this.maxX, constrainedX + pad);
+      this.maxY = Math.max(this.maxY, constrainedY + pad);
+
+      this.draw(constrainedX, constrainedY, context);
+      this.lastX = constrainedX;
+      this.lastY = constrainedY;
+      return;
+    }
+
+    this.axisLock = null;
     this.minX = Math.min(this.minX, drawX - pad);
     this.minY = Math.min(this.minY, drawY - pad);
     this.maxX = Math.max(this.maxX, drawX + pad);
@@ -176,6 +206,7 @@ export class EraserTool extends BaseTool {
     }
 
     this.isDrawing = false;
+    this.lastPoint = { x: this.lastX, y: this.lastY, layerId: this.layerId! };
 
     if (this.offscreenCanvas && this.layerId && this.offscreenCtx) {
       const layer = context.project.layers.find((l) => l.id === this.layerId)!;
@@ -314,6 +345,8 @@ export class EraserTool extends BaseTool {
     this.scratchCanvas = null;
     this.scratchCtx = null;
     this.historySnapshot = null;
+    this.isLineDrawing = false;
+    this.axisLock = null;
   }
 
   private getOptimizedBoundingBox(
@@ -644,6 +677,9 @@ export class EraserTool extends BaseTool {
     context.canvas.style.cursor = "default";
     this.isMouseOver = false;
     this.isDrawing = false;
+    this.isLineDrawing = false;
+    this.axisLock = null;
+    this.lastPoint = null;
   }
 
   getEditingLayerId(): string | null {

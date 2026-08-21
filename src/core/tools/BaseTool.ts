@@ -6,6 +6,17 @@ import { ToolSettings, ToolId } from "@/renderer/store/toolStore";
 
 export type { ToolId };
 
+/** Returns the axis closest to the direction between two points. */
+export function getAxisLock(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): "horizontal" | "vertical" {
+  const deltaX = Math.abs(end.x - start.x);
+  const deltaY = Math.abs(end.y - start.y);
+
+  return deltaX >= deltaY ? "horizontal" : "vertical";
+}
+
 /**
  * Provides the execution environment and API for tools to interact with the project and engine.
  */
