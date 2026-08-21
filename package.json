@@ -4,7 +4,7 @@
   "description": "Image Editor powered by React & Electron",
   "productName": "OpenCreate Forge",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.0-pre2",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
