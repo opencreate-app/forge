@@ -63,6 +63,13 @@ export interface ToolContext {
   foregroundColor: string;
   /** Current background color for painting tools. */
   backgroundColor: string;
+  /** Samples a rendered canvas pixel using viewport-local CSS coordinates. */
+  sampleColorAtScreen: (
+    x: number,
+    y: number,
+  ) => { r: number; g: number; b: number; a: number } | null;
+  /** Updates the global foreground color. */
+  setForegroundColor: (color: string) => void;
   /** Returns the canvas and context used for the selection mask. */
   getSelectionCanvas: () => {
     canvas: HTMLCanvasElement;

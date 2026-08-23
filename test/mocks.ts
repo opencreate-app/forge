@@ -75,6 +75,8 @@ export const createMockToolContext = (overrides: Partial<ToolContext> = {}): Too
     screenToProject: vi.fn((x, y) => ({ x, y })),
     foregroundColor: "#000000",
     backgroundColor: "#ffffff",
+    sampleColorAtScreen: vi.fn().mockReturnValue(null),
+    setForegroundColor: vi.fn(),
     getSelectionCanvas: vi.fn(() => ({
       canvas: document.createElement("canvas"),
       ctx: document.createElement("canvas").getContext("2d")!,

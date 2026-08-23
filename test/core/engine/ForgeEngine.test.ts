@@ -75,6 +75,25 @@ describe("ForgeEngine", () => {
     expect(context.getImageData).toHaveBeenCalledWith(400, 300, 1, 1);
   });
 
+  it("samples the scene snapshot after rendering and ignores tool overlays", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    engine.setProject(createMockProject({ layers: [] }));
+    Object.defineProperty(canvas, "getBoundingClientRect", {
+      value: () => ({ left: 10, top: 20, width: 1000, height: 800, right: 1010, bottom: 820 }),
+      configurable: true,
+    });
+
+    const sceneContext = (engine as any).sceneCtx as CanvasRenderingContext2D;
+    vi.spyOn(sceneContext, "getImageData").mockReturnValue({
+      data: new Uint8ClampedArray([200, 30, 40, 255]),
+    } as ImageData);
+
+    engine.render();
+
+    expect(engine.sampleColorAtScreen(110, 120)).toEqual({ r: 200, g: 30, b: 40, a: 255 });
+    expect(sceneContext.getImageData).toHaveBeenCalledWith(80, 75, 1, 1);
+  });
+
   it("applies immediate zoom requests without animation", () => {
     const engine = new ForgeEngine(canvas, onViewportChange);
     engine.resizeViewport(800, 600, 1);

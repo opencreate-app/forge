@@ -14,6 +14,7 @@ import { CropTool } from "../tools/CropTool";
 import { TextTool } from "../tools/TextTool";
 import { PaintBucketTool } from "../tools/PaintBucketTool";
 import { GradientTool } from "../tools/GradientTool";
+import { ColorPickerTool } from "../tools/ColorPickerTool";
 import { useToolStore } from "@/renderer/store/toolStore";
 import { useUIStore } from "@/renderer/store/uiStore";
 import UPNG from "upng-js";
@@ -101,6 +102,9 @@ export class ForgeEngine {
 
   private projectBuffer: HTMLCanvasElement;
   private projectCtx: CanvasRenderingContext2D;
+  private sceneCanvas: HTMLCanvasElement;
+  private sceneCtx: CanvasRenderingContext2D;
+  private sceneSnapshotReady = false;
 
   private currentToolId: string | null = null;
   private onViewportChange?: (zoom: number, x: number, y: number) => void;
@@ -134,6 +138,9 @@ export class ForgeEngine {
     this.ctx = canvas.getContext("2d")!;
     this.onViewportChange = onViewportChange;
     this.options = options;
+
+    this.sceneCanvas = document.createElement("canvas");
+    this.sceneCtx = this.sceneCanvas.getContext("2d", { willReadFrequently: true })!;
     this.resizeViewport(canvas.clientWidth || canvas.width, canvas.clientHeight || canvas.height);
 
     this.selectionCanvas = document.createElement("canvas");
@@ -155,6 +162,7 @@ export class ForgeEngine {
       transform: new TransformTool(),
       crop: new CropTool(),
       text: new TextTool(),
+      colorPicker: new ColorPickerTool(),
     };
 
     this.handleWheel = this.handleWheel.bind(this);
@@ -1247,6 +1255,11 @@ export class ForgeEngine {
       get backgroundColor() {
         return useToolStore.getState().backgroundColor;
       },
+      sampleColorAtScreen: (x: number, y: number) => {
+        const rect = this.canvas.getBoundingClientRect();
+        return this.sampleColorAtScreen(rect.left + x, rect.top + y);
+      },
+      setForegroundColor: (color: string) => useToolStore.getState().setForegroundColor(color),
       getSelectionCanvas: () => ({
         canvas: this.selectionCanvas,
         ctx: this.selectionCtx,
@@ -1357,7 +1370,10 @@ export class ForgeEngine {
   }
 
   /**
-   * Samples the currently rendered composite canvas at viewport coordinates.
+   * Samples the most recently rendered scene at viewport coordinates.
+   *
+   * The scene snapshot is captured before tool overlays are rendered, preventing tools such as
+   * the ColorPicker from sampling their own visual feedback.
    * @param clientX The pointer X coordinate in window space.
    * @param clientY The pointer Y coordinate in window space.
    */
@@ -1373,7 +1389,8 @@ export class ForgeEngine {
 
     if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height) return null;
 
-    const pixel = this.ctx.getImageData(x, y, 1, 1).data;
+    const sampleContext = this.sceneSnapshotReady ? this.sceneCtx : this.ctx;
+    const pixel = sampleContext.getImageData(x, y, 1, 1).data;
     return { r: pixel[0], g: pixel[1], b: pixel[2], a: pixel[3] };
   }
 
@@ -1393,6 +1410,10 @@ export class ForgeEngine {
 
     if (this.canvas.width !== pixelWidth) this.canvas.width = pixelWidth;
     if (this.canvas.height !== pixelHeight) this.canvas.height = pixelHeight;
+    if (this.sceneCanvas.width !== pixelWidth) this.sceneCanvas.width = pixelWidth;
+    if (this.sceneCanvas.height !== pixelHeight) this.sceneCanvas.height = pixelHeight;
+
+    this.sceneSnapshotReady = false;
 
     this.ctx.setTransform(this.devicePixelRatio, 0, 0, this.devicePixelRatio, 0, 0);
   }
@@ -2284,6 +2305,8 @@ export class ForgeEngine {
 
     this.renderGuides();
 
+    this.captureSceneSnapshot();
+
     // --- STEP 3: RENDER TOOLS AND UI ---
     const tool = this.getActiveTool();
     const context = this.getToolContext();
@@ -2331,6 +2354,14 @@ export class ForgeEngine {
     this.ctx.restore();
 
     this.renderSelection();
+  }
+
+  /** Captures the rendered scene before tool overlays are drawn on the main canvas. */
+  private captureSceneSnapshot(): void {
+    this.sceneCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this.sceneCtx.clearRect(0, 0, this.sceneCanvas.width, this.sceneCanvas.height);
+    this.sceneCtx.drawImage(this.canvas, 0, 0);
+    this.sceneSnapshotReady = true;
   }
 
   /**

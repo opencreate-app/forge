@@ -394,6 +394,8 @@ function App() {
           if (checkDirty("text")) setActiveTool("text");
         } else if (e.key.toLowerCase() === "g") {
           if (checkDirty("paintBucket")) setActiveTool("paintBucket");
+        } else if (e.key.toLowerCase() === "i") {
+          if (checkDirty("colorPicker")) setActiveTool("colorPicker");
         } else if (e.key.toLowerCase() === "x") {
           swapColors();
         } else if (e.key.toLowerCase() === "d") {

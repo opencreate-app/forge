@@ -12,6 +12,7 @@ import {
   Type,
   Maximize2,
   Crop,
+  Pipette,
   LucideIcon,
 } from "lucide-react";
 import { ToolId } from "@store/toolStore";
@@ -33,6 +34,7 @@ export const TOOLS: ToolDefinition[] = [
     name: "Transform",
   },
   { id: "crop", icon: Crop, label: "Crop (C)", name: "Crop" },
+  { id: "colorPicker", icon: Pipette, label: "Color Picker (I)", name: "Color Picker" },
   { id: "brush", icon: Brush, label: "Brush (B)", name: "Brush" },
   { id: "pencil", icon: Pencil, label: "Pencil (P)", name: "Pencil" },
   { id: "eraser", icon: Eraser, label: "Eraser (E)", name: "Eraser" },

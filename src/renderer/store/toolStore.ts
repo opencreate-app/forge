@@ -14,7 +14,8 @@ export type ToolId =
   | "gradient"
   | "text"
   | "transform"
-  | "crop";
+  | "crop"
+  | "colorPicker";
 
 export type SelectMode = "replace" | "unite" | "subtract" | "intersect";
 export type SelectShape = "rectangle" | "ellipse" | "lasso" | "wand";
