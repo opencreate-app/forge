@@ -99,6 +99,49 @@ describe("ColorPickerTool", () => {
     expect(renderContext.stroke).toHaveBeenCalled();
   });
 
+  it("keeps the ring visible throughout a temporary Alt preview", () => {
+    const tool = new ColorPickerTool();
+    const renderContext = context.ctx;
+    const fillRect = vi.spyOn(renderContext, "fillRect");
+
+    tool.beginTemporaryPreview(context);
+    tool.onRender(renderContext, context);
+    expect(fillRect).toHaveBeenCalledTimes(2);
+
+    fillRect.mockClear();
+    tool.onMouseDown({ button: 0, offsetX: 10, offsetY: 20 } as MouseEvent, context);
+    tool.finishTemporarySampling(context);
+
+    expect(context.setForegroundColor).not.toHaveBeenCalled();
+    tool.onRender(renderContext, context);
+    expect(fillRect).toHaveBeenCalledTimes(2);
+
+    tool.commitTemporaryPreview(context);
+    fillRect.mockClear();
+    tool.onRender(renderContext, context);
+    expect(fillRect).not.toHaveBeenCalled();
+    expect(context.setForegroundColor).toHaveBeenCalledWith("#ff1234");
+  });
+
+  it("cancels a temporary sample without hiding the ring until Alt is released", () => {
+    const tool = new ColorPickerTool();
+    const renderContext = context.ctx;
+    const fillRect = vi.spyOn(renderContext, "fillRect");
+
+    tool.beginTemporaryPreview(context);
+    tool.onMouseDown({ button: 0, offsetX: 10, offsetY: 20 } as MouseEvent, context);
+    tool.cancelTemporaryPreview(context);
+
+    expect(context.setForegroundColor).not.toHaveBeenCalled();
+    tool.onRender(renderContext, context);
+    expect(fillRect).toHaveBeenCalledTimes(2);
+
+    tool.commitTemporaryPreview(context);
+    fillRect.mockClear();
+    tool.onRender(renderContext, context);
+    expect(fillRect).not.toHaveBeenCalled();
+  });
+
   it("ignores non-primary mouse buttons and clears the preview when deactivated", () => {
     const tool = new ColorPickerTool();
 

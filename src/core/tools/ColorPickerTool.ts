@@ -24,6 +24,7 @@ export class ColorPickerTool extends BaseTool {
   private sampledColor: string | null = null;
   private originalForegroundColor = "#000000";
   private suppressNextContextMenu = false;
+  private previewVisible = false;
 
   onActivate(context: ToolContext): void {
     context.canvas.style.cursor = "crosshair";
@@ -44,6 +45,7 @@ export class ColorPickerTool extends BaseTool {
     if (e.button !== 0) return;
 
     this.isSampling = true;
+    this.previewVisible = true;
     this.suppressNextContextMenu = false;
     this.originalForegroundColor = context.foregroundColor;
     this.updatePointer(e, context);
@@ -53,9 +55,9 @@ export class ColorPickerTool extends BaseTool {
 
   onMouseMove(e: MouseEvent, context: ToolContext): void {
     context.canvas.style.cursor = "crosshair";
+    this.updatePointer(e, context);
     if (!this.isSampling) return;
 
-    this.updatePointer(e, context);
     this.sampleAtPointer(e, context);
   }
 
@@ -68,7 +70,48 @@ export class ColorPickerTool extends BaseTool {
 
     this.isSampling = false;
     this.sampledColor = null;
+    this.previewVisible = false;
     context.canvas.style.cursor = "crosshair";
+  }
+
+  /** Starts the temporary preview used by painting tools while Alt is held. */
+  beginTemporaryPreview(context: ToolContext): void {
+    this.isSampling = false;
+    this.sampledColor = null;
+    this.originalForegroundColor = context.foregroundColor;
+    this.previewVisible = true;
+    this.suppressNextContextMenu = false;
+    context.canvas.style.cursor = "crosshair";
+  }
+
+  /** Ends the current temporary sampling gesture while keeping the preview visible. */
+  finishTemporarySampling(context: ToolContext): void {
+    this.isSampling = false;
+    context.canvas.style.cursor = "crosshair";
+  }
+
+  /** Commits the last temporary sample and hides the preview. */
+  commitTemporaryPreview(context: ToolContext): void {
+    if (this.sampledColor) {
+      context.setForegroundColor(this.sampledColor);
+    }
+
+    this.clearPreview(context);
+  }
+
+  /** Cancels the temporary sample while keeping the ring visible until Alt is released. */
+  cancelTemporaryPreview(context: ToolContext): void {
+    this.isSampling = false;
+    this.sampledColor = null;
+    this.previewVisible = true;
+    context.canvas.style.cursor = "crosshair";
+  }
+
+  /** Updates the preview position from viewport-local CSS coordinates. */
+  setPointerPosition(x: number, y: number, context: ToolContext): void {
+    const point = context.screenToProject(x, y);
+    this.mouseX = point.x;
+    this.mouseY = point.y;
   }
 
   onContextMenu(_e: MouseEvent, context: ToolContext): boolean {
@@ -95,7 +138,7 @@ export class ColorPickerTool extends BaseTool {
   }
 
   onRender(ctx: CanvasRenderingContext2D, context: ToolContext): void {
-    if (!this.isSampling || !this.sampledColor) return;
+    if (!this.previewVisible) return;
 
     const zoom = context.project.zoom;
     const outerRadius = 56 / zoom;
@@ -106,7 +149,13 @@ export class ColorPickerTool extends BaseTool {
     context.setViewportTransform(zoom, context.project.panX, context.project.panY);
 
     // The annulus is split horizontally while leaving the center transparent.
-    this.drawRingHalf(ctx, outerRadius, innerRadius, this.sampledColor, true);
+    this.drawRingHalf(
+      ctx,
+      outerRadius,
+      innerRadius,
+      this.sampledColor || this.originalForegroundColor,
+      true,
+    );
     this.drawRingHalf(ctx, outerRadius, innerRadius, this.originalForegroundColor, false);
 
     ctx.strokeStyle = "rgba(0, 0, 0, 0.95)";
@@ -156,14 +205,23 @@ export class ColorPickerTool extends BaseTool {
   }
 
   private reset(context: ToolContext): void {
-    this.cancel(context);
+    this.clearPreview(context);
     context.canvas.style.cursor = "default";
   }
 
   private cancel(context: ToolContext): void {
     this.isSampling = false;
     this.sampledColor = null;
+    this.previewVisible = false;
     this.suppressNextContextMenu = false;
     context.canvas.style.cursor = "crosshair";
+  }
+
+  private clearPreview(context: ToolContext): void {
+    this.isSampling = false;
+    this.sampledColor = null;
+    this.previewVisible = false;
+    this.suppressNextContextMenu = false;
+    context.canvas.style.cursor = "default";
   }
 }

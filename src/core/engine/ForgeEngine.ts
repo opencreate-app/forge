@@ -108,6 +108,8 @@ export class ForgeEngine {
 
   private currentToolId: string | null = null;
   private onViewportChange?: (zoom: number, x: number, y: number) => void;
+  private temporaryColorPickerActive = false;
+  private lastPointerPosition: { x: number; y: number } | null = null;
 
   private draggingGuide: {
     id?: string;
@@ -748,6 +750,12 @@ export class ForgeEngine {
    */
   private handleKeyUp = (e: KeyboardEvent) => {
     this.isCtrlPressed = e.ctrlKey || e.metaKey;
+
+    if (e.key === "Alt" && this.temporaryColorPickerActive) {
+      const context = this.getToolContext();
+      if (context) this.getColorPickerTool().commitTemporaryPreview(context);
+      this.temporaryColorPickerActive = false;
+    }
   };
 
   /**
@@ -882,9 +890,22 @@ export class ForgeEngine {
 
     this.isCtrlPressed = e.ctrlKey || e.metaKey;
 
-    const tool = this.getActiveTool();
+    if (e.key === "Alt") {
+      const context = this.getToolContext();
+      if (context) this.beginTemporaryColorPicker(context);
+      return;
+    }
+
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) {
+      if (this.temporaryColorPickerActive && e.key === "Escape") {
+        this.getColorPickerTool().cancelTemporaryPreview(context);
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+
       const consumed = tool.onKeyDown(e, context);
       if (consumed) {
         e.stopImmediatePropagation();
@@ -1192,10 +1213,14 @@ export class ForgeEngine {
       return;
     }
 
-    const tool = this.getActiveTool();
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) {
-      tool.onMouseUp(e, context);
+      if (this.temporaryColorPickerActive) {
+        this.getColorPickerTool().finishTemporarySampling(context);
+      } else {
+        tool.onMouseUp(e, context);
+      }
     }
   }
 
@@ -1205,6 +1230,38 @@ export class ForgeEngine {
   private getActiveTool(): BaseTool | null {
     const activeToolId = useToolStore.getState().activeToolId;
     return this.tools[activeToolId] || null;
+  }
+
+  /** Returns the tool that should receive pointer events and render previews. */
+  private getInteractionTool(): BaseTool | null {
+    return this.temporaryColorPickerActive ? this.getColorPickerTool() : this.getActiveTool();
+  }
+
+  private getColorPickerTool(): ColorPickerTool {
+    return this.tools.colorPicker as ColorPickerTool;
+  }
+
+  private beginTemporaryColorPicker(context: ToolContext): void {
+    if (this.temporaryColorPickerActive) return;
+
+    const activeTool = this.getActiveTool();
+    if (!activeTool || !this.canUseTemporaryColorPicker(activeTool)) return;
+    if (activeTool.getEditingLayerId()) return;
+
+    this.temporaryColorPickerActive = true;
+    const colorPicker = this.getColorPickerTool();
+    colorPicker.beginTemporaryPreview(context);
+    if (this.lastPointerPosition) {
+      colorPicker.setPointerPosition(
+        this.lastPointerPosition.x,
+        this.lastPointerPosition.y,
+        context,
+      );
+    }
+  }
+
+  private canUseTemporaryColorPicker(tool: BaseTool): boolean {
+    return tool.id === "brush" || tool.id === "pencil" || tool.id === "paintBucket";
   }
 
   /**
@@ -1476,6 +1533,14 @@ export class ForgeEngine {
     if (!this.project) return;
     this.stopViewportAnimation();
 
+    if (e.button === 0) {
+      this.lastPointerPosition = { x: e.offsetX, y: e.offsetY };
+      if (e.altKey) {
+        const context = this.getToolContext();
+        if (context) this.beginTemporaryColorPicker(context);
+      }
+    }
+
     if (e.button === 1) {
       this.isPanning = true;
       this.startX = e.clientX - this.project.panX;
@@ -1496,7 +1561,14 @@ export class ForgeEngine {
       }
     }
 
-    const tool = this.getActiveTool();
+    if (this.temporaryColorPickerActive && e.button === 2) {
+      const context = this.getToolContext();
+      if (context) this.getColorPickerTool().cancelTemporaryPreview(context);
+      e.preventDefault();
+      return;
+    }
+
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) {
       tool.onMouseDown(e, context);
@@ -1517,7 +1589,14 @@ export class ForgeEngine {
 
   private handleContextMenu(e: MouseEvent) {
     if (!this.project) return;
-    const tool = this.getActiveTool();
+    if (this.temporaryColorPickerActive) {
+      const context = this.getToolContext();
+      if (context) this.getColorPickerTool().cancelTemporaryPreview(context);
+      e.preventDefault();
+      return;
+    }
+
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context && tool.onContextMenu(e, context)) {
       e.preventDefault();
@@ -1543,6 +1622,7 @@ export class ForgeEngine {
     const rect = this.canvas.getBoundingClientRect();
     const offsetX = e.clientX - rect.left;
     const offsetY = e.clientY - rect.top;
+    this.lastPointerPosition = { x: offsetX, y: offsetY };
 
     window.dispatchEvent(
       new CustomEvent("forge:mouse-move", {
@@ -1640,7 +1720,12 @@ export class ForgeEngine {
       this.canvas.style.cursor = "default";
     }
 
-    const tool = this.getActiveTool();
+    if (e.altKey && !this.temporaryColorPickerActive) {
+      const context = this.getToolContext();
+      if (context) this.beginTemporaryColorPicker(context);
+    }
+
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) {
       const rect = this.canvas.getBoundingClientRect();
@@ -2230,6 +2315,11 @@ export class ForgeEngine {
     if (activeToolId !== this.currentToolId) {
       const context = this.getToolContext();
       if (context) {
+        if (this.temporaryColorPickerActive) {
+          this.getColorPickerTool().cancelTemporaryPreview(context);
+          this.temporaryColorPickerActive = false;
+        }
+
         if (this.currentToolId && this.tools[this.currentToolId]) {
           this.tools[this.currentToolId].onDeactivate(context);
         }
@@ -2308,7 +2398,7 @@ export class ForgeEngine {
     this.captureSceneSnapshot();
 
     // --- STEP 3: RENDER TOOLS AND UI ---
-    const tool = this.getActiveTool();
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) tool.onRender(this.ctx, context);
 
