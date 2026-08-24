@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ForgeEngine } from "@/core/engine/ForgeEngine";
 import { createMockProject } from "../../mocks";
+import { useToolStore } from "@store/toolStore";
 
 describe("ForgeEngine", () => {
   let canvas: HTMLCanvasElement;
@@ -47,6 +48,46 @@ describe("ForgeEngine", () => {
     expect(engine.sampleColorAtScreen(110, 170)).toEqual({ r: 12, g: 34, b: 56, a: 255 });
     expect(context.getImageData).toHaveBeenCalledWith(200, 300, 1, 1);
     expect(engine.sampleColorAtScreen(500, 500)).toBeNull();
+  });
+
+  it("switches from MoveTool to text editing on a text layer double click", () => {
+    const textLayer = {
+      id: "text-layer",
+      name: "Text",
+      type: "text" as const,
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 0,
+      y: 0,
+      width: 120,
+      height: 30,
+      blendMode: "source-over" as const,
+      text: "Editable text",
+      textType: "point" as const,
+      fontSize: 24,
+      fontFamily: "Arial",
+      fontWeight: "400",
+    };
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    engine.setProject(
+      createMockProject({
+        layers: [textLayer],
+        activeLayerId: textLayer.id,
+        selectedLayerIds: [textLayer.id],
+      }),
+    );
+    useToolStore.getState().setActiveTool("move");
+
+    (engine as any).handleDoubleClick({ offsetX: 10, offsetY: 10 } as MouseEvent);
+
+    expect(useToolStore.getState().activeToolId).toBe("text");
+    engine.render();
+    expect((engine as any).tools.text.getEditingLayerId()).toBe(textLayer.id);
+
+    useToolStore.getState().setActiveTool("move");
+    engine.stopRenderLoop();
   });
 
   it("keeps the logical viewport size while scaling the backing store for HiDPI", () => {

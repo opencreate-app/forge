@@ -238,6 +238,15 @@ const LayerItem: React.FC<LayerItemProps> = ({
     window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
   };
 
+  const handleTextDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("forge:edit-text-layer", {
+        detail: { projectId, layerId: layer.id },
+      }),
+    );
+  };
+
   const handleColorFillDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     window.dispatchEvent(
@@ -358,7 +367,8 @@ const LayerItem: React.FC<LayerItemProps> = ({
               }
             }}
             onDoubleClick={(e) => {
-              if (layer.type === "color_fill") handleColorFillDoubleClick(e);
+              if (layer.type === "text") handleTextDoubleClick(e);
+              else if (layer.type === "color_fill") handleColorFillDoubleClick(e);
               else if (layer.type === "gradient_fill") handleGradientDoubleClick(e);
               else if (layer.type === "smart_object") {
                 e.stopPropagation();
@@ -394,7 +404,8 @@ const LayerItem: React.FC<LayerItemProps> = ({
               }
             }}
             onDoubleClick={(e) => {
-              if (layer.type === "color_fill") handleColorFillDoubleClick(e);
+              if (layer.type === "text") handleTextDoubleClick(e);
+              else if (layer.type === "color_fill") handleColorFillDoubleClick(e);
               else if (layer.type === "gradient_fill") handleGradientDoubleClick(e);
             }}
             style={

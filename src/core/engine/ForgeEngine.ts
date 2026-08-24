@@ -196,6 +196,22 @@ export class ForgeEngine {
     }
   };
 
+  private handleEditTextLayer = (event: Event) => {
+    const detail = (event as CustomEvent<{ projectId?: string; layerId?: string }>).detail;
+    if (!detail?.layerId || (detail.projectId && detail.projectId !== this.project?.id)) return;
+
+    const context = this.getToolContext();
+    const textTool = this.tools.text as TextTool;
+    if (!context || !this.project) return;
+
+    if (this.currentToolId === "text") {
+      textTool.beginEditingLayer(detail.layerId, context);
+    } else {
+      textTool.requestEditLayer(detail.layerId);
+      useToolStore.getState().setActiveTool("text");
+    }
+  };
+
   /**
    * Exports the current project with the specified options.
    */
@@ -365,6 +381,7 @@ export class ForgeEngine {
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
     window.addEventListener("forge:select-clear", this.handleClearSelection);
+    window.addEventListener("forge:edit-text-layer", this.handleEditTextLayer);
     window.addEventListener("forge:select-all", this.handleSelectAll);
     window.addEventListener("forge:duplicate-layer", this.handleDuplicate);
     window.addEventListener("forge:export-project", this.handleExport as any);
@@ -1587,11 +1604,22 @@ export class ForgeEngine {
    */
   private handleDoubleClick(e: MouseEvent) {
     if (!this.project) return;
-    const tool = this.getActiveTool();
     const context = this.getToolContext();
-    if (tool && context) {
-      tool.onDoubleClick(e, context);
+    const tool = this.getActiveTool();
+    if (!context || !tool) return;
+
+    if (tool.id === "move") {
+      const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
+      const textTool = this.tools.text as TextTool;
+      const hitLayer = textTool.getTextLayerAtPoint(x, y, context);
+      if (hitLayer) {
+        textTool.requestEditLayer(hitLayer.id, x, y, true);
+        useToolStore.getState().setActiveTool("text");
+        return;
+      }
     }
+
+    tool.onDoubleClick(e, context);
   }
 
   private handleContextMenu(e: MouseEvent) {
@@ -1785,6 +1813,7 @@ export class ForgeEngine {
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("forge:select-clear", this.handleClearSelection);
+    window.removeEventListener("forge:edit-text-layer", this.handleEditTextLayer);
     window.removeEventListener("forge:select-all", this.handleSelectAll);
     window.removeEventListener("forge:duplicate-layer", this.handleDuplicate);
     window.removeEventListener("forge:export-project", this.handleExport as any);

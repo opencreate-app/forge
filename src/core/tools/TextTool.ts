@@ -54,6 +54,12 @@ export class TextTool extends BaseTool {
   private isComposing = false;
   private lastContext: ToolContext | null = null;
   private dragStartRotation: number = 0;
+  private pendingEditRequest: {
+    layerId: string;
+    hitX?: number;
+    hitY?: number;
+    selectWord: boolean;
+  } | null = null;
   private pendingTextStyle: TextSpanStyle = {};
   private fontSizeScaleSession: {
     gestureId: number;
@@ -85,6 +91,18 @@ export class TextTool extends BaseTool {
     window.addEventListener("keydown", this.handleKeyChange);
     window.addEventListener("keyup", this.handleKeyChange);
     this.createHiddenInput(context);
+
+    const pendingEditRequest = this.pendingEditRequest;
+    this.pendingEditRequest = null;
+    if (pendingEditRequest) {
+      this.beginEditingLayer(
+        pendingEditRequest.layerId,
+        context,
+        pendingEditRequest.hitX,
+        pendingEditRequest.hitY,
+        pendingEditRequest.selectWord,
+      );
+    }
   }
 
   onDeactivate(context: ToolContext): void {
@@ -170,6 +188,44 @@ export class TextTool extends BaseTool {
 
   getEditingLayerId(): string | null {
     return this.isEditing ? this.editingLayerId : null;
+  }
+
+  requestEditLayer(layerId: string, hitX?: number, hitY?: number, selectWord = false): void {
+    this.pendingEditRequest = { layerId, hitX, hitY, selectWord };
+  }
+
+  beginEditingLayer(
+    layerId: string,
+    context: ToolContext,
+    hitX?: number,
+    hitY?: number,
+    selectWord = false,
+  ): boolean {
+    const layer = context.project.layers.find((item) => item.id === layerId);
+    if (
+      !layer ||
+      layer.type !== "text" ||
+      !context.isLayerVisible(layer.id) ||
+      context.isLayerLocked(layer.id)
+    ) {
+      return false;
+    }
+
+    if (this.isEditing && this.editingLayerId !== layer.id) {
+      this.commit(context);
+    }
+    if (!this.isEditing || this.editingLayerId !== layer.id) {
+      this.startEditing(layer, context, hitX, hitY);
+    }
+
+    if (selectWord && hitX !== undefined && hitY !== undefined) {
+      this.selectWordAtPoint(layer, context, hitX, hitY);
+    }
+    return true;
+  }
+
+  getTextLayerAtPoint(x: number, y: number, context: ToolContext): Layer | null {
+    return this.findTextLayerAt(x, y, context);
   }
 
   private getTransformHandles(layer: Layer, zoom: number) {
@@ -1027,19 +1083,18 @@ export class TextTool extends BaseTool {
     const hitLayer = this.findTextLayerAt(x, y, context);
 
     if (hitLayer) {
-      if (!this.isEditing || this.editingLayerId !== hitLayer.id) {
-        this.startEditing(hitLayer, context, x, y);
-      }
-
-      const localPos = this.worldToLocal(x, y, hitLayer);
-      const index = TextLayer.getCaretIndexAt(context.ctx, hitLayer, localPos.x, localPos.y);
-      const text = hitLayer.text || "";
-
-      const wordRange = getTextWordRangeAt(text, index);
-      this.selectionStart = wordRange?.start ?? index;
-      this.caretIndex = wordRange?.end ?? index;
-      this.syncEditorStore(hitLayer);
+      this.beginEditingLayer(hitLayer.id, context, x, y, true);
     }
+  }
+
+  private selectWordAtPoint(layer: Layer, context: ToolContext, x: number, y: number): void {
+    const localPos = this.worldToLocal(x, y, layer);
+    const index = TextLayer.getCaretIndexAt(context.ctx, layer, localPos.x, localPos.y);
+    const text = layer.text || "";
+    const wordRange = getTextWordRangeAt(text, index);
+    this.selectionStart = wordRange?.start ?? index;
+    this.caretIndex = wordRange?.end ?? index;
+    this.syncEditorStore(layer);
   }
 
   private findTextLayerAt(x: number, y: number, context: ToolContext): Layer | null {

@@ -162,6 +162,57 @@ describe("LayerItem", () => {
     window.removeEventListener("forge:open-gradient-editor-for-layer", onOpenGradientEditor);
   });
 
+  it("requests text editing when a text thumbnail is double-clicked", () => {
+    const textLayer: Layer = {
+      ...colorFillLayer,
+      id: "text-1",
+      name: "Text",
+      type: "text",
+      colorFill: undefined,
+      text: "Editable text",
+      textType: "point",
+      fontSize: 24,
+      fontFamily: "Arial",
+      fontWeight: "400",
+    };
+    const onEditText = vi.fn();
+    window.addEventListener("forge:edit-text-layer", onEditText);
+
+    const view = render(
+      <LayerItem
+        layer={textLayer}
+        projectId="project-1"
+        isActive
+        isSelected
+        index={0}
+        depth={0}
+        isInheritedHidden={false}
+        draggedIndex={null}
+        onDragStart={vi.fn()}
+        onDragOver={vi.fn()}
+        onDrop={vi.fn()}
+        onClick={vi.fn()}
+        onVisibilityMouseDown={vi.fn()}
+        onVisibilityMouseEnter={vi.fn()}
+        onToggleExpansion={vi.fn()}
+        onContextMenu={vi.fn()}
+      />,
+    );
+
+    const thumbnail = view.container.querySelector("div.w-8.h-8");
+    expect(thumbnail).not.toBeNull();
+    fireEvent.doubleClick(thumbnail!);
+
+    expect(onEditText).toHaveBeenCalledOnce();
+    expect(onEditText.mock.calls[0][0].detail).toEqual({
+      projectId: "project-1",
+      layerId: "text-1",
+    });
+    expect(useUIStore.getState().stylingLayerId).toBeNull();
+
+    window.removeEventListener("forge:edit-text-layer", onEditText);
+  });
+
   it.each([
     ["replace", { ctrlKey: true }],
     ["unite", { ctrlKey: true, shiftKey: true }],
