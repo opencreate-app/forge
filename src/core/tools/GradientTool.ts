@@ -13,6 +13,8 @@ import { useGradientStore } from "@/renderer/store/gradientStore";
 import { useToolStore } from "@/renderer/store/toolStore";
 import {
   cloneGradientStops,
+  cloneGradientOpacityStops,
+  getGradientOpacityStops,
   interpolateGradientColor,
   sortGradientStops,
 } from "@/renderer/utils/gradientUtils";
@@ -28,6 +30,9 @@ const cloneGradient = (gradient: GradientFill): GradientFill => ({
   start: { ...gradient.start },
   end: { ...gradient.end },
   colors: cloneGradientStops(gradient.colors),
+  opacityStops: cloneGradientOpacityStops(
+    getGradientOpacityStops(gradient.colors, gradient.opacityStops),
+  ),
 });
 
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -744,11 +749,15 @@ export class GradientTool extends BaseTool {
             { color: context.foregroundColor, position: 0 },
             { color: context.backgroundColor, position: 1 },
           ]
-        : cloneGradientStops(preset.colors);
+        : preset.id === "foreground-transparent"
+          ? preset.colors.map((stop) => ({ ...stop, color: context.foregroundColor }))
+          : cloneGradientStops(preset.colors);
+    const opacityStops = getGradientOpacityStops(colors, preset.opacityStops);
 
     return {
       type: preset.type,
       colors,
+      opacityStops,
       start: { x: 0, y: 0 },
       end: { x: layer.width, y: layer.height },
     };

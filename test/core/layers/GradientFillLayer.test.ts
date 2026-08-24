@@ -47,4 +47,26 @@ describe("GradientFillLayer", () => {
       expect(ctx.fillRect).toHaveBeenCalledWith(10, 20, 100, 80);
     },
   );
+
+  it("renders stop opacity as an rgba canvas color", () => {
+    const gradient = { addColorStop: vi.fn() } as unknown as CanvasGradient;
+    const ctx = {
+      createLinearGradient: vi.fn(() => gradient),
+      fillRect: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
+
+    GradientFillLayer.render(ctx, {
+      ...layer,
+      gradientFill: {
+        ...layer.gradientFill!,
+        colors: [
+          { color: "#ff0000", position: 0, opacity: 0.25 },
+          { color: "#0000ff", position: 1 },
+        ],
+      },
+    });
+
+    expect(gradient.addColorStop).toHaveBeenNthCalledWith(1, 0, "rgba(255, 0, 0, 0.25)");
+    expect(gradient.addColorStop).toHaveBeenNthCalledWith(2, 1, "#0000ff");
+  });
 });

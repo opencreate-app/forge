@@ -44,6 +44,6 @@ export const TOOLS: ToolDefinition[] = [
     label: "Paint Bucket (G)",
     name: "Paint Bucket",
   },
-  { id: "gradient", icon: Blend, label: "Gradient", name: "Gradient" },
+  { id: "gradient", icon: Blend, label: "Gradient (Shift+G)", name: "Gradient" },
   { id: "text", icon: Type, label: "Text (T)", name: "Text" },
 ];

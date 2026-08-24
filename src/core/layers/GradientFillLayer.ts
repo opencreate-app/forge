@@ -2,6 +2,7 @@
  * Purpose: Renders non-destructive linear, radial, and angular gradient layers.
  */
 import { GradientFill, Layer } from "@/renderer/store/projectStore";
+import { resolveGradientStops, gradientStopToCssColor } from "@/renderer/utils/gradientUtils";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -25,9 +26,9 @@ export class GradientFillLayer {
     const gradient = this.createGradient(ctx, gradientFill, start, end);
     if (!gradient) return;
 
-    const stops = [...gradientFill.colors].sort((a, b) => a.position - b.position);
+    const stops = resolveGradientStops(gradientFill.colors, gradientFill.opacityStops);
     stops.forEach((stop) => {
-      gradient.addColorStop(clamp(stop.position, 0, 1), stop.color);
+      gradient.addColorStop(clamp(stop.position, 0, 1), gradientStopToCssColor(stop));
     });
 
     ctx.fillStyle = gradient;

@@ -233,6 +233,7 @@ function App() {
           name: layer.name,
           type: layer.gradientFill.type,
           colors: layer.gradientFill.colors.map((stop) => ({ ...stop })),
+          opacityStops: layer.gradientFill.opacityStops?.map((stop) => ({ ...stop })),
         },
       });
     },
@@ -376,6 +377,15 @@ function App() {
         if (activeToolId === "transform")
           window.dispatchEvent(new CustomEvent("forge:transform-cancel"));
         if (activeToolId === "crop") window.dispatchEvent(new CustomEvent("forge:crop-cancel"));
+      } else if (
+        e.shiftKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "g"
+      ) {
+        e.preventDefault();
+        if (checkDirty("gradient")) setActiveTool("gradient");
       } else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
         // Tool shortcuts - only if no modifiers
         if (e.key.toLowerCase() === "v") {

@@ -8,6 +8,11 @@ import { useGradientStore } from "@store/gradientStore";
 import { useProjectStore } from "@store/projectStore";
 import type { ToolOptionProps } from "../ToolOptions";
 import type { GradientEditorOpenRequest } from "@utils/gradientEditor";
+import {
+  getGradientPreviewStyle,
+  resolveGradientStops,
+  gradientStopToCssColor,
+} from "@utils/gradientUtils";
 
 interface GradientOptionsProps extends ToolOptionProps {
   onOpenGradientEditor?: (request: GradientEditorOpenRequest) => void;
@@ -40,8 +45,12 @@ export const GradientOptions: React.FC<GradientOptionsProps> = ({ onOpenGradient
           { color: foregroundColor, position: 0 },
           { color: backgroundColor, position: 1 },
         ]
-      : selectedPreset.colors;
-  const preview = colors.map((stop) => `${stop.color} ${stop.position * 100}%`).join(", ");
+      : selectedPreset.id === "foreground-transparent"
+        ? selectedPreset.colors.map((stop) => ({ ...stop, color: foregroundColor }))
+        : selectedPreset.colors;
+  const preview = resolveGradientStops(colors, selectedPreset.opacityStops)
+    .map((stop) => `${gradientStopToCssColor(stop)} ${stop.position * 100}%`)
+    .join(", ");
   const previewBackground =
     selectedPreset.type === "radial"
       ? `radial-gradient(circle, ${preview})`
@@ -65,8 +74,13 @@ export const GradientOptions: React.FC<GradientOptionsProps> = ({ onOpenGradient
             name: activeGradient.name,
             type: activeGradient.gradientFill!.type,
             colors: activeGradient.gradientFill!.colors.map((stop) => ({ ...stop })),
+            opacityStops: activeGradient.gradientFill!.opacityStops?.map((stop) => ({ ...stop })),
           }
-        : { ...selectedPreset, colors: colors.map((stop) => ({ ...stop })) },
+        : {
+            ...selectedPreset,
+            colors: colors.map((stop) => ({ ...stop })),
+            opacityStops: selectedPreset.opacityStops?.map((stop) => ({ ...stop })),
+          },
       onApply: (preset) => {
         if (!activeGradient) {
           updatePreset(selectedPreset.id, preset);
@@ -98,7 +112,7 @@ export const GradientOptions: React.FC<GradientOptionsProps> = ({ onOpenGradient
       </label>
       <div
         className="h-6 w-28 rounded border border-border"
-        style={{ background: previewBackground }}
+        style={getGradientPreviewStyle(previewBackground)}
       />
       <button
         type="button"

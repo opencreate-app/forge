@@ -48,6 +48,32 @@ describe("GradientTool", () => {
     );
   });
 
+  it("uses the current foreground for the foreground-to-transparent preset", async () => {
+    const tool = new GradientTool();
+    context.foregroundColor = "#12ab34";
+    useToolStore.setState({
+      toolSettings: {
+        ...useToolStore.getState().toolSettings,
+        gradient: { presetId: "foreground-transparent" },
+      },
+    });
+
+    tool.onMouseDown({ button: 0, offsetX: 10, offsetY: 20 } as MouseEvent, context);
+    tool.onMouseMove({ button: 0, offsetX: 90, offsetY: 80 } as MouseEvent, context);
+    tool.onMouseUp({ button: 0, offsetX: 90, offsetY: 80 } as MouseEvent, context);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const gradient = context.updateProject.mock.calls[0][0].layers[0].gradientFill;
+    expect(gradient.colors).toEqual([
+      { color: "#12ab34", position: 0 },
+      { color: "#12ab34", position: 1 },
+    ]);
+    expect(gradient.opacityStops).toEqual([
+      { opacity: 1, position: 0 },
+      { opacity: 0, position: 1 },
+    ]);
+  });
+
   it("uses the full project bounds while creating a gradient on a group", () => {
     const renderSpy = vi.spyOn(GradientFillLayer, "render").mockImplementation(() => undefined);
     const tool = new GradientTool();

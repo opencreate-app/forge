@@ -113,11 +113,20 @@ export type GradientType = "linear" | "radial" | "angular";
 export interface GradientStop {
   color: string;
   position: number;
+  /** Legacy stop opacity from 0 to 1. New gradients use GradientFill.opacityStops. */
+  opacity?: number;
+}
+
+export interface GradientOpacityStop {
+  opacity: number;
+  position: number;
 }
 
 export interface GradientFill {
   type: GradientType;
   colors: GradientStop[];
+  /** Independent opacity stops. Missing in legacy projects. */
+  opacityStops?: GradientOpacityStop[];
   start: { x: number; y: number };
   end: { x: number; y: number };
 }
@@ -461,14 +470,39 @@ const getMaxHistory = () => usePreferencesStore.getState().historyLimit;
  */
 export const normalizeHistoryState = (state: any): HistoryState => ({
   ...state,
+  layers: (state.layers || []).map((layer: any) => normalizeGradientLayer(layer)),
   guides: state.guides || [],
   selectedLayerIds: state.selectedLayerIds || (state.activeLayerId ? [state.activeLayerId] : []),
   selection: state.selection || { hasSelection: false, bounds: null },
 });
 
+const normalizeGradientLayer = (layer: any) => {
+  if (!layer?.gradientFill) return layer;
+
+  const colors = (layer.gradientFill.colors || []).map((stop: any) => ({
+    color: stop.color,
+    position: stop.position,
+    ...(typeof stop.opacity === "number" ? { opacity: stop.opacity } : {}),
+  }));
+  const opacityStops = Array.isArray(layer.gradientFill.opacityStops)
+    ? layer.gradientFill.opacityStops.map((stop: any) => ({
+        opacity: Math.min(1, Math.max(0, Number(stop.opacity) || 0)),
+        position: Math.min(1, Math.max(0, Number(stop.position) || 0)),
+      }))
+    : colors.map((stop: any) => ({
+        opacity: typeof stop.opacity === "number" ? Math.min(1, Math.max(0, stop.opacity)) : 1,
+        position: stop.position,
+      }));
+
+  return {
+    ...layer,
+    gradientFill: { ...layer.gradientFill, colors, opacityStops },
+  };
+};
+
 export const normalizeProject = (project: any): Project => {
   const normalizedLayers = (project.layers || []).map((l: any) => ({
-    ...l,
+    ...normalizeGradientLayer(l),
     opacity: l.opacity ?? 100,
     fill: l.fill ?? 100,
     blendMode: l.blendMode || "source-over",

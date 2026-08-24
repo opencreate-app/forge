@@ -23,6 +23,11 @@ import {
   // Copy
 } from "lucide-react";
 import { isLayerDragEvent } from "@utils/dragAndDrop";
+import {
+  getGradientPreviewStyle,
+  gradientStopToCssColor,
+  resolveGradientStops,
+} from "@utils/gradientUtils";
 
 interface LayerItemProps {
   layer: Layer;
@@ -420,12 +425,16 @@ const LayerItem: React.FC<LayerItemProps> = ({
             style={
               {
                 "--thumbnail-color-fill": layer.colorFill?.color || "#ffffff",
-                background:
-                  layer.type === "gradient_fill" && layer.gradientFill
-                    ? `linear-gradient(90deg, ${layer.gradientFill.colors
-                        .map((stop) => `${stop.color} ${stop.position * 100}%`)
-                        .join(", ")})`
-                    : undefined,
+                ...(layer.type === "gradient_fill" && layer.gradientFill
+                  ? getGradientPreviewStyle(
+                      `linear-gradient(90deg, ${resolveGradientStops(
+                        layer.gradientFill.colors,
+                        layer.gradientFill.opacityStops,
+                      )
+                        .map((stop) => `${gradientStopToCssColor(stop)} ${stop.position * 100}%`)
+                        .join(", ")})`,
+                    )
+                  : {}),
               } as React.CSSProperties
             }
           >

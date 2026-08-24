@@ -3,13 +3,15 @@
  */
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import { GradientStop, GradientType } from "./projectStore";
+import { GradientStop, GradientType, GradientOpacityStop } from "./projectStore";
+import { getGradientOpacityStops } from "@utils/gradientUtils";
 
 export interface GradientPreset {
   id: string;
   name: string;
   type: GradientType;
   colors: GradientStop[];
+  opacityStops?: GradientOpacityStop[];
 }
 
 interface GradientState {
@@ -28,6 +30,10 @@ const defaultPresets: GradientPreset[] = [
       { color: "#000000", position: 0 },
       { color: "#ffffff", position: 1 },
     ],
+    opacityStops: [
+      { opacity: 1, position: 0 },
+      { opacity: 1, position: 1 },
+    ],
   },
   {
     id: "black-white",
@@ -37,6 +43,41 @@ const defaultPresets: GradientPreset[] = [
       { color: "#000000", position: 0 },
       { color: "#ffffff", position: 1 },
     ],
+    opacityStops: [
+      { opacity: 1, position: 0 },
+      { opacity: 1, position: 1 },
+    ],
+  },
+  {
+    id: "foreground-transparent",
+    name: "Foreground to Transparent",
+    type: "linear",
+    colors: [
+      { color: "#000000", position: 0 },
+      { color: "#000000", position: 1 },
+    ],
+    opacityStops: [
+      { opacity: 1, position: 0 },
+      { opacity: 0, position: 1 },
+    ],
+  },
+  {
+    id: "rainbow",
+    name: "Rainbow",
+    type: "linear",
+    colors: [
+      { color: "#ff0000", position: 0 },
+      { color: "#ff8000", position: 0.1667 },
+      { color: "#ffff00", position: 0.3333 },
+      { color: "#00ff00", position: 0.5 },
+      { color: "#00ffff", position: 0.6667 },
+      { color: "#0000ff", position: 0.8333 },
+      { color: "#8000ff", position: 1 },
+    ],
+    opacityStops: [
+      { opacity: 1, position: 0 },
+      { opacity: 1, position: 1 },
+    ],
   },
 ];
 
@@ -45,6 +86,7 @@ const builtinPresetIds = new Set(defaultPresets.map((preset) => preset.id));
 const clonePreset = (preset: GradientPreset): GradientPreset => ({
   ...preset,
   colors: preset.colors.map((stop) => ({ ...stop })),
+  opacityStops: getGradientOpacityStops(preset.colors, preset.opacityStops),
 });
 
 const normalizePresets = (presets: unknown): GradientPreset[] => {
@@ -57,6 +99,10 @@ const normalizePresets = (presets: unknown): GradientPreset[] => {
           ...persistedPreset,
           id: defaultPreset.id,
           colors: persistedPreset.colors?.map((stop) => ({ ...stop })) || defaultPreset.colors,
+          opacityStops: getGradientOpacityStops(
+            persistedPreset.colors || defaultPreset.colors,
+            persistedPreset.opacityStops,
+          ),
         }
       : clonePreset(defaultPreset);
   });
@@ -73,7 +119,12 @@ export const useGradientStore = create<GradientState>()(
         set((state) => ({
           presets: state.presets.map((item) =>
             item.id === id && builtinPresetIds.has(id)
-              ? { ...preset, id, colors: preset.colors.map((stop) => ({ ...stop })) }
+              ? {
+                  ...preset,
+                  id,
+                  colors: preset.colors.map((stop) => ({ ...stop })),
+                  opacityStops: getGradientOpacityStops(preset.colors, preset.opacityStops),
+                }
               : item,
           ),
         })),
