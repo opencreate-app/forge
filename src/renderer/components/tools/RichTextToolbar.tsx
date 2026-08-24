@@ -1,7 +1,7 @@
 /**
  * Purpose: Floating rich-text controls for the active TextTool selection.
  */
-import React from "react";
+import React, { useState } from "react";
 import { useProjectStore } from "@store/projectStore";
 import { useTextEditorStore } from "@store/textEditorStore";
 import { useToolStore } from "@store/toolStore";
@@ -24,6 +24,7 @@ interface RichTextToolbarProps {
 }
 
 export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ onOpenColorPicker }) => {
+  const [frozenAnchor, setFrozenAnchor] = useState<{ x: number; y: number } | null>(null);
   const editor = useTextEditorStore();
   const textSettings = useToolStore((state) => state.toolSettings.text);
   const updateToolSettings = useToolStore((state) => state.updateToolSettings);
@@ -52,6 +53,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ onOpenColorPic
   const currentFontSize = style.fontSize || layer.fontSize || 24;
   const currentColor = style.color || layer.color || "#000000";
   const isBold = isBoldTextFontWeight(style.fontWeight);
+  const toolbarAnchor = frozenAnchor || editor.anchor;
   const setStyle = (nextStyle: TextSpanStyle) => {
     send({ type: "setStyle", style: nextStyle });
   };
@@ -77,8 +79,8 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ onOpenColorPic
     <div
       className="absolute z-30 flex max-w-[calc(100%-1rem)] items-center gap-1 rounded-md border border-white/10 bg-zinc-900/95 p-1 shadow-xl backdrop-blur"
       style={{
-        left: editor.anchor.x * (project?.zoom || 1) + (project?.panX || 0),
-        top: editor.anchor.y * (project?.zoom || 1) + (project?.panY || 0),
+        left: toolbarAnchor.x * (project?.zoom || 1) + (project?.panX || 0),
+        top: toolbarAnchor.y * (project?.zoom || 1) + (project?.panY || 0),
         transform: "translateY(-100%) translateY(-8px)",
       }}
       onMouseDown={(event) => {
@@ -95,7 +97,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ onOpenColorPic
             fontWeight: normalizeTextFontWeight(isBold ? "400" : "700"),
           })
         }
-        title="Bold"
+        title="Bold (Ctrl+B)"
       >
         B
       </button>
@@ -107,7 +109,13 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ onOpenColorPic
           aria-pressed={editor.mixedStyles[key] ? "mixed" : style[key] === true}
           className={buttonClass(style[key] === true)}
           onClick={() => toggle(key)}
-          title={key}
+          title={
+            key === "italic"
+              ? "Italic (Ctrl+I)"
+              : key === "underline"
+                ? "Underline (Ctrl+U)"
+                : "Strikethrough (Ctrl+Shift+U)"
+          }
         >
           {key === "italic" ? "I" : key === "underline" ? "U" : "S"}
         </button>
@@ -142,8 +150,15 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ onOpenColorPic
         unit="pt"
         min={1}
         max={1000}
+        shiftStep={4}
         value={currentFontSize}
         onChange={handleFontSizeChange}
+        onSliderPointerDown={() => {
+          const anchor = useTextEditorStore.getState().anchor;
+          if (anchor) setFrozenAnchor({ ...anchor });
+        }}
+        onSliderPointerUp={() => setFrozenAnchor(null)}
+        onSliderPointerCancel={() => setFrozenAnchor(null)}
       />
       <ColorPickerTrigger
         color={currentColor}

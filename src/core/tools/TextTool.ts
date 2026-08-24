@@ -21,6 +21,7 @@ import {
   updateTextLineAlignments,
   updateTextLineHeights,
   normalizeTextFontWeight,
+  isBoldTextFontWeight,
   promoteTextStyleToLayer,
   type TextSpanStyle,
 } from "../utils/textSpans";
@@ -1273,6 +1274,32 @@ export class TextTool extends BaseTool {
       e.stopPropagation();
       return true;
     };
+
+    const isModifierPressed = e.ctrlKey || e.metaKey;
+    if (isModifierPressed && !e.altKey && hasSelection) {
+      const editorState = useTextEditorStore.getState();
+      const key = e.key.toLowerCase();
+      let style: TextSpanStyle | null = null;
+
+      if (key === "b") {
+        const isBold =
+          !editorState.mixedStyles.fontWeight && isBoldTextFontWeight(editorState.style.fontWeight);
+        style = { fontWeight: normalizeTextFontWeight(isBold ? "400" : "700") };
+      } else if (key === "i") {
+        style = {
+          italic: editorState.mixedStyles.italic ? true : editorState.style.italic !== true,
+        };
+      } else if (key === "u") {
+        const styleKey = e.shiftKey ? "strikethrough" : "underline";
+        const isMixed = editorState.mixedStyles[styleKey];
+        style = { [styleKey]: isMixed ? true : editorState.style[styleKey] !== true };
+      }
+
+      if (style) {
+        this.applyFormat({ type: "setStyle", style, scope: "formatRange" }, context);
+        return consume();
+      }
+    }
 
     if (e.key === "Enter") {
       if (e.ctrlKey || e.metaKey) {

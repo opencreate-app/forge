@@ -32,4 +32,29 @@ describe("ToolSettingInput", () => {
     expect(onChange).toHaveBeenNthCalledWith(2, 63, 60, expect.any(Number));
     expect(onChange.mock.calls[1][2]).toBe(onChange.mock.calls[0][2]);
   });
+
+  it("uses the accelerated step while holding Shift", () => {
+    const onChange = vi.fn();
+    render(
+      <ToolSettingInput
+        label="Size"
+        value={60}
+        onChange={onChange}
+        min={1}
+        max={1000}
+        shiftStep={4}
+      />,
+    );
+
+    const label = screen.getByText("Size");
+    const input = screen.getByDisplayValue("60");
+
+    fireEvent.wheel(label.parentElement!, { deltaY: -1, shiftKey: true });
+    fireEvent.mouseDown(label, { clientX: 100, shiftKey: true });
+    fireEvent.mouseMove(window, { clientX: 101, shiftKey: true });
+    fireEvent.mouseUp(window);
+    fireEvent.keyDown(input, { key: "ArrowUp", shiftKey: true });
+
+    expect(onChange.mock.calls.map(([nextValue]) => nextValue)).toEqual([64, 64, 64]);
+  });
 });

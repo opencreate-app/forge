@@ -12,6 +12,10 @@ interface ToolSettingInputProps {
   min?: number;
   max?: number;
   step?: number;
+  shiftStep?: number;
+  onSliderPointerDown?: (event: React.PointerEvent<HTMLInputElement>) => void;
+  onSliderPointerUp?: (event: React.PointerEvent<HTMLInputElement>) => void;
+  onSliderPointerCancel?: (event: React.PointerEvent<HTMLInputElement>) => void;
   unit?: string;
   displayMultiplier?: number; // E.g., 100 for percentage (internal value 1.0 -> 100 in UI)
 }
@@ -23,6 +27,10 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
   min = 0,
   max = 500,
   step = 1,
+  shiftStep,
+  onSliderPointerDown,
+  onSliderPointerUp,
+  onSliderPointerCancel,
   unit = "",
   displayMultiplier = 1,
 }) => {
@@ -37,6 +45,8 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
 
   // Value converted for display (e.g., 0.5 * 100 = 50)
   const displayValue = Number((value * displayMultiplier).toFixed(displayMultiplier === 1 ? 0 : 2));
+
+  const getStep = (shiftKey: boolean) => (shiftKey && shiftStep !== undefined ? shiftStep : step);
 
   const clampAndSave = (newValue: number) => {
     const clamped = Math.min(max, Math.max(min, newValue));
@@ -55,12 +65,13 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
       if (!isDragging.current) return;
       const delta = moveEvent.clientX - startX.current;
 
-      // 1px = 1 unit of display value
+      // 1px = 1 unit of display value, or one accelerated step with Shift.
       const startDisplayValue = startValue.current * displayMultiplier;
-      let newDisplayValue = startDisplayValue + delta;
+      const activeStep = getStep(moveEvent.shiftKey);
+      let newDisplayValue = startDisplayValue + delta * activeStep;
 
       // Snap to step
-      newDisplayValue = Math.round(newDisplayValue / step) * step;
+      newDisplayValue = Math.round(newDisplayValue / activeStep) * activeStep;
 
       const newValue = newDisplayValue / displayMultiplier;
       const clamped = Math.min(max, Math.max(min, newValue));
@@ -82,7 +93,7 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const direction = e.deltaY > 0 ? -1 : 1;
-    const delta = (direction * step) / displayMultiplier;
+    const delta = (direction * getStep(e.shiftKey)) / displayMultiplier;
     clampAndSave(value + delta);
   };
 
@@ -126,6 +137,16 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
             // Prevent arrow keys from move the layer
             e.stopPropagation();
             if (e.key === "Enter") setIsOpen(false);
+
+            if (
+              shiftStep !== undefined &&
+              e.shiftKey &&
+              (e.key === "ArrowUp" || e.key === "ArrowDown")
+            ) {
+              e.preventDefault();
+              const direction = e.key === "ArrowUp" ? 1 : -1;
+              clampAndSave(value + (direction * shiftStep) / displayMultiplier);
+            }
           }}
           min={min}
           max={max}
@@ -147,15 +168,18 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
         value={displayValue}
         minLabel={`${Math.round(min * displayMultiplier)}${unit}`}
         maxLabel={`${Math.round(max * displayMultiplier)}${unit}`}
-        onPointerDown={() => {
+        onPointerDown={(event) => {
           sliderGestureId.current = ++gestureSequence.current;
           sliderStartValue.current = value;
+          onSliderPointerDown?.(event);
         }}
-        onPointerUp={() => {
+        onPointerUp={(event) => {
           sliderGestureId.current = null;
+          onSliderPointerUp?.(event);
         }}
-        onPointerCancel={() => {
+        onPointerCancel={(event) => {
           sliderGestureId.current = null;
+          onSliderPointerCancel?.(event);
         }}
         onChange={(sliderValue) => {
           onChange(

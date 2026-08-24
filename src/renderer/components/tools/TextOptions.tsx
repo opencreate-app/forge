@@ -359,6 +359,7 @@ export const TextOptions: React.FC<ToolOptionProps> = ({ onOpenColorPicker }) =>
         unit="pt"
         min={1}
         max={1000}
+        shiftStep={4}
         value={fontSizeValue}
         onChange={handleFontSizeChange}
       />

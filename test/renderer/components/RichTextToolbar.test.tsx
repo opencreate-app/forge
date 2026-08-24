@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RichTextToolbar } from "@/renderer/components/tools/RichTextToolbar";
 import { useProjectStore } from "@/renderer/store/projectStore";
@@ -95,5 +95,23 @@ describe("RichTextToolbar", () => {
       }),
     );
     window.removeEventListener("forge:text-format", handler);
+  });
+
+  it("keeps its anchor fixed while dragging the font size slider", () => {
+    render(<RichTextToolbar onOpenColorPicker={vi.fn()} />);
+
+    const toolbar = screen.getByRole("button", { name: "Bold" }).parentElement!;
+    const numberInput = screen.getByDisplayValue("24");
+    fireEvent.click(numberInput.parentElement!);
+    const slider = screen.getByRole("slider");
+
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    act(() => useTextEditorStore.setState({ anchor: { x: 30, y: 40 } }));
+
+    expect(toolbar).toHaveStyle({ left: "10px", top: "20px" });
+
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(toolbar).toHaveStyle({ left: "30px", top: "40px" });
   });
 });
