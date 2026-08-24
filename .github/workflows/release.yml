@@ -12,9 +12,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - platform: macos
+            runner: macos-15
+            arch: arm64
+            app_path: dist/mac-arm64/OpenCreate Forge.app
+            binary_arch: arm64
+          - platform: macos
+            runner: macos-15-intel
+            arch: x64
+            app_path: dist/mac/OpenCreate Forge.app
+            binary_arch: x86_64
+          - platform: ubuntu
+            runner: ubuntu-latest
+            arch: x64
+          - platform: windows
+            runner: windows-latest
+            arch: x64
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,44 +42,44 @@ jobs:
           cache: "npm"
 
       - name: Cache Electron downloads (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.platform == 'ubuntu'
         uses: actions/cache@v4
         with:
           path: ~/.cache/electron
-          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            electron-${{ runner.os }}-${{ runner.arch }}-
+            electron-${{ matrix.runner }}-${{ matrix.arch }}-
 
       - name: Cache Electron downloads (macOS)
-        if: runner.os == 'macOS'
+        if: matrix.platform == 'macos'
         uses: actions/cache@v4
         with:
           path: ~/Library/Caches/electron
-          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            electron-${{ runner.os }}-${{ runner.arch }}-
+            electron-${{ matrix.runner }}-${{ matrix.arch }}-
 
       - name: Cache Electron downloads (Windows)
-        if: runner.os == 'Windows'
+        if: matrix.platform == 'windows'
         uses: actions/cache@v4
         with:
           path: ~/AppData/Local/electron/Cache
-          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            electron-${{ runner.os }}-${{ runner.arch }}-
+            electron-${{ matrix.runner }}-${{ matrix.arch }}-
 
       - name: Install dependencies
         run: npm ci
 
       - name: Cache APT Packages
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'ubuntu'
         uses: actions/cache@v4
         with:
           path: ~/apt-cache
           key: ${{ runner.os }}-apt-flatpak-v1
 
       - name: Install Flatpak dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'ubuntu'
         run: |
           # 1. Cria o diretório de cache se não existir
           mkdir -p ~/apt-cache
@@ -94,9 +110,9 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            npm run build -- --publish never --mac --x64 --arm64
-          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
+          if [ "${{ matrix.platform }}" == "macos" ]; then
+            npm run build -- --publish never --mac --${{ matrix.arch }}
+          elif [ "${{ matrix.platform }}" == "windows" ]; then
             npm run build -- --publish never --win --x64
           else
             npm run build -- --publish never --linux --x64
@@ -104,14 +120,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Smoke test macOS arm64 bundle
-        if: matrix.os == 'macos-latest'
+      - name: Smoke test macOS bundle
+        if: matrix.platform == 'macos'
         run: |
-          npm run smoke:macos -- "dist/mac-arm64/OpenCreate Forge.app" arm64
-          npm run smoke:macos -- "dist/mac/OpenCreate Forge.app" x86_64
+          npm run smoke:macos -- "${{ matrix.app_path }}" "${{ matrix.binary_arch }}"
 
       - name: Upload macOS smoke diagnostics
-        if: failure() && matrix.os == 'macos-latest'
+        if: failure() && matrix.platform == 'macos'
         uses: actions/upload-artifact@v4
         with:
           name: macos-smoke-diagnostics
@@ -124,7 +139,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts-${{ matrix.os }}
+          name: build-artifacts-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             dist/*.dmg
             dist/*.zip

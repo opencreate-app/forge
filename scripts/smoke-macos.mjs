@@ -61,9 +61,7 @@ if (missingPath) {
 
 const fileResult = run("file", [executablePath]);
 if (fileResult.status !== 0 || !fileResult.output.includes(expectedArchitecture)) {
-  fail(
-    `Expected a ${expectedArchitecture} executable, received: ${fileResult.output}`,
-  );
+  fail(`Expected a ${expectedArchitecture} executable, received: ${fileResult.output}`);
 }
 
 const signatureInfo = run("codesign", ["-dv", appPath]);
@@ -111,15 +109,12 @@ if (missingEntry) {
   fail(`Packaged macOS application is missing an app.asar entry: ${missingEntry}`);
 }
 
-function hasFinishedStartup(log, logMtime, previousMtime) {
-  return (
-    logMtime > previousMtime &&
-    log.includes("Application ready") &&
-    log.includes("Renderer finished loading")
-  );
+function hasFinishedStartup(log, previousSize) {
+  const newLog = log.slice(previousSize);
+  return newLog.includes("Application ready") && newLog.includes("Renderer finished loading");
 }
 
-async function waitForStartup(previousMtime) {
+async function waitForStartup(previousSize) {
   const startupDeadline = Date.now() + 8000;
   let startupLog = "";
 
@@ -127,7 +122,7 @@ async function waitForStartup(previousMtime) {
     if (existsSync(startupLogPath)) {
       const startupLogStat = statSync(startupLogPath);
       startupLog = readFileSync(startupLogPath, "utf8");
-      if (hasFinishedStartup(startupLog, startupLogStat.mtimeMs, previousMtime)) {
+      if (startupLogStat.size > previousSize && hasFinishedStartup(startupLog, previousSize)) {
         return { success: true, log: startupLog };
       }
     }
@@ -138,31 +133,25 @@ async function waitForStartup(previousMtime) {
   return { success: false, log: startupLog };
 }
 
-const launchedInGitHubActions = process.env.GITHUB_ACTIONS === "true";
-if (!launchedInGitHubActions) {
-  const startupLogBeforeLaunch = existsSync(startupLogPath)
-    ? statSync(startupLogPath).mtimeMs
-    : 0;
-  const launchResult = run("open", ["-n", appPath]);
-  if (launchResult.status !== 0) {
-    fail("Packaged macOS application could not be opened through Launch Services.", launchResult.output);
-  }
-
-  const startupResult = await waitForStartup(startupLogBeforeLaunch);
-  if (!startupResult.success) {
-    fail(
-      "Packaged macOS application did not finish startup through Launch Services.",
-      startupResult.log,
-    );
-  }
-
-  run("pkill", ["-TERM", "-x", appName]);
-  await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1500));
-  run("pkill", ["-KILL", "-x", appName]);
-} else {
-  console.log(
-    "GitHub Actions runner detected; skipping GUI startup and validating bundle structure only.",
+const startupLogBeforeLaunch = existsSync(startupLogPath) ? statSync(startupLogPath).size : 0;
+const launchResult = run("open", ["-n", appPath]);
+if (launchResult.status !== 0) {
+  fail(
+    "Packaged macOS application could not be opened through Launch Services.",
+    launchResult.output,
   );
 }
+
+const startupResult = await waitForStartup(startupLogBeforeLaunch);
+if (!startupResult.success) {
+  fail(
+    "Packaged macOS application did not finish startup through Launch Services.",
+    startupResult.log,
+  );
+}
+
+run("pkill", ["-TERM", "-x", appName]);
+await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1500));
+run("pkill", ["-KILL", "-x", appName]);
 
 console.log(`macOS ${expectedArchitecture} bundle smoke test passed: ${appPath}`);
