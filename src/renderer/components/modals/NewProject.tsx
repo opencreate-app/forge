@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useProjectStore, Project } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
+import { createNewProjectBackgroundLayer, NewProjectBackground } from "@utils/newProjectUtils";
 import { Layout } from "lucide-react";
 import BaseModal from "./BaseModal";
 
@@ -52,7 +53,7 @@ const NewProject: React.FC<NewProjectProps> = ({ isOpen, onClose, initialDimensi
   const [name, setName] = useState("Untitled");
   const [width, setWidth] = useState(1920);
   const [height, setHeight] = useState(1080);
-  const [background, setBackground] = useState<"white" | "black" | "transparent">("white");
+  const [background, setBackground] = useState<NewProjectBackground>("white");
   const [activeCategory, setActiveCategory] = useState<keyof typeof presetsData>("Social");
 
   const addProject = useProjectStore((state) => state.addProject);
@@ -64,42 +65,13 @@ const NewProject: React.FC<NewProjectProps> = ({ isOpen, onClose, initialDimensi
     (e?: React.FormEvent) => {
       if (e) e.preventDefault();
       const id = crypto.randomUUID();
-      let dataUrl: string | undefined = undefined;
-
-      if (background !== "transparent") {
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.fillStyle = background;
-          ctx.fillRect(0, 0, width, height);
-          dataUrl = canvas.toDataURL("image/png");
-        }
-      }
 
       const newProject: Project = {
         id,
         name: name || "Untitled",
         width,
         height,
-        layers: [
-          {
-            id: "bg-" + id,
-            name: "Background",
-            type: "raster",
-            visible: true,
-            locked: false,
-            opacity: 100,
-            fill: 100,
-            x: 0,
-            y: 0,
-            width,
-            height,
-            data: dataUrl,
-            blendMode: "source-over",
-          },
-        ],
+        layers: [createNewProjectBackgroundLayer("bg-" + id, width, height, background)],
         guides: [],
         activeLayerId: "bg-" + id,
         selectedLayerIds: ["bg-" + id],
