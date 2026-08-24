@@ -5,7 +5,11 @@ import React, { useState, useRef, useEffect } from "react";
 import { useProjectStore, Layer, BaseStyle } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
 import { useToolStore } from "@store/toolStore";
-import { getOptimizedBoundingBox } from "@/core/utils/imageUtils";
+import {
+  combineSelections,
+  createLayerPixelSelection,
+  type SelectionOperation,
+} from "@utils/selectionUtils";
 import {
   Eye,
   EyeOff,
@@ -181,63 +185,34 @@ const LayerItem: React.FC<LayerItemProps> = ({
         return;
       }
 
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = layer.width;
-        canvas.height = layer.height;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-        ctx.drawImage(img, 0, 0);
+      const operation: SelectionOperation = e.shiftKey
+        ? "unite"
+        : e.altKey
+          ? "subtract"
+          : "replace";
 
-        const bounds = getOptimizedBoundingBox(canvas, {
-          x: 0,
-          y: 0,
-          width: canvas.width,
-          height: canvas.height,
-        });
-
-        if (!bounds) {
+      void (async () => {
+        const incoming = await createLayerPixelSelection(layer);
+        if (!incoming) {
           showToast("Layer is empty", "warning");
           return;
         }
 
-        // Create mask (white on black)
-        const maskCanvas = document.createElement("canvas");
-        maskCanvas.width = bounds.width;
-        maskCanvas.height = bounds.height;
-        const mctx = maskCanvas.getContext("2d")!;
+        const project = useProjectStore
+          .getState()
+          .projects.find((candidate) => candidate.id === projectId);
+        if (!project) return;
 
-        mctx.drawImage(
-          canvas,
-          bounds.x,
-          bounds.y,
-          bounds.width,
-          bounds.height,
-          0,
-          0,
-          bounds.width,
-          bounds.height,
-        );
-        mctx.globalCompositeOperation = "source-in";
-        mctx.fillStyle = "white";
-        mctx.fillRect(0, 0, bounds.width, bounds.height);
+        const result = await combineSelections(project.selection, incoming, operation);
 
         useProjectStore.getState().pushHistory(projectId, "Select");
 
         updateProject(projectId, {
-          selection: {
-            hasSelection: true,
-            bounds: {
-              x: layer.x + bounds.x,
-              y: layer.y + bounds.y,
-              width: bounds.width,
-              height: bounds.height,
-            },
-            mask: maskCanvas.toDataURL(),
-          },
+          selection: result
+            ? { hasSelection: true, bounds: result.bounds, mask: result.mask }
+            : { hasSelection: false, bounds: null, mask: undefined },
         });
-      };
-      img.src = layer.data;
+      })();
     }
   };
 

@@ -64,6 +64,7 @@ export const createMockToolContext = (overrides: Partial<ToolContext> = {}): Too
     setViewportTransform: vi.fn((zoom: number, panX: number, panY: number) => {
       canvas.getContext("2d")!.setTransform(zoom, 0, 0, zoom, panX, panY);
     }),
+    updateViewport: vi.fn(),
     updateProject: vi.fn(),
     pushHistory: vi.fn(),
     addHistoryEntry: vi.fn(),

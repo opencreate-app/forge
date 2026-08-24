@@ -1284,6 +1284,13 @@ export class ForgeEngine {
       devicePixelRatio: this.devicePixelRatio,
       setViewportTransform: (zoom: number, panX: number, panY: number) =>
         this.setViewportTransform(zoom, panX, panY),
+      updateViewport: (zoom: number, panX: number, panY: number) => {
+        if (!this.project) return;
+        this.project.zoom = zoom;
+        this.project.panX = panX;
+        this.project.panY = panY;
+        this.onViewportChange?.(zoom, panX, panY);
+      },
       updateProject: (updates: Partial<Project>) => {
         if (this.project) {
           const projectId = this.project.id;

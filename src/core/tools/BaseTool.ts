@@ -41,6 +41,8 @@ export interface ToolContext {
   devicePixelRatio: number;
   /** Applies a project viewport transform while accounting for device pixel ratio. */
   setViewportTransform: (zoom: number, panX: number, panY: number) => void;
+  /** Updates the viewport pan/zoom without creating a document history entry. */
+  updateViewport: (zoom: number, panX: number, panY: number) => void;
   /** Updates the project state. */
   updateProject: (updates: Partial<Project>) => void;
   /** Pushes a new entry to the undo history. */

@@ -5,6 +5,9 @@ import { BaseTool, ToolContext, ToolId } from "./BaseTool";
 import { createHistoryState, HistoryState, useProjectStore } from "@/renderer/store/projectStore";
 import { useUIStore } from "@/renderer/store/uiStore";
 
+const AUTO_SCROLL_MARGIN = 48;
+const AUTO_SCROLL_MAX_SPEED = 20;
+
 export class SelectTool extends BaseTool {
   id: ToolId = "select";
 
@@ -22,6 +25,9 @@ export class SelectTool extends BaseTool {
   private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
   private relativeSnapPointsX: number[] = [];
   private relativeSnapPointsY: number[] = [];
+  private lastPointerPosition = { x: 0, y: 0 };
+  private autoScrollVelocity = { x: 0, y: 0 };
+  private selectionPreviewShift = false;
 
   onMouseDown(e: MouseEvent, context: ToolContext): void {
     if (e.button !== 0) return;
@@ -29,6 +35,9 @@ export class SelectTool extends BaseTool {
     this.historySnapshot = createHistoryState(context.project);
 
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
+    this.lastPointerPosition = { x: e.offsetX, y: e.offsetY };
+    this.autoScrollVelocity = { x: 0, y: 0 };
+    this.selectionPreviewShift = e.shiftKey;
 
     // The mode should already be correct in the store thanks to listeners in App.tsx
     // but we capture it here to keep the same mode until the end of the click
@@ -111,6 +120,7 @@ export class SelectTool extends BaseTool {
 
   onMouseMove(e: MouseEvent, context: ToolContext): void {
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
+    this.lastPointerPosition = { x: e.offsetX, y: e.offsetY };
     this.activeSnapLines = [];
     const uiState = useUIStore.getState();
     const showGuides = uiState.showGuides;
@@ -191,63 +201,9 @@ export class SelectTool extends BaseTool {
     }
 
     if (this.isSelecting) {
-      let curX = x;
-      let curY = y;
-
-      let bestDiffX = Infinity;
-      let bestGuideX = null;
-      let bestDiffY = Infinity;
-      let bestGuideY = null;
-
-      const vSnaps = [0, context.project.width / 2, context.project.width];
-      const hSnaps = [0, context.project.height / 2, context.project.height];
-
-      if (showGuides && snapToGuides) {
-        vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
-        hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
-      }
-
-      for (const snapPos of vSnaps) {
-        const diff = snapPos - curX;
-        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
-          bestDiffX = diff;
-          bestGuideX = snapPos;
-        }
-      }
-
-      for (const snapPos of hSnaps) {
-        const diff = snapPos - curY;
-        if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
-          bestDiffY = diff;
-          bestGuideY = snapPos;
-        }
-      }
-
-      if (bestGuideX !== null) {
-        curX = bestGuideX;
-        this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
-      }
-      if (bestGuideY !== null) {
-        curY = bestGuideY;
-        this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
-      }
-
-      curX = Math.round(curX);
-      curY = Math.round(curY);
-
-      // Shift: 1:1 ratio
-      if (e.shiftKey) {
-        const dx = curX - this.startX;
-        const dy = curY - this.startY;
-        if (Math.abs(dx) > Math.abs(dy)) {
-          curY = this.startY + Math.abs(dx) * Math.sign(dy);
-        } else {
-          curX = this.startX + Math.abs(dy) * Math.sign(dx);
-        }
-      }
-
-      this.currentX = curX;
-      this.currentY = curY;
+      this.selectionPreviewShift = e.shiftKey;
+      this.updateAutoScrollVelocity(e.offsetX, e.offsetY, context);
+      this.updateSelectionPreview(x, y, context, e.shiftKey);
       return;
     }
 
@@ -278,6 +234,7 @@ export class SelectTool extends BaseTool {
     if (this.isSelecting) {
       this.isSelecting = false;
       this.activeSnapLines = [];
+      this.autoScrollVelocity = { x: 0, y: 0 };
       context.setInteracting(false);
 
       let startX = this.startX;
@@ -312,6 +269,31 @@ export class SelectTool extends BaseTool {
   }
 
   onKeyDown(e: KeyboardEvent, context: ToolContext): boolean {
+    const isArrow = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key);
+    if (isArrow && context.project.selection.hasSelection) {
+      const bounds = context.project.selection.bounds;
+      if (!bounds) return false;
+
+      e.preventDefault();
+      const distance = e.shiftKey ? 10 : 1;
+      const dx = e.key === "ArrowLeft" ? -distance : e.key === "ArrowRight" ? distance : 0;
+      const dy = e.key === "ArrowUp" ? -distance : e.key === "ArrowDown" ? distance : 0;
+
+      context.addHistoryEntry({
+        description: "Move Selection",
+        state: createHistoryState(context.project),
+      });
+      context.updateProject({
+        selection: {
+          ...context.project.selection,
+          bounds: { ...bounds, x: bounds.x + dx, y: bounds.y + dy },
+        },
+        isDirty: true,
+      });
+      context.updateSelectionEdges();
+      return true;
+    }
+
     if (e.key !== "Delete" && e.key !== "Backspace") return false;
 
     e.preventDefault();
@@ -516,6 +498,20 @@ export class SelectTool extends BaseTool {
 
   onRender(ctx: CanvasRenderingContext2D, context: ToolContext): void {
     if (this.isSelecting) {
+      if (this.autoScrollVelocity.x !== 0 || this.autoScrollVelocity.y !== 0) {
+        context.updateViewport(
+          context.project.zoom,
+          context.project.panX + this.autoScrollVelocity.x,
+          context.project.panY + this.autoScrollVelocity.y,
+        );
+        this.activeSnapLines = [];
+        const { x, y } = context.screenToProject(
+          this.lastPointerPosition.x,
+          this.lastPointerPosition.y,
+        );
+        this.updateSelectionPreview(x, y, context, this.selectionPreviewShift);
+      }
+
       ctx.save();
       context.setViewportTransform(
         context.project.zoom,
@@ -594,7 +590,92 @@ export class SelectTool extends BaseTool {
     this.isSelecting = false;
     this.isMovingSelection = false;
     this.activeSnapLines = [];
+    this.autoScrollVelocity = { x: 0, y: 0 };
     context.setInteracting(false);
+  }
+
+  private updateAutoScrollVelocity(offsetX: number, offsetY: number, context: ToolContext) {
+    this.autoScrollVelocity = {
+      x: this.getAutoScrollSpeed(offsetX, context.viewportWidth),
+      y: this.getAutoScrollSpeed(offsetY, context.viewportHeight),
+    };
+  }
+
+  private getAutoScrollSpeed(position: number, viewportSize: number): number {
+    if (position < AUTO_SCROLL_MARGIN) {
+      return AUTO_SCROLL_MAX_SPEED * (1 - Math.max(0, position) / AUTO_SCROLL_MARGIN);
+    }
+
+    const distanceFromEnd = viewportSize - position;
+    if (distanceFromEnd < AUTO_SCROLL_MARGIN) {
+      return -AUTO_SCROLL_MAX_SPEED * (1 - Math.max(0, distanceFromEnd) / AUTO_SCROLL_MARGIN);
+    }
+
+    return 0;
+  }
+
+  private updateSelectionPreview(x: number, y: number, context: ToolContext, shiftKey: boolean) {
+    let curX = x;
+    let curY = y;
+
+    const uiState = useUIStore.getState();
+    const showGuides = uiState.showGuides;
+    const snapToGuides = uiState.snapToGuides;
+    const snapMargin = 5 / context.project.zoom;
+    const guides = context.project.guides || [];
+    let bestDiffX = Infinity;
+    let bestGuideX = null;
+    let bestDiffY = Infinity;
+    let bestGuideY = null;
+
+    const vSnaps = [0, context.project.width / 2, context.project.width];
+    const hSnaps = [0, context.project.height / 2, context.project.height];
+
+    if (showGuides && snapToGuides) {
+      vSnaps.push(...guides.filter((g) => g.type === "vertical").map((g) => g.position));
+      hSnaps.push(...guides.filter((g) => g.type === "horizontal").map((g) => g.position));
+    }
+
+    for (const snapPos of vSnaps) {
+      const diff = snapPos - curX;
+      if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffX)) {
+        bestDiffX = diff;
+        bestGuideX = snapPos;
+      }
+    }
+
+    for (const snapPos of hSnaps) {
+      const diff = snapPos - curY;
+      if (Math.abs(diff) < snapMargin && Math.abs(diff) < Math.abs(bestDiffY)) {
+        bestDiffY = diff;
+        bestGuideY = snapPos;
+      }
+    }
+
+    if (bestGuideX !== null) {
+      curX = bestGuideX;
+      this.activeSnapLines.push({ type: "vertical", position: bestGuideX });
+    }
+    if (bestGuideY !== null) {
+      curY = bestGuideY;
+      this.activeSnapLines.push({ type: "horizontal", position: bestGuideY });
+    }
+
+    curX = Math.round(curX);
+    curY = Math.round(curY);
+
+    if (shiftKey) {
+      const dx = curX - this.startX;
+      const dy = curY - this.startY;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        curY = this.startY + Math.abs(dx) * Math.sign(dy);
+      } else {
+        curX = this.startX + Math.abs(dy) * Math.sign(dx);
+      }
+    }
+
+    this.currentX = curX;
+    this.currentY = curY;
   }
 
   private detectSelectionFeatures(context: ToolContext) {

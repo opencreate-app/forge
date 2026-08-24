@@ -4,6 +4,13 @@ import LayerItem from "@/renderer/components/Sidebar/LayerItem";
 import { useProjectStore, type Layer, type Project } from "@/renderer/store/projectStore";
 import { useUIStore } from "@/renderer/store/uiStore";
 
+const selectionUtilsMock = vi.hoisted(() => ({
+  createLayerPixelSelection: vi.fn(),
+  combineSelections: vi.fn(),
+}));
+
+vi.mock("@utils/selectionUtils", () => selectionUtilsMock);
+
 const createProject = (layer: Layer): Project => ({
   id: "project-1",
   name: "Project",
@@ -67,6 +74,8 @@ const gradientLayer: Layer = {
 
 describe("LayerItem", () => {
   beforeEach(() => {
+    selectionUtilsMock.createLayerPixelSelection.mockReset();
+    selectionUtilsMock.combineSelections.mockReset();
     useProjectStore.setState({
       projects: [createProject(colorFillLayer)],
       activeProjectId: "project-1",
@@ -152,4 +161,62 @@ describe("LayerItem", () => {
 
     window.removeEventListener("forge:open-gradient-editor-for-layer", onOpenGradientEditor);
   });
+
+  it.each([
+    ["replace", { ctrlKey: true }],
+    ["unite", { ctrlKey: true, shiftKey: true }],
+    ["subtract", { ctrlKey: true, altKey: true }],
+  ])(
+    "uses the %s operation for modifier-clicking a layer thumbnail",
+    async (operation, modifiers) => {
+      const layer = { ...colorFillLayer, data: "data:image/png;base64,layer" };
+      const incoming = {
+        bounds: { x: 10, y: 10, width: 20, height: 20 },
+        mask: "data:image/png;base64,incoming",
+      };
+      const result = {
+        bounds: { x: 10, y: 10, width: 20, height: 20 },
+        mask: "data:image/png;base64,result",
+      };
+      selectionUtilsMock.createLayerPixelSelection.mockResolvedValue(incoming);
+      selectionUtilsMock.combineSelections.mockResolvedValue(result);
+
+      const view = render(
+        <LayerItem
+          layer={layer}
+          projectId="project-1"
+          isActive
+          isSelected
+          index={0}
+          depth={0}
+          isInheritedHidden={false}
+          draggedIndex={null}
+          onDragStart={vi.fn()}
+          onDragOver={vi.fn()}
+          onDrop={vi.fn()}
+          onClick={vi.fn()}
+          onVisibilityMouseDown={vi.fn()}
+          onVisibilityMouseEnter={vi.fn()}
+          onToggleExpansion={vi.fn()}
+          onContextMenu={vi.fn()}
+        />,
+      );
+
+      const thumbnail = view.container.querySelector("div.w-8.h-8");
+      expect(thumbnail).not.toBeNull();
+      fireEvent.click(thumbnail!, modifiers);
+
+      await vi.waitFor(() => expect(selectionUtilsMock.combineSelections).toHaveBeenCalledOnce());
+      expect(selectionUtilsMock.combineSelections).toHaveBeenCalledWith(
+        expect.objectContaining({ hasSelection: false }),
+        incoming,
+        operation,
+      );
+      expect(useProjectStore.getState().projects[0].selection).toEqual({
+        hasSelection: true,
+        bounds: result.bounds,
+        mask: result.mask,
+      });
+    },
+  );
 });
