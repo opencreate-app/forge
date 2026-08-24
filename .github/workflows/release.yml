@@ -243,18 +243,18 @@ jobs:
           </tr>
           <tr>
           <td rowspan="4"><strong>macOS</strong></td>
-          <td rowspan="2">Intel (x64)</td>
-          <td><a href="$BASE_URL/$MAC_X64_DMG">DMG</a></td>
-          </tr>
-          <tr>
-          <td><a href="$BASE_URL/$MAC_X64_ZIP">Portable (ZIP/APP)</a></td>
-          </tr>
-          <tr>
           <td rowspan="2">Apple Silicon (arm64)</td>
           <td><a href="$BASE_URL/$MAC_ARM64_DMG">Download (DMG)</a></td>
           </tr>
           <tr>
           <td><a href="$BASE_URL/$MAC_ARM64_ZIP">Portable (ZIP/APP)</a></td>
+          </tr>
+          <tr>
+          <td rowspan="2">Intel (x64)</td>
+          <td><a href="$BASE_URL/$MAC_X64_DMG">DMG</a></td>
+          </tr>
+          <tr>
+          <td><a href="$BASE_URL/$MAC_X64_ZIP">Portable (ZIP/APP)</a></td>
           </tr>
           <tr>
           <td rowspan="4"><strong>Linux</strong></td>
