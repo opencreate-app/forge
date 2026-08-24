@@ -57,6 +57,37 @@ TODO: OpenCreate Forge
   - [x] Feat: Poder importar multiplos arquivos (agora é possivel importar multiplos arquivos apenas dentro do projeto ativo)
 - [x] Brush, Pencil, Eraser: Poder clicar em um ponto do canvas, segurar Shift e clicar em outro ponto para criar uma linha reta entre os dois pontos, e pintar a linha reta
 - [x] Bug Crítico: LayerMask está com perfomance muito ruim e acaba dando baixo framerate em PCs fracos, mesmo com apenas uma camada com LayerMask.
+- [ ] TextTool:
+  - [x] Bug: Ao ativar o negrito, ele muda para o weight no ToolOptions para `Thin` ao invés de `Bold`
+  - [x] Bug: Ao selecionar todo o texto e mudar algo da fonte (tamanho, negrito, etc.), deveria mudar o estilo da camada de texto ao todo
+  - [x] Bug: Se eu aumentar e diminuir o tamanho da fonte varias vezes, ele se desloca um pouco para direita
+  - [x] Bug: Ao mudar o tamanho da fonte pelo slider do Toolbar, desloca o Toolbar e acaba atrapalhando o usuário e zerando o valor do slider por acidente
+  - [x] Feat: Ao clicar duas vezes com o MoveTool em uma camada de texto, ativar o TextTool e entrar no modo edição
+  - [x] Feat: Ao clicar duas vezes na thumbnail na camada de texto, ativar o TextTool e entrar no modo edição
+  - [x] Feat: No `ToolSettingInput` de tamanho da fonte, mudar o valor por multiplos de 4 ao segurar Shift
+  - [x] Feat: Atalhos de formatação da seleção Ctrl+B (negrito), Ctrl+I (itálico), Ctrl+U (sublinhado), Ctrl+Shift+U (tachado)
+  - [x] Bug: Transformar com a TransformTool a camada de texto está bugada, deverá poder transformar (mover, rotacionar, esticar, inverter, etc.) sem perder a qualidade, como vetor
+- [x] SelectTool:
+  - [x] Feat: Poder mover a seleção com as setas do teclado (1px por vez, ou 10px segurando Shift)
+  - [x] Feat: Ao clicar na thumbnail da camada com Ctrl+Click ele já seleciona os pixeis da camada, agora ao segurar Ctrl+Shift+Click para adicionar a seleção, e Ctrl+Alt+Click para remover da seleção
+  - [x] Feat: Enquanto selecionar uma área e se o mouse estiver perto das margens do canvas, ele deve scrollar o canvas automaticamente para fora da área visível, quanto mais na margem, mais rápido o scroll
+- [x] GradientTool:
+  - [x] Feat: Ativar ferramenta com o atalho Shift+G
+  - [x] QoL: Melhorar o layout do editor de gradiente
+  - [x] Feat: Nas cores do gradiente ter a opção de opacidade no editor de gradiente
+  - [x] Feat: Mais uma opção de template de gradiente "Foreground to Transparent" (com a cor do foreground atual)
+  - [x] Feat: Mais uma opção de template de gradiente "Rainbow" (com as cores do arco-íris)
+- [x] CropTool Bug: O FixedRatio não é aplicado automaticamente, apenas ao arrastar um dos handles.
+- [x] ColorPicker:
+  - [x] Ativar ferramenta com o atalho I
+  - [x] Ao clicar e segurar no canvas, pegar a cor do pixel clicado e mudar o foreground para essa cor
+  - [x] Mostrar o feedback visual de pegar a cor (crosshair) e mostrar a cor do pixel no cursor
+- [x] ProjectTabs:
+  - [x] No Windows e Linux, o scroll horizontal das abas de projetos não funciona com o scroll do mouse (apenas com a barra de rolagem)
+  - [x] No Windows e Linux, o scrollbar aparece atrapalhando a visualização das abas
+  - [x] Ele é escrolável horizontalmente completo, mas não tem feedback visual de que é escrolável, fixar a home e colocar uma sombra nas laterais automaticamente quando tiver mais abas do que o espaço disponível
+  - [x] Se houver mais abas do que o espaço disponível, mostrar dois botões de scroll (esquerda e direita, depois das abas de projeto) para scrollar as abas
+  - [x] Feat: Indicador na esquerda ou direita na área das abas de projetos, mostrando onde está a aba ativa, caso ela esteja fora da área visível
 
 <!-- ## Alpha 2.1 (Patch 1) -->
 
