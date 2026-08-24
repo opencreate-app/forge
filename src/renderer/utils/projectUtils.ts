@@ -13,16 +13,25 @@ export interface Bounds {
 /** Calculates the axis-aligned bounds of a layer rectangle after rotation. */
 export const getLayerGeometryBounds = (layer: Layer): Bounds => {
   const rotation = ((layer.rotation || 0) * Math.PI) / 180;
+  const scaledWidth = layer.width * Math.abs(layer.scaleX ?? 1);
+  const scaledHeight = layer.height * Math.abs(layer.scaleY ?? 1);
   if (Math.abs(rotation) < 0.0001) {
-    return { x: layer.x, y: layer.y, width: layer.width, height: layer.height };
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    return {
+      x: centerX - scaledWidth / 2,
+      y: centerY - scaledHeight / 2,
+      width: scaledWidth,
+      height: scaledHeight,
+    };
   }
 
   const centerX = layer.x + layer.width / 2;
   const centerY = layer.y + layer.height / 2;
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
-  const halfWidth = layer.width / 2;
-  const halfHeight = layer.height / 2;
+  const halfWidth = scaledWidth / 2;
+  const halfHeight = scaledHeight / 2;
   const corners = [
     { x: -halfWidth, y: -halfHeight },
     { x: halfWidth, y: -halfHeight },

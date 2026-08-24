@@ -32,6 +32,7 @@ export class TextLayer {
     },
     options?: {
       skipStyles?: boolean;
+      forceVector?: boolean;
     },
   ) {
     if (!layer.text && !editingState?.isFocused) return;
@@ -42,13 +43,16 @@ export class TextLayer {
     const textRendering = layer.textRendering || "bilinear";
     const textOverflow = layer.textOverflow !== false; // Default to true if undefined
 
-    // OPTIMIZATION: If text is rotated or being edited, we render vectors directly
-    // to the context to avoid "double anti-aliasing" blur caused by rotating a bitmap.
-    // Exception: 'nearest' rendering still needs the thresholding cache.
-    const isRotated = !!layer.rotation;
+    // Transformed or edited text is rendered directly to the context to avoid
+    // "double anti-aliasing" blur caused by scaling or rotating a bitmap.
+    const isTransformed =
+      options?.forceVector === true ||
+      Math.abs(layer.rotation || 0) > 0.001 ||
+      (layer.scaleX ?? 1) !== 1 ||
+      (layer.scaleY ?? 1) !== 1;
     const isEditing = !!editingState?.isFocused;
 
-    if ((isRotated || isEditing) && textRendering !== "nearest") {
+    if (isTransformed || isEditing) {
       ctx.save();
       if (!textOverflow) {
         ctx.beginPath();
@@ -277,11 +281,12 @@ export class TextLayer {
     ctx.save();
 
     // Apply layer transformation for UI
-    if (layer.rotation) {
+    if (layer.rotation || (layer.scaleX ?? 1) !== 1 || (layer.scaleY ?? 1) !== 1) {
       const midX = layer.x + layer.width / 2;
       const midY = layer.y + layer.height / 2;
       ctx.translate(midX, midY);
-      ctx.rotate((layer.rotation * Math.PI) / 180);
+      ctx.rotate(((layer.rotation || 0) * Math.PI) / 180);
+      ctx.scale(layer.scaleX ?? 1, layer.scaleY ?? 1);
       ctx.translate(-midX, -midY);
     }
 
@@ -365,7 +370,7 @@ export class TextLayer {
 
     // Render pivot point during editing
     if (!editingState.isCtrlPressed) {
-      this.renderPivot(ctx, layer);
+      this.renderPivot(ctx, layer, zoom);
     }
 
     ctx.restore();
@@ -404,7 +409,7 @@ export class TextLayer {
     ctx.save();
     ctx.globalCompositeOperation = "difference";
     ctx.strokeStyle = "white";
-    ctx.lineWidth = 1 / zoom;
+    ctx.lineWidth = 1 / (zoom * Math.abs(layer.scaleY ?? 1));
     ctx.beginPath();
     ctx.moveTo(startX, lineY);
     ctx.lineTo(startX + lineWidth, lineY);
@@ -723,18 +728,14 @@ export class TextLayer {
     );
   }
 
-  private static renderPivot(ctx: CanvasRenderingContext2D, layer: Layer) {
+  private static renderPivot(ctx: CanvasRenderingContext2D, layer: Layer, zoom: number) {
     const size = 8;
-    const matrix = ctx.getTransform();
-    const zoom = Math.hypot(matrix.a, matrix.b);
-    const s = size / zoom;
 
     ctx.save();
     // ctx.fillStyle = layer.color || "#000000";
     // ctx.strokeStyle = "white";
     ctx.fillStyle = "white";
     ctx.strokeStyle = "#0078ff";
-    ctx.lineWidth = 1 / zoom;
 
     let px = layer.x;
     if (layer.textAlign === "center") px = layer.x + layer.width / 2;
@@ -743,6 +744,11 @@ export class TextLayer {
     const py = layer.y + (layer.fontSize || 24);
 
     ctx.translate(px, py);
+    // Cancel the layer scale locally so the pivot remains a fixed-size control.
+    ctx.scale(1 / (layer.scaleX || 1), 1 / (layer.scaleY || 1));
+    const logicalZoom = Math.max(0.0001, zoom);
+    const s = size / logicalZoom;
+    ctx.lineWidth = 1 / logicalZoom;
     ctx.rotate(Math.PI / 4); // Rotate 45 degrees to make it a diamond
 
     ctx.beginPath();
@@ -1028,7 +1034,7 @@ export class TextLayer {
       ctx.beginPath();
       ctx.moveTo(caretX, lineY + fontSize * 0.2);
       ctx.lineTo(caretX, lineY - fontSize * 0.8);
-      ctx.lineWidth = 1.5 / zoom;
+      ctx.lineWidth = 1.5 / (zoom * Math.abs(layer?.scaleX ?? 1));
       ctx.strokeStyle = "white";
       ctx.stroke();
       ctx.restore();

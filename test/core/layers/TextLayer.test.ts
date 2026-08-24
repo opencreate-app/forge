@@ -3,6 +3,81 @@ import { TextLayer } from "@/core/layers/TextLayer";
 import { Layer } from "@/renderer/store/projectStore";
 
 describe("TextLayer", () => {
+  it("keeps the editing pivot fixed-size under non-uniform text scaling", () => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    const scaleSpy = vi.spyOn(ctx, "scale");
+    const getTransformSpy = vi.spyOn(ctx, "getTransform");
+    const layer: Layer = {
+      id: "scaled-ui-text",
+      name: "Text",
+      type: "text",
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 10,
+      y: 20,
+      width: 180,
+      height: 40,
+      blendMode: "source-over",
+      text: "Vector",
+      textType: "point",
+      fontSize: 24,
+      fontFamily: "Arial",
+      fontWeight: "normal",
+      color: "#000000",
+      scaleX: 2,
+      scaleY: 0.5,
+    };
+
+    TextLayer.renderUI(
+      ctx,
+      layer,
+      { caretIndex: 0, selectionStart: 0, isFocused: true, isCtrlPressed: false },
+      1,
+    );
+
+    expect(scaleSpy).toHaveBeenCalledWith(2, 0.5);
+    expect(scaleSpy).toHaveBeenCalledWith(0.5, 2);
+    expect(getTransformSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders transformed text directly instead of scaling a cached bitmap", () => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    const drawImageSpy = vi.spyOn(ctx, "drawImage");
+    const fillTextSpy = vi.spyOn(ctx, "fillText");
+    const layer: Layer = {
+      id: "transformed-text",
+      name: "Text",
+      type: "text",
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 10,
+      y: 20,
+      width: 180,
+      height: 40,
+      blendMode: "source-over",
+      text: "Vector",
+      textType: "point",
+      fontSize: 24,
+      fontFamily: "Arial",
+      fontWeight: "normal",
+      color: "#000000",
+      scaleX: 2,
+      scaleY: -1,
+      rotation: 27,
+    };
+
+    TextLayer.render(ctx, layer, new Map(), new Map());
+
+    expect(fillTextSpy).toHaveBeenCalled();
+    expect(drawImageSpy).not.toHaveBeenCalled();
+  });
+
   it("clips overflow at the layer bounds after rendering the complete cached content", () => {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d")!;

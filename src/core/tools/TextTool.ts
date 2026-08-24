@@ -229,21 +229,49 @@ export class TextTool extends BaseTool {
     return this.findTextLayerAt(x, y, context);
   }
 
+  private getTransformedLayerCorners(layer: Layer) {
+    const scaleX = Math.abs(layer.scaleX ?? 1);
+    const scaleY = Math.abs(layer.scaleY ?? 1);
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    const rotation = ((layer.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const halfWidth = (layer.width * scaleX) / 2;
+    const halfHeight = (layer.height * scaleY) / 2;
+
+    return [
+      { x: -halfWidth, y: -halfHeight },
+      { x: halfWidth, y: -halfHeight },
+      { x: halfWidth, y: halfHeight },
+      { x: -halfWidth, y: halfHeight },
+    ].map((point) => ({
+      x: centerX + point.x * cos - point.y * sin,
+      y: centerY + point.x * sin + point.y * cos,
+    }));
+  }
+
   private getTransformHandles(layer: Layer, zoom: number) {
     const { x, y, width, height, rotation = 0 } = layer;
+    const scaledWidth = width * Math.abs(layer.scaleX ?? 1);
+    const scaledHeight = height * Math.abs(layer.scaleY ?? 1);
     const midX = x + width / 2;
     const midY = y + height / 2;
+    const left = midX - scaledWidth / 2;
+    const top = midY - scaledHeight / 2;
+    const right = midX + scaledWidth / 2;
+    const bottom = midY + scaledHeight / 2;
 
     const rawHandles = [
-      { name: "top-left", x, y, cursor: "nwse-resize" },
-      { name: "top-middle", x: midX, y, cursor: "ns-resize" },
-      { name: "top-right", x: x + width, y, cursor: "nesw-resize" },
-      { name: "center-left", x, y: midY, cursor: "ew-resize" },
-      { name: "center-right", x: x + width, y: midY, cursor: "ew-resize" },
-      { name: "bottom-left", x, y: y + height, cursor: "nesw-resize" },
-      { name: "bottom-middle", x: midX, y: y + height, cursor: "ns-resize" },
-      { name: "bottom-right", x: x + width, y: y + height, cursor: "nwse-resize" },
-      { name: "rotate", x: midX, y: y - 20 / zoom, cursor: "crosshair" },
+      { name: "top-left", x: left, y: top, cursor: "nwse-resize" },
+      { name: "top-middle", x: midX, y: top, cursor: "ns-resize" },
+      { name: "top-right", x: right, y: top, cursor: "nesw-resize" },
+      { name: "center-left", x: left, y: midY, cursor: "ew-resize" },
+      { name: "center-right", x: right, y: midY, cursor: "ew-resize" },
+      { name: "bottom-left", x: left, y: bottom, cursor: "nesw-resize" },
+      { name: "bottom-middle", x: midX, y: bottom, cursor: "ns-resize" },
+      { name: "bottom-right", x: right, y: bottom, cursor: "nwse-resize" },
+      { name: "rotate", x: midX, y: top - 20 / zoom, cursor: "crosshair" },
     ];
 
     if (rotation === 0) return rawHandles;
@@ -288,7 +316,8 @@ export class TextTool extends BaseTool {
 
   private worldToLocal(px: number, py: number, layer: Layer): { x: number; y: number } {
     const rotation = layer.rotation || 0;
-    if (rotation === 0) return { x: px, y: py };
+    const scaleX = layer.scaleX ?? 1;
+    const scaleY = layer.scaleY ?? 1;
 
     const midX = layer.x + layer.width / 2;
     const midY = layer.y + layer.height / 2;
@@ -299,10 +328,12 @@ export class TextTool extends BaseTool {
     const rad = (-rotation * Math.PI) / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
+    const scaledX = dx / (scaleX || 1);
+    const scaledY = dy / (scaleY || 1);
 
     return {
-      x: midX + (dx * cos - dy * sin),
-      y: midY + (dx * sin + dy * cos),
+      x: midX + scaledX * cos - scaledY * sin,
+      y: midY + scaledX * sin + scaledY * cos,
     };
   }
 
@@ -379,15 +410,17 @@ export class TextTool extends BaseTool {
       y: bounds.y,
     };
     const rotation = layer.rotation || 0;
-    if (rotation === 0) return anchor;
+    const scaleX = layer.scaleX ?? 1;
+    const scaleY = layer.scaleY ?? 1;
+    if (rotation === 0 && scaleX === 1 && scaleY === 1) return anchor;
 
     const centerX = layer.x + layer.width / 2;
     const centerY = layer.y + layer.height / 2;
     const radians = (rotation * Math.PI) / 180;
     const cos = Math.cos(radians);
     const sin = Math.sin(radians);
-    const offsetX = anchor.x - centerX;
-    const offsetY = anchor.y - centerY;
+    const offsetX = (anchor.x - centerX) * scaleX;
+    const offsetY = (anchor.y - centerY) * scaleY;
 
     return {
       x: centerX + offsetX * cos - offsetY * sin,
@@ -1749,15 +1782,12 @@ export class TextTool extends BaseTool {
         ctx.lineWidth = 1 / scale;
         ctx.setLineDash([4 / scale, 2 / scale]);
 
-        if (layer.rotation) {
-          const midX = layer.x + layer.width / 2;
-          const midY = layer.y + layer.height / 2;
-          ctx.translate(midX, midY);
-          ctx.rotate((layer.rotation * Math.PI) / 180);
-          ctx.strokeRect(-layer.width / 2, -layer.height / 2, layer.width, layer.height);
-        } else {
-          ctx.strokeRect(layer.x, layer.y, layer.width, layer.height);
-        }
+        const corners = this.getTransformedLayerCorners(layer);
+        ctx.beginPath();
+        ctx.moveTo(corners[0].x, corners[0].y);
+        corners.slice(1).forEach((corner) => ctx.lineTo(corner.x, corner.y));
+        ctx.closePath();
+        ctx.stroke();
         ctx.restore();
       }
     }

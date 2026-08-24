@@ -2459,11 +2459,18 @@ export class ForgeEngine {
         this.ctx.lineWidth = 1 / this.project.zoom;
         this.ctx.setLineDash([4 / this.project.zoom, 2 / this.project.zoom]);
 
-        if (activeLayer.rotation) {
+        if (activeLayer.type === "text" && this.hasTextLayerTransform(activeLayer)) {
+          const corners = this.getTextLayerCorners(activeLayer);
+          this.ctx.beginPath();
+          this.ctx.moveTo(corners[0].x, corners[0].y);
+          corners.slice(1).forEach((corner) => this.ctx.lineTo(corner.x, corner.y));
+          this.ctx.closePath();
+          this.ctx.stroke();
+        } else if (activeLayer.rotation) {
           const centerX = activeLayer.x + activeLayer.width / 2;
           const centerY = activeLayer.y + activeLayer.height / 2;
           this.ctx.translate(centerX, centerY);
-          this.ctx.rotate((activeLayer.rotation * Math.PI) / 180);
+          this.ctx.rotate(((activeLayer.rotation || 0) * Math.PI) / 180);
           this.ctx.strokeRect(
             -activeLayer.width / 2,
             -activeLayer.height / 2,
@@ -2493,6 +2500,34 @@ export class ForgeEngine {
   /**
    * Renders a single layer to a given context.
    */
+  private hasTextLayerTransform(layer: Layer): boolean {
+    return (
+      Math.abs(layer.rotation || 0) > 0.001 ||
+      (layer.scaleX ?? 1) !== 1 ||
+      (layer.scaleY ?? 1) !== 1
+    );
+  }
+
+  private getTextLayerCorners(layer: Layer) {
+    const halfWidth = (layer.width * Math.abs(layer.scaleX ?? 1)) / 2;
+    const halfHeight = (layer.height * Math.abs(layer.scaleY ?? 1)) / 2;
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    const rotation = ((layer.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+
+    return [
+      { x: -halfWidth, y: -halfHeight },
+      { x: halfWidth, y: -halfHeight },
+      { x: halfWidth, y: halfHeight },
+      { x: -halfWidth, y: halfHeight },
+    ].map((point) => ({
+      x: centerX + point.x * cos - point.y * sin,
+      y: centerY + point.x * sin + point.y * cos,
+    }));
+  }
+
   private renderLayer(ctx: CanvasRenderingContext2D, layer: Layer) {
     ctx.save();
     ctx.globalAlpha = layer.opacity / 100;
@@ -2501,18 +2536,58 @@ export class ForgeEngine {
     const tool = this.getActiveTool();
     const isEditing = tool?.getEditingLayerId() === layer.id;
     const editingState = isEditing ? (tool as any).getEditingState?.() : undefined;
+    const isEditingMask = isEditing && this.project?.activeMaskId === layer.id;
+    const hasStyles = layer.styles
+      ? Object.values(layer.styles).some((s: any) => s?.enabled)
+      : false;
+    const hasMask = layer.mask?.enabled || isEditingMask;
 
     if (editingState) {
       editingState.isCtrlPressed = this.isCtrlPressed;
     }
 
     let renderLayerTarget = layer;
+    let forceVectorText = false;
+    let bufferedTextTransform:
+      | {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          scaleX: number;
+          scaleY: number;
+          rotation: number;
+          anchor: { x: number; y: number };
+        }
+      | undefined;
+
+    if (
+      !isEditing &&
+      layer.type === "text" &&
+      (hasStyles || hasMask) &&
+      (layer.rotation !== undefined || layer.scaleX !== undefined || layer.scaleY !== undefined)
+    ) {
+      bufferedTextTransform = {
+        x: layer.x + layer.width / 2,
+        y: layer.y + layer.height / 2,
+        width: layer.width,
+        height: layer.height,
+        scaleX: layer.scaleX ?? 1,
+        scaleY: layer.scaleY ?? 1,
+        rotation: layer.rotation || 0,
+        anchor: { x: 0.5, y: 0.5 },
+      };
+      forceVectorText = true;
+    }
 
     if (isEditing && tool?.id === "transform" && layer.type !== "group") {
       const transform = useToolStore.getState().toolSettings.transform;
       const isRotated = Math.abs(transform.rotation % 360) >= 0.01;
 
-      if (!isRotated) {
+      if (layer.type === "text" && (hasStyles || hasMask)) {
+        bufferedTextTransform = transform;
+        forceVectorText = true;
+      } else if (!isRotated && layer.type !== "text") {
         // Pixel-perfect rendering when not rotated
         const targetWidth = Math.round(transform.width * Math.abs(transform.scaleX));
         const targetHeight = Math.round(transform.height * Math.abs(transform.scaleY));
@@ -2545,7 +2620,8 @@ export class ForgeEngine {
           }
         }
       } else {
-        // Rotated preview
+        // Text is always rendered from its glyphs during a transform. This keeps the preview
+        // sharp for rotation, non-uniform scaling, and negative scales (mirroring).
         ctx.translate(transform.x, transform.y);
         ctx.rotate((transform.rotation * Math.PI) / 180);
 
@@ -2571,24 +2647,41 @@ export class ForgeEngine {
             x: lx,
             y: ly,
             rotation: 0,
+            scaleX: 1,
+            scaleY: 1,
           };
+          forceVectorText = layer.type === "text";
         }
       }
-    } else if (layer.rotation) {
+    } else if (
+      !(layer.type === "text" && (hasStyles || hasMask)) &&
+      (layer.rotation ||
+        (layer.type === "text" && ((layer.scaleX ?? 1) !== 1 || (layer.scaleY ?? 1) !== 1)))
+    ) {
       const centerX = Math.round(layer.x + layer.width / 2);
       const centerY = Math.round(layer.y + layer.height / 2);
       ctx.translate(centerX, centerY);
-      ctx.rotate((layer.rotation * Math.PI) / 180);
+      ctx.rotate(((layer.rotation || 0) * Math.PI) / 180);
+      if (layer.type === "text") {
+        ctx.scale(layer.scaleX ?? 1, layer.scaleY ?? 1);
+      }
       ctx.translate(-centerX, -centerY);
+      if (layer.type === "text" && (hasStyles || hasMask)) {
+        bufferedTextTransform = {
+          x: centerX,
+          y: centerY,
+          width: layer.width,
+          height: layer.height,
+          scaleX: layer.scaleX ?? 1,
+          scaleY: layer.scaleY ?? 1,
+          rotation: layer.rotation || 0,
+          anchor: { x: 0.5, y: 0.5 },
+        };
+        forceVectorText = true;
+      }
     }
 
     const drawingCanvas = isEditing ? tool?.getDrawingCanvas() : null;
-    const isEditingMask = isEditing && this.project?.activeMaskId === layer.id;
-
-    const hasStyles = layer.styles
-      ? Object.values(layer.styles).some((s: any) => s?.enabled)
-      : false;
-    const hasMask = layer.mask?.enabled || isEditingMask;
 
     if (drawingCanvas && !isEditingMask) {
       ctx.save();
@@ -2602,10 +2695,14 @@ export class ForgeEngine {
         renderLayerTarget,
         editingState,
         isEditingMask ? drawingCanvas : undefined,
+        forceVectorText,
+        bufferedTextTransform,
       );
     } else {
       ctx.globalAlpha *= (layer.fill ?? 100) / 100;
-      this.renderLayerToContext(ctx, renderLayerTarget, editingState);
+      this.renderLayerToContext(ctx, renderLayerTarget, editingState, {
+        forceVector: forceVectorText,
+      });
     }
     ctx.restore();
   }
@@ -2617,7 +2714,11 @@ export class ForgeEngine {
     ctx: CanvasRenderingContext2D,
     layer: Layer,
     editingState?: any,
-    options?: { skipStyles?: boolean; groupTransformOrigin?: { x: number; y: number } },
+    options?: {
+      skipStyles?: boolean;
+      forceVector?: boolean;
+      groupTransformOrigin?: { x: number; y: number };
+    },
   ) {
     switch (layer.type) {
       case "raster":
@@ -2680,12 +2781,67 @@ export class ForgeEngine {
     layer: Layer,
     editingState?: any,
     maskPreview?: { canvas: HTMLCanvasElement; x: number; y: number } | null,
+    forceVectorText = false,
+    textTransform?: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scaleX: number;
+      scaleY: number;
+      rotation: number;
+      anchor: { x: number; y: number };
+    },
   ) {
     const stroke = layer.styles?.stroke;
     const dropShadow = layer.styles?.dropShadow;
     const innerShadow = layer.styles?.innerShadow;
 
     let { x, y, width, height } = layer;
+    let contentLayer = layer;
+
+    if (textTransform && layer.type === "text") {
+      const radians = (textTransform.rotation * Math.PI) / 180;
+      const corners = [
+        {
+          x: -textTransform.width * textTransform.anchor.x * textTransform.scaleX,
+          y: -textTransform.height * textTransform.anchor.y * textTransform.scaleY,
+        },
+        {
+          x: textTransform.width * (1 - textTransform.anchor.x) * textTransform.scaleX,
+          y: -textTransform.height * textTransform.anchor.y * textTransform.scaleY,
+        },
+        {
+          x: textTransform.width * (1 - textTransform.anchor.x) * textTransform.scaleX,
+          y: textTransform.height * (1 - textTransform.anchor.y) * textTransform.scaleY,
+        },
+        {
+          x: -textTransform.width * textTransform.anchor.x * textTransform.scaleX,
+          y: textTransform.height * (1 - textTransform.anchor.y) * textTransform.scaleY,
+        },
+      ].map((corner) => ({
+        x: textTransform.x + corner.x * Math.cos(radians) - corner.y * Math.sin(radians),
+        y: textTransform.y + corner.x * Math.sin(radians) + corner.y * Math.cos(radians),
+      }));
+      const minX = Math.min(...corners.map((corner) => corner.x));
+      const minY = Math.min(...corners.map((corner) => corner.y));
+      const maxX = Math.max(...corners.map((corner) => corner.x));
+      const maxY = Math.max(...corners.map((corner) => corner.y));
+      x = minX;
+      y = minY;
+      width = Math.max(1, maxX - minX);
+      height = Math.max(1, maxY - minY);
+      contentLayer = {
+        ...layer,
+        x: -textTransform.width * textTransform.anchor.x,
+        y: -textTransform.height * textTransform.anchor.y,
+        width: textTransform.width,
+        height: textTransform.height,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+      };
+    }
 
     // Groups are containers, so their style bounds come from their descendants. This is
     // especially important while transforming a child: the child is rendered using its
@@ -2738,12 +2894,25 @@ export class ForgeEngine {
       bctx.translate(padding - x, padding - y);
       const renderOptions: {
         skipStyles: boolean;
+        forceVector?: boolean;
         groupTransformOrigin?: { x: number; y: number };
-      } = { skipStyles: true };
+      } = {
+        skipStyles: true,
+        ...(forceVectorText ? { forceVector: true } : {}),
+      };
       if (layer.type === "group") {
         renderOptions.groupTransformOrigin = { x: 0, y: 0 };
       }
-      this.renderLayerToContext(bctx, layer, editingState, renderOptions);
+      if (textTransform) {
+        bctx.translate(textTransform.x, textTransform.y);
+        bctx.rotate((textTransform.rotation * Math.PI) / 180);
+        bctx.scale(textTransform.scaleX, textTransform.scaleY);
+        bctx.translate(
+          -textTransform.width * textTransform.anchor.x,
+          -textTransform.height * textTransform.anchor.y,
+        );
+      }
+      this.renderLayerToContext(bctx, contentLayer, editingState, renderOptions);
       bctx.restore();
 
       this.applyLayerMask(bctx, layer.id, layer.mask, buffer.width, buffer.height, padding, x, y);
@@ -2768,10 +2937,14 @@ export class ForgeEngine {
     // aligns with 'padding, padding' in the buffer.
     bctx.save();
     bctx.translate(padding - x, padding - y);
-    const renderOptions: { skipStyles: boolean; groupTransformOrigin?: { x: number; y: number } } =
-      {
-        skipStyles: true,
-      };
+    const renderOptions: {
+      skipStyles: boolean;
+      forceVector?: boolean;
+      groupTransformOrigin?: { x: number; y: number };
+    } = {
+      skipStyles: true,
+      ...(forceVectorText ? { forceVector: true } : {}),
+    };
     if (layer.type === "group") {
       // GroupLayer composites its children in project coordinates into its own
       // project-sized buffer. The outer buffer translation happens only when
@@ -2779,7 +2952,16 @@ export class ForgeEngine {
       // the preview a second time.
       renderOptions.groupTransformOrigin = { x: 0, y: 0 };
     }
-    this.renderLayerToContext(bctx, layer, editingState, renderOptions);
+    if (textTransform) {
+      bctx.translate(textTransform.x, textTransform.y);
+      bctx.rotate((textTransform.rotation * Math.PI) / 180);
+      bctx.scale(textTransform.scaleX, textTransform.scaleY);
+      bctx.translate(
+        -textTransform.width * textTransform.anchor.x,
+        -textTransform.height * textTransform.anchor.y,
+      );
+    }
+    this.renderLayerToContext(bctx, contentLayer, editingState, renderOptions);
     bctx.restore();
 
     // --- LAYER MASK (Applied to content before styles so styles adapt) ---

@@ -3,6 +3,64 @@ import { TransformTool } from "@/core/tools/TransformTool";
 import { Layer, Project } from "@/renderer/store/projectStore";
 
 describe("TransformTool", () => {
+  it("persists text transforms as vector properties without rasterizing the layer", async () => {
+    const textLayer: Layer = {
+      id: "text",
+      name: "Vector text",
+      type: "text",
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 30,
+      blendMode: "source-over",
+      text: "Vector",
+      textType: "point",
+      fontSize: 24,
+      fontFamily: "Arial",
+      color: "#000000",
+    };
+    const project = { layers: [textLayer] } as Project;
+    const updateProject = vi.fn();
+    const tool = new TransformTool();
+
+    (tool as any).originalLayer = textLayer;
+    (tool as any).currentTransform = {
+      x: 60,
+      y: 35,
+      width: 100,
+      height: 30,
+      scaleX: -2,
+      scaleY: 1.5,
+      rotation: 30,
+      anchor: { x: 0.5, y: 0.5 },
+      isDirty: true,
+    };
+
+    await tool.apply({
+      project,
+      previousToolId: "move",
+      pushHistory: vi.fn(),
+      updateProject,
+      invalidateCache: vi.fn(),
+      setActiveTool: vi.fn(),
+    } as any);
+
+    const updatedLayer = (updateProject.mock.calls[0][0].layers as Layer[])[0];
+    expect(updatedLayer).toMatchObject({
+      width: 100,
+      height: 30,
+      rotation: 30,
+      scaleX: -2,
+      scaleY: 1.5,
+      text: "Vector",
+    });
+    expect(updatedLayer.data).toBeUndefined();
+  });
+
   it("should scale child positions around the group anchor when applying", async () => {
     const group: Layer = {
       id: "group",

@@ -210,6 +210,10 @@ export interface Layer {
   blendMode: GlobalCompositeOperation;
   /** Rotation in degrees. */
   rotation?: number;
+  /** Horizontal vector scale. Defaults to 1 for legacy layers. */
+  scaleX?: number;
+  /** Vertical vector scale. Defaults to 1 for legacy layers. */
+  scaleY?: number;
   /** Internal undo stack for text editing. */
   textUndoStack?: {
     text: string;

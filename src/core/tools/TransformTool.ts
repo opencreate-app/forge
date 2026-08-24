@@ -80,8 +80,8 @@ export class TransformTool extends BaseTool {
         y: bounds.y + bounds.height / 2,
         width: bounds.width,
         height: bounds.height,
-        scaleX: 1,
-        scaleY: 1,
+        scaleX: layer.type === "text" ? (layer.scaleX ?? 1) : 1,
+        scaleY: layer.type === "text" ? (layer.scaleY ?? 1) : 1,
         rotation: layer.rotation || 0,
         anchor: { x: 0.5, y: 0.5 },
         isDirty: this.isFloating, // If we just floated, it's already a change from original
@@ -870,6 +870,39 @@ export class TransformTool extends BaseTool {
                   : l.mask,
               }
             : l,
+        ),
+        isDirty: true,
+      });
+      context.invalidateCache(layer.id);
+      context.setActiveTool(context.previousToolId);
+      return;
+    }
+
+    if (layer.type === "text") {
+      // Text remains an editable vector layer. The transform origin can differ from the
+      // rectangle center, so move the stored rectangle center to the transformed center while
+      // preserving the original text geometry and applying scale/rotation at render time.
+      const localCenterX = t.width * (0.5 - t.anchor.x) * t.scaleX;
+      const localCenterY = t.height * (0.5 - t.anchor.y) * t.scaleY;
+      const transformedCenterX = t.x + localCenterX * cos - localCenterY * sin;
+      const transformedCenterY = t.y + localCenterX * sin + localCenterY * cos;
+      const finalX = transformedCenterX - t.width / 2;
+      const finalY = transformedCenterY - t.height / 2;
+
+      context.updateProject({
+        layers: context.project.layers.map((candidate) =>
+          candidate.id === layer.id
+            ? {
+                ...candidate,
+                x: finalX,
+                y: finalY,
+                width: t.width,
+                height: t.height,
+                rotation: t.rotation,
+                scaleX: t.scaleX,
+                scaleY: t.scaleY,
+              }
+            : candidate,
         ),
         isDirty: true,
       });
