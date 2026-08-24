@@ -15,6 +15,7 @@ const infoPlistPath = join(appPath, "Contents", "Info.plist");
 const asarCliPath = resolve("node_modules/.bin/asar");
 const reportPath = resolve("dist/macos-smoke.log");
 const startupLogPath = join(os.homedir(), "Library", "Logs", "OpenCreate Forge", "startup.log");
+const shouldLaunch = process.env.SMOKE_MACOS_LAUNCH === "true";
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: "utf8" });
@@ -107,6 +108,14 @@ const requiredEntries = [
 const missingEntry = requiredEntries.find((entry) => !archiveEntries.has(entry));
 if (missingEntry) {
   fail(`Packaged macOS application is missing an app.asar entry: ${missingEntry}`);
+}
+
+if (!shouldLaunch) {
+  console.log(
+    "macOS bundle structure smoke test passed; skipping Launch Services startup because this is an ad-hoc signed build.",
+  );
+  console.log(collectDiagnostics());
+  process.exit(0);
 }
 
 function hasFinishedStartup(log, previousSize) {

@@ -124,6 +124,8 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           npm run smoke:macos -- "${{ matrix.app_path }}" "${{ matrix.binary_arch }}"
+        env:
+          SMOKE_MACOS_LAUNCH: "false"
 
       - name: Upload macOS smoke diagnostics
         if: failure() && matrix.platform == 'macos'
