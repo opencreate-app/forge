@@ -96,6 +96,119 @@ describe("ProjectTabs", () => {
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
   });
 
+  it("scrolls project tabs horizontally with the mouse wheel and shows navigation controls", () => {
+    const projects = Array.from({ length: 4 }, (_, index) =>
+      createMockProject({
+        id: `project-${index + 1}`,
+        name: `Project ${index + 1}`,
+        filePath: `/tmp/project-${index + 1}.ocfd`,
+      }),
+    );
+    useProjectStore.setState({ projects, activeProjectId: projects[0].id });
+
+    render(<ProjectTabs />);
+    const viewport = screen.getByLabelText("Project tabs");
+    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 200 });
+    Object.defineProperty(viewport, "scrollWidth", { configurable: true, value: 700 });
+    const homeButton = screen.getByRole("button", { name: "Home" });
+    const projectTabs = screen.getAllByRole("button").filter((button) => button !== homeButton);
+    projectTabs.forEach((tab, index) => {
+      Object.defineProperty(tab, "offsetLeft", { configurable: true, value: index * 154 });
+    });
+    Object.defineProperty(viewport, "scrollTo", {
+      configurable: true,
+      value: ({ left }: { left: number }) => {
+        viewport.scrollLeft = left;
+      },
+    });
+    fireEvent.scroll(viewport);
+
+    const scrollLeftButton = screen.getByRole("button", { name: "Scroll project tabs left" });
+    const scrollRightButton = screen.getByRole("button", { name: "Scroll project tabs right" });
+    expect(scrollLeftButton).toBeDisabled();
+    expect(scrollRightButton).not.toBeDisabled();
+
+    fireEvent.wheel(viewport, { deltaY: 80 });
+    expect(viewport.scrollLeft).toBe(80);
+    expect(viewport).toHaveClass("is-wheel-scrolling");
+    expect(scrollLeftButton).not.toBeDisabled();
+
+    fireEvent.click(scrollRightButton);
+    expect(viewport.scrollLeft).toBe(154);
+    expect(viewport).toHaveClass("project-tabs-scrollbar");
+
+    act(() => vi.advanceTimersByTime(149));
+    expect(viewport).toHaveClass("is-wheel-scrolling");
+    act(() => vi.advanceTimersByTime(1));
+    expect(viewport).not.toHaveClass("is-wheel-scrolling");
+  });
+
+  it("keeps the Home button outside the horizontally scrollable tabs", () => {
+    render(<ProjectTabs />);
+
+    const homeButton = screen.getByRole("button", { name: "Home" });
+    const viewport = screen.getByLabelText("Project tabs");
+    expect(viewport).not.toContainElement(homeButton);
+  });
+
+  it.each([
+    ["left", { left: -20, right: 130 }, 100],
+    ["right", { left: 220, right: 370 }, 0],
+  ])("indicates when the active tab is hidden on the %s", (side, tabRect, scrollLeft) => {
+    const projects = Array.from({ length: 4 }, (_, index) =>
+      createMockProject({
+        id: "project-" + (index + 1),
+        name: "Project " + (index + 1),
+        filePath: "/tmp/project-" + (index + 1) + ".ocfd",
+      }),
+    );
+    useProjectStore.setState({ projects, activeProjectId: projects[0].id });
+    useUIStore.setState({ activeTab: projects[0].id });
+
+    render(<ProjectTabs />);
+    const viewport = screen.getByLabelText("Project tabs");
+    const activeProjectTab = screen.getByText("project-1.ocfd").closest("button")!;
+    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 200 });
+    Object.defineProperty(viewport, "scrollWidth", { configurable: true, value: 700 });
+    Object.defineProperty(viewport, "scrollLeft", {
+      configurable: true,
+      writable: true,
+      value: scrollLeft,
+    });
+    Object.defineProperty(viewport, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, right: 200, top: 0, bottom: 35, width: 200, height: 35 }),
+    });
+    Object.defineProperty(activeProjectTab, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        left: tabRect.left,
+        right: tabRect.right,
+        top: 0,
+        bottom: 30,
+        width: 150,
+        height: 30,
+      }),
+    });
+
+    fireEvent.scroll(viewport);
+
+    expect(viewport).toHaveClass("active-tab-" + side);
+    expect(viewport.parentElement?.querySelector(".active-tab-indicator")).toHaveClass(
+      "active-tab-indicator",
+      side === "left" ? "left-0" : "right-0",
+    );
+  });
+
+  it("uses the default cursor until a tab is being dragged", () => {
+    render(<ProjectTabs />);
+    const tab = getProjectTab();
+
+    expect(tab.style.cursor).toBe("default");
+    fireEvent.mouseDown(tab, { button: 0, clientX: 50 });
+    expect(tab.style.cursor).toBe("grabbing");
+  });
+
   it("reuses the rendered preview while the project is unchanged", async () => {
     render(<ProjectTabs />);
     const tab = getProjectTab();

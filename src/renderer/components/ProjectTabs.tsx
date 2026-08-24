@@ -5,7 +5,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { useProjectStore } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
-import { Home, X, Box } from "lucide-react";
+import { ChevronLeft, ChevronRight, Home, X, Box } from "lucide-react";
 import { createProjectFromImage, loadImage } from "@utils/projectUtils";
 import { generateProjectThumbnail } from "@utils/projectThumbnail";
 import {
@@ -28,6 +28,8 @@ const ProjectTabs: React.FC = () => {
   const { activeTab, setActiveTab, removeFromHistory, showToast } = useUIStore();
 
   const tabElementsRef = React.useRef<Map<string, HTMLButtonElement>>(new Map());
+  const tabsViewportRef = React.useRef<HTMLDivElement>(null);
+  const wheelScrollResetRef = React.useRef<number | null>(null);
   const hoverTimeoutRef = React.useRef<number | null>(null);
   const previewRequestRef = React.useRef(0);
   const previewCacheRef = React.useRef(
@@ -53,6 +55,82 @@ const ProjectTabs: React.FC = () => {
   const [justDropped, setJustDropped] = React.useState(false);
   const [isFileDragOver, setIsFileDragOver] = React.useState(false);
   const [layerDropTarget, setLayerDropTarget] = React.useState<string | null>(null);
+  const [hasTabOverflow, setHasTabOverflow] = React.useState(false);
+  const [canScrollTabsLeft, setCanScrollTabsLeft] = React.useState(false);
+  const [canScrollTabsRight, setCanScrollTabsRight] = React.useState(false);
+  const [activeTabOverflowSide, setActiveTabOverflowSide] = React.useState<"left" | "right" | null>(
+    null,
+  );
+
+  const updateTabScrollState = React.useCallback(() => {
+    const viewport = tabsViewportRef.current;
+    if (!viewport) return;
+
+    const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    const nextHasOverflow = maxScrollLeft > 1;
+    const nextCanScrollLeft = viewport.scrollLeft > 1;
+    const nextCanScrollRight = viewport.scrollLeft < maxScrollLeft - 1;
+    setHasTabOverflow(nextHasOverflow);
+    setCanScrollTabsLeft(nextCanScrollLeft);
+    setCanScrollTabsRight(nextCanScrollRight);
+
+    let nextActiveTabOverflowSide: "left" | "right" | null = null;
+    if (nextHasOverflow && activeTab !== "home") {
+      const activeTabElement = tabElementsRef.current.get(activeTab);
+      if (activeTabElement) {
+        const viewportRect = viewport.getBoundingClientRect();
+        const activeTabRect = activeTabElement.getBoundingClientRect();
+        if (activeTabRect.left < viewportRect.left - 1 && nextCanScrollLeft) {
+          nextActiveTabOverflowSide = "left";
+        } else if (activeTabRect.right > viewportRect.right + 1 && nextCanScrollRight) {
+          nextActiveTabOverflowSide = "right";
+        }
+      }
+    }
+    setActiveTabOverflowSide(nextActiveTabOverflowSide);
+  }, [activeTab]);
+
+  const handleTabsWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const viewport = tabsViewportRef.current;
+    if (!viewport || !hasTabOverflow) return;
+
+    const delta = event.deltaX !== 0 ? event.deltaX : event.deltaY;
+    if (delta === 0) return;
+
+    event.preventDefault();
+    viewport.classList.add("is-wheel-scrolling");
+    if (wheelScrollResetRef.current !== null) {
+      window.clearTimeout(wheelScrollResetRef.current);
+    }
+    viewport.scrollLeft += delta;
+    updateTabScrollState();
+    wheelScrollResetRef.current = window.setTimeout(() => {
+      viewport.classList.remove("is-wheel-scrolling");
+      wheelScrollResetRef.current = null;
+    }, 150);
+  };
+
+  const scrollTabs = (direction: -1 | 1) => {
+    const viewport = tabsViewportRef.current;
+    if (!viewport) return;
+
+    const tabStarts = projects
+      .map((project) => tabElementsRef.current.get(project.id))
+      .filter((tab): tab is HTMLButtonElement => tab !== undefined)
+      .map((tab) => tab.offsetLeft);
+    const currentScrollLeft = viewport.scrollLeft;
+    const targetStart =
+      direction > 0
+        ? tabStarts.find((start) => start > currentScrollLeft + 1)
+        : [...tabStarts].reverse().find((start) => start < currentScrollLeft - 1);
+    const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    const targetScrollLeft = Math.max(
+      0,
+      Math.min(maxScrollLeft, targetStart ?? (direction > 0 ? maxScrollLeft : 0)),
+    );
+
+    viewport.scrollTo({ left: targetScrollLeft, behavior: "smooth" });
+  };
 
   const handleFileDrop = React.useCallback(
     async (event: React.DragEvent) => {
@@ -420,9 +498,36 @@ const ProjectTabs: React.FC = () => {
     }
   }, [justDropped]);
 
+  React.useEffect(() => {
+    const viewport = tabsViewportRef.current;
+    if (!viewport) return;
+
+    updateTabScrollState();
+    viewport.addEventListener("scroll", updateTabScrollState, { passive: true });
+    window.addEventListener("resize", updateTabScrollState);
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateTabScrollState) : null;
+    resizeObserver?.observe(viewport);
+
+    return () => {
+      viewport.removeEventListener("scroll", updateTabScrollState);
+      window.removeEventListener("resize", updateTabScrollState);
+      resizeObserver?.disconnect();
+    };
+  }, [projects, updateTabScrollState]);
+
+  React.useEffect(() => {
+    return () => {
+      if (wheelScrollResetRef.current !== null) {
+        window.clearTimeout(wheelScrollResetRef.current);
+      }
+    };
+  }, []);
+
   return (
     <div
-      className="relative isolate flex h-[35px] items-end gap-1 overflow-x-auto overflow-y-hidden border-b border-bg-tertiary bg-[#111] px-[5px]"
+      className="relative isolate flex h-[35px] items-end gap-1 overflow-hidden border-b border-bg-tertiary bg-[#111] px-[5px]"
       onDragEnter={handleTabsDragEnter}
       onDragOver={handleTabsDragOver}
       onDragLeave={handleTabsDragLeave}
@@ -438,7 +543,8 @@ const ProjectTabs: React.FC = () => {
       <button
         onClick={() => handleTabClick("home")}
         tabIndex={-1}
-        className={`flex items-center px-2 h-[30px] border-none rounded-t-[4px] cursor-pointer text-[0.8rem] flex-shrink-0 transition-colors ${
+        aria-label="Home"
+        className={`flex shrink-0 items-center rounded-t-[4px] border-none px-2 h-[30px] cursor-pointer text-[0.8rem] transition-colors ${
           activeTab === "home"
             ? "bg-[#222] text-accent"
             : "bg-transparent text-[#666] hover:bg-white/5"
@@ -447,94 +553,150 @@ const ProjectTabs: React.FC = () => {
         <Home size={14} />
       </button>
 
-      {projects.map((project, index) => {
-        const isDraggingThis = dragState && dragState.startIndex === index;
-
-        let tx = 0;
-        let transitionStyle = justDropped
-          ? "none"
-          : "transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.15s, border-color 0.15s, opacity 0.15s";
-
-        if (dragState) {
-          if (isDraggingThis) {
-            tx = dragState.currentX - dragState.startX;
-            transitionStyle = "background-color 0.15s, border-color 0.15s, opacity 0.15s"; // no transform transition while dragging
-          } else {
-            // Shift other elements out of the way
-            const draggedWidth = dragState.rects[dragState.startIndex].width + 4; // width + gap
-            if (dragState.currentIndex > dragState.startIndex) {
-              if (index > dragState.startIndex && index <= dragState.currentIndex) {
-                tx = -draggedWidth;
-              }
-            } else if (dragState.currentIndex < dragState.startIndex) {
-              if (index < dragState.startIndex && index >= dragState.currentIndex) {
-                tx = draggedWidth;
-              }
-            }
+      <div className="relative flex min-w-0 flex-1 items-end">
+        <div
+          ref={tabsViewportRef}
+          aria-label="Project tabs"
+          className={
+            "project-tabs-scrollbar flex h-full min-w-0 flex-1 items-end overflow-x-auto overflow-y-hidden" +
+            (activeTabOverflowSide ? ` active-tab-${activeTabOverflowSide}` : "")
           }
-        }
+          onWheel={handleTabsWheel}
+        >
+          <div className="flex min-w-max items-end gap-1">
+            {projects.map((project, index) => {
+              const isDraggingThis = dragState && dragState.startIndex === index;
 
-        return (
-          <button
-            key={project.id}
-            ref={(el) => {
-              if (el) tabElementsRef.current.set(project.id, el);
-              else tabElementsRef.current.delete(project.id);
-            }}
-            onMouseDown={(e) => handleMouseDown(e, project.id, index)}
-            onMouseEnter={(e) => handleTabMouseEnter(e, project)}
-            onMouseLeave={handleTabMouseLeave}
-            onDragOver={(e) => handleTabDragOver(e, project.id)}
-            onDragLeave={(e) => handleTabDragLeave(e, project.id)}
-            onDrop={(e) => handleTabDrop(e, project.id)}
-            style={{
-              transform: tx !== 0 ? `translateX(${tx}px)` : undefined,
-              transition: transitionStyle,
-              zIndex: isDraggingThis ? 50 : undefined,
-              position: isDraggingThis ? "relative" : undefined,
-              cursor: dragState ? "grabbing" : "grab",
-            }}
-            className={`flex items-center px-3 pe-[5px] h-[30px] rounded-t-[4px] text-[0.8rem] gap-2 min-w-[150px] justify-between flex-shrink-0 border-b select-none ${
-              activeTab === project.id
-                ? "bg-bg-primary text-text border-accent"
-                : "bg-transparent text-[#666] hover:bg-white/5 border-transparent cursor-grab"
-            } ${project.parentLayerId ? "italic" : ""} ${isDraggingThis ? "opacity-70 shadow-lg" : ""} ${
-              layerDropTarget === project.id
-                ? "outline-2 outline-accent outline-offset-[-2px] bg-accent/15"
-                : ""
+              let tx = 0;
+              let transitionStyle = justDropped
+                ? "none"
+                : "transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.15s, border-color 0.15s, opacity 0.15s";
+
+              if (dragState) {
+                if (isDraggingThis) {
+                  tx = dragState.currentX - dragState.startX;
+                  transitionStyle = "background-color 0.15s, border-color 0.15s, opacity 0.15s"; // no transform transition while dragging
+                } else {
+                  // Shift other elements out of the way
+                  const draggedWidth = dragState.rects[dragState.startIndex].width + 4; // width + gap
+                  if (dragState.currentIndex > dragState.startIndex) {
+                    if (index > dragState.startIndex && index <= dragState.currentIndex) {
+                      tx = -draggedWidth;
+                    }
+                  } else if (dragState.currentIndex < dragState.startIndex) {
+                    if (index < dragState.startIndex && index >= dragState.currentIndex) {
+                      tx = draggedWidth;
+                    }
+                  }
+                }
+              }
+
+              return (
+                <button
+                  key={project.id}
+                  ref={(el) => {
+                    if (el) tabElementsRef.current.set(project.id, el);
+                    else tabElementsRef.current.delete(project.id);
+                  }}
+                  onMouseDown={(e) => handleMouseDown(e, project.id, index)}
+                  onMouseEnter={(e) => handleTabMouseEnter(e, project)}
+                  onMouseLeave={handleTabMouseLeave}
+                  onDragOver={(e) => handleTabDragOver(e, project.id)}
+                  onDragLeave={(e) => handleTabDragLeave(e, project.id)}
+                  onDrop={(e) => handleTabDrop(e, project.id)}
+                  style={{
+                    transform: tx !== 0 ? `translateX(${tx}px)` : undefined,
+                    transition: transitionStyle,
+                    zIndex: isDraggingThis ? 50 : undefined,
+                    position: isDraggingThis ? "relative" : undefined,
+                    cursor: dragState ? "grabbing" : "default",
+                  }}
+                  className={`project-tab flex items-center px-3 pe-[5px] h-[30px] snap-start rounded-t-[4px] text-[0.8rem] gap-2 min-w-[150px] justify-between flex-shrink-0 border-b select-none ${
+                    activeTab === project.id
+                      ? "bg-bg-primary text-text border-accent"
+                      : "bg-transparent text-[#666] hover:bg-white/5 border-transparent"
+                  } ${project.parentLayerId ? "italic" : ""} ${isDraggingThis ? "opacity-70 shadow-lg" : ""} ${
+                    layerDropTarget === project.id
+                      ? "outline-2 outline-accent outline-offset-[-2px] bg-accent/15"
+                      : ""
+                  }`}
+                  onClick={() => handleTabClick(project.id)}
+                >
+                  <div className="flex items-center gap-2 overflow-hidden pointer-events-none">
+                    {project.parentLayerId && <Box size={12} className="text-accent shrink-0" />}
+                    <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                      {project.parentLayerId
+                        ? `${project.name}`
+                        : project.filePath
+                          ? project.filePath.split(/[\\/]/).pop()
+                          : `${project.name}.ocfd`}
+                    </span>
+                  </div>
+                  <div
+                    tabIndex={-1}
+                    className="close-tab-btn group relative bg-none border-none text-inherit flex p-[4px] rounded-[2px] cursor-pointer hover:bg-white/10 transition-colors w-[20px] h-[20px] items-center justify-center pointer-events-auto"
+                    onClick={(e) => handleCloseTab(e, project.id)}
+                  >
+                    {project.isDirty ? (
+                      <>
+                        <div className="w-[10px] h-[10px] bg-white rounded-full group-hover:opacity-0 transition-opacity" />
+                        <X
+                          size={14}
+                          className="absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity"
+                        />
+                      </>
+                    ) : (
+                      <X size={14} />
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {hasTabOverflow && canScrollTabsLeft && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 z-10 w-5 bg-gradient-to-r from-[#111] to-transparent"
+          />
+        )}
+        {hasTabOverflow && canScrollTabsRight && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 z-10 w-5 bg-gradient-to-l from-[#111] to-transparent"
+          />
+        )}
+        {activeTabOverflowSide && (
+          <div
+            aria-hidden="true"
+            className={`active-tab-indicator pointer-events-none absolute inset-y-0 z-999 w-[1px] bg-accent ${
+              activeTabOverflowSide === "left" ? "left-0" : "right-0"
             }`}
-            onClick={() => handleTabClick(project.id)}
+          />
+        )}
+      </div>
+      {hasTabOverflow && (
+        <div className="flex shrink-0 items-center gap-0.5 pl-0.5">
+          <button
+            type="button"
+            aria-label="Scroll project tabs left"
+            disabled={!canScrollTabsLeft}
+            onClick={() => scrollTabs(-1)}
+            className="flex h-[28px] w-[24px] items-center justify-center rounded text-[#888] transition-colors hover:bg-white/10 hover:text-text disabled:cursor-default disabled:opacity-30"
           >
-            <div className="flex items-center gap-2 overflow-hidden pointer-events-none">
-              {project.parentLayerId && <Box size={12} className="text-accent shrink-0" />}
-              <span className="overflow-hidden text-ellipsis whitespace-nowrap">
-                {project.parentLayerId
-                  ? `${project.name}`
-                  : project.filePath
-                    ? project.filePath.split(/[\\/]/).pop()
-                    : `${project.name}.ocfd`}
-              </span>
-            </div>
-            <div
-              tabIndex={-1}
-              className="close-tab-btn group relative bg-none border-none text-inherit flex p-[4px] rounded-[2px] cursor-pointer hover:bg-white/10 transition-colors w-[20px] h-[20px] items-center justify-center pointer-events-auto"
-              onClick={(e) => handleCloseTab(e, project.id)}
-            >
-              {project.isDirty ? (
-                <>
-                  <div className="w-[10px] h-[10px] bg-white rounded-full group-hover:opacity-0 transition-opacity" />
-                  <X
-                    size={14}
-                    className="absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
-                </>
-              ) : (
-                <X size={14} />
-              )}
-            </div>
+            <ChevronLeft size={15} />
           </button>
-        );
-      })}
+          <button
+            type="button"
+            aria-label="Scroll project tabs right"
+            disabled={!canScrollTabsRight}
+            onClick={() => scrollTabs(1)}
+            className="flex h-[28px] w-[24px] items-center justify-center rounded text-[#888] transition-colors hover:bg-white/10 hover:text-text disabled:cursor-default disabled:opacity-30"
+          >
+            <ChevronRight size={15} />
+          </button>
+        </div>
+      )}
       {isFileDragOver && (
         <div
           aria-hidden="true"
