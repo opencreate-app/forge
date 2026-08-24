@@ -4,10 +4,11 @@
   "description": "Image Editor powered by React & Electron",
   "productName": "OpenCreate Forge",
   "type": "module",
-  "version": "0.3.0-pre2",
+  "version": "0.3.0-pre3",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "dev:clear": "rm -rf dist/ dist-electron/ && vite",
     "build": "rm -rf dist/ dist-electron/ && tsc && vite build && electron-builder",
     "preview": "vite preview",
     "lint": "eslint . --color",
