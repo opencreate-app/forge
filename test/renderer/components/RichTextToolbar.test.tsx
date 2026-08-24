@@ -62,4 +62,38 @@ describe("RichTextToolbar", () => {
 
     expect(screen.queryByRole("button", { name: "Bold" })).not.toBeInTheDocument();
   });
+
+  it("emits the numeric bold weight used by the TextTool options", () => {
+    const handler = vi.fn();
+    window.addEventListener("forge:text-format", handler);
+    render(<RichTextToolbar onOpenColorPicker={vi.fn()} />);
+
+    screen.getByRole("button", { name: "Bold" }).click();
+
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detail: { type: "setStyle", style: { fontWeight: "700" } },
+      }),
+    );
+    window.removeEventListener("forge:text-format", handler);
+  });
+
+  it("keeps Bold active for weights at or above 500 and toggles them off", () => {
+    useTextEditorStore.setState({ style: { fontWeight: "600" } });
+    const handler = vi.fn();
+    window.addEventListener("forge:text-format", handler);
+    render(<RichTextToolbar onOpenColorPicker={vi.fn()} />);
+
+    const boldButton = screen.getByRole("button", { name: "Bold" });
+    expect(boldButton).toHaveAttribute("aria-pressed", "true");
+    expect(boldButton.className).toContain("bg-accent");
+
+    boldButton.click();
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detail: { type: "setStyle", style: { fontWeight: "400" } },
+      }),
+    );
+    window.removeEventListener("forge:text-format", handler);
+  });
 });

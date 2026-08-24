@@ -3,7 +3,10 @@ import {
   applyTextSpanStyle,
   getTextLineIndex,
   getTextWordRangeAt,
+  isBoldTextFontWeight,
   normalizeTextSpans,
+  normalizeTextFontWeight,
+  promoteTextStyleToLayer,
   replaceTextWithSpans,
   scaleTextSpanFontSizes,
   updateTextLineAlignments,
@@ -11,6 +14,50 @@ import {
 } from "@/core/utils/textSpans";
 
 describe("text span helpers", () => {
+  it("normalizes named font weights for layer and select values", () => {
+    expect(normalizeTextFontWeight("bold")).toBe("700");
+    expect(normalizeTextFontWeight("normal")).toBe("400");
+    expect(normalizeTextFontWeight(600)).toBe("600");
+  });
+
+  it.each([
+    ["normal", false],
+    ["400", false],
+    ["499", false],
+    ["500", true],
+    [500, true],
+    ["bold", true],
+    ["900", true],
+  ])("identifies bold weights at or above 500: %s", (weight, expected) => {
+    expect(isBoldTextFontWeight(weight)).toBe(expected);
+  });
+
+  it("promotes a style across the whole text while preserving unrelated span styles", () => {
+    expect(
+      promoteTextStyleToLayer(
+        "abcd",
+        [
+          { text: "ab", color: "red" },
+          { text: "cd", italic: true },
+        ],
+        { fontSize: 32, fontWeight: "bold" },
+      ),
+    ).toEqual({
+      layerStyle: { fontSize: 32, fontWeight: "700" },
+      textSpans: [
+        { text: "ab", color: "red" },
+        { text: "cd", italic: true },
+      ],
+    });
+  });
+
+  it("removes text spans when a global style is the only formatting", () => {
+    expect(promoteTextStyleToLayer("abcd", undefined, { fontWeight: "bold" })).toEqual({
+      layerStyle: { fontWeight: "700" },
+      textSpans: undefined,
+    });
+  });
+
   it("normalizes adjacent spans with equal styles and clips stale content", () => {
     expect(
       normalizeTextSpans("abcd", [

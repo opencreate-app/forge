@@ -428,13 +428,13 @@ export class TextLayer {
    * @param ctx Context used for measuring text.
    * @param layer The base layer data.
    * @param newProps Optional new properties to simulate the metrics with.
-   * @returns The calculated width and height, and optionally a new X position for point text alignment.
+   * @returns The calculated dimensions and, for point text, the position that preserves its pivot.
    */
   public static calculateMetrics(
     ctx: CanvasRenderingContext2D,
     layer: Partial<Layer>,
     newProps?: Partial<Layer>,
-  ): { width: number; height: number; x?: number } {
+  ): { width: number; height: number; x?: number; y?: number } {
     const fontSize = newProps?.fontSize ?? layer.fontSize ?? 24;
     const tracking = newProps?.tracking ?? layer.tracking ?? 0;
     const textAlign = newProps?.textAlign ?? layer.textAlign ?? "left";
@@ -463,7 +463,7 @@ export class TextLayer {
       ),
     );
 
-    const result: { width: number; height: number; x?: number } = {
+    const result: { width: number; height: number; x?: number; y?: number } = {
       width: newWidth,
       height: newHeight,
     };
@@ -480,11 +480,13 @@ export class TextLayer {
       let anchorX = layer.x;
       if (oldAlign === "center") anchorX = layer.x + layer.width / 2;
       else if (oldAlign === "right") anchorX = layer.x + layer.width;
+      const anchorY = (layer.y ?? 0) + (layer.fontSize ?? 24);
 
       // Calculate NEW x based on NEW width and NEW alignment to keep the anchor at the same place
-      if (textAlign === "center") result.x = Math.round(anchorX - newWidth / 2);
-      else if (textAlign === "right") result.x = Math.round(anchorX - newWidth);
-      else result.x = Math.round(anchorX);
+      if (textAlign === "center") result.x = anchorX - newWidth / 2;
+      else if (textAlign === "right") result.x = anchorX - newWidth;
+      else result.x = anchorX;
+      result.y = anchorY - fontSize;
     }
 
     ctx.restore();

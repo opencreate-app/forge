@@ -22,7 +22,7 @@ import {
   TypeOutline,
 } from "lucide-react";
 import { TextLayer } from "@/core/layers/TextLayer";
-import { scaleTextSpanFontSizes } from "@/core/utils/textSpans";
+import { normalizeTextFontWeight, scaleTextSpanFontSizes } from "@/core/utils/textSpans";
 import type { ToolOptionProps } from "../ToolOptions";
 import ColorPickerTrigger from "../ui/ColorPickerTrigger";
 
@@ -88,6 +88,7 @@ export const TextOptions: React.FC<ToolOptionProps> = ({ onOpenColorPicker }) =>
     hasFormattingRange && !textEditor.mixedStyles.fontWeight
       ? textEditor.style.fontWeight || textSettings.fontWeight
       : textSettings.fontWeight;
+  const normalizedFontWeightValue = normalizeTextFontWeight(fontWeightValue) || "400";
   const fontSizeValue =
     hasFormattingRange && !textEditor.mixedStyles.fontSize
       ? textEditor.style.fontSize || textSettings.fontSize
@@ -202,8 +203,6 @@ export const TextOptions: React.FC<ToolOptionProps> = ({ onOpenColorPicker }) =>
         let dimensionUpdates: any = {};
 
         if (!hasFormattingRange && layer.fontSize !== textSettings.fontSize) {
-          dimensionUpdates.y = Math.round(layer.y + (layer.fontSize || 24) - textSettings.fontSize);
-
           const ratio = textSettings.fontSize / (layer.fontSize || 24);
           if (layer.textSpans?.length && Number.isFinite(ratio) && ratio > 0) {
             baseUpdates.textSpans = scaleTextSpanFontSizes(
@@ -232,6 +231,7 @@ export const TextOptions: React.FC<ToolOptionProps> = ({ onOpenColorPicker }) =>
             width: metrics.width,
             height: metrics.height,
             x: metrics.x ?? layer.x,
+            y: metrics.y ?? layer.y,
           };
         }
 
@@ -338,7 +338,7 @@ export const TextOptions: React.FC<ToolOptionProps> = ({ onOpenColorPicker }) =>
         </select>
 
         <select
-          value={fontWeightValue}
+          value={normalizedFontWeightValue}
           onChange={(e) =>
             updateTextStyle({ fontWeight: e.target.value }, () =>
               updateToolSettings("text", { fontWeight: e.target.value }),

@@ -5,7 +5,11 @@ import React from "react";
 import { useProjectStore } from "@store/projectStore";
 import { useTextEditorStore } from "@store/textEditorStore";
 import { useToolStore } from "@store/toolStore";
-import type { TextSpanStyle } from "@core/utils/textSpans";
+import {
+  isBoldTextFontWeight,
+  normalizeTextFontWeight,
+  type TextSpanStyle,
+} from "@core/utils/textSpans";
 import ToolSettingInput from "@/renderer/components/ui/ToolSettingInput";
 import ColorPickerTrigger from "@/renderer/components/ui/ColorPickerTrigger";
 import type { ColorPickerOpenRequest } from "@utils/colorPicker";
@@ -47,6 +51,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ onOpenColorPic
   };
   const currentFontSize = style.fontSize || layer.fontSize || 24;
   const currentColor = style.color || layer.color || "#000000";
+  const isBold = isBoldTextFontWeight(style.fontWeight);
   const setStyle = (nextStyle: TextSpanStyle) => {
     send({ type: "setStyle", style: nextStyle });
   };
@@ -83,15 +88,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ onOpenColorPic
       <button
         type="button"
         aria-label="Bold"
-        aria-pressed={
-          editor.mixedStyles.fontWeight
-            ? "mixed"
-            : style.fontWeight === "bold" || style.fontWeight === 700
-        }
-        className={buttonClass(style.fontWeight === "bold" || style.fontWeight === 700)}
+        aria-pressed={editor.mixedStyles.fontWeight ? "mixed" : isBold}
+        className={buttonClass(isBold)}
         onClick={() =>
           setStyle({
-            fontWeight: style.fontWeight === "bold" || style.fontWeight === 700 ? "400" : "bold",
+            fontWeight: normalizeTextFontWeight(isBold ? "400" : "700"),
           })
         }
         title="Bold"

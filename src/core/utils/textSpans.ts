@@ -18,6 +18,80 @@ const STYLE_KEYS: (keyof TextSpanStyle)[] = [
   "tracking",
 ];
 
+const LAYER_STYLE_KEYS: (keyof TextSpanStyle)[] = [
+  "color",
+  "fontSize",
+  "fontFamily",
+  "fontWeight",
+  "tracking",
+];
+
+const NAMED_FONT_WEIGHTS: Record<string, string> = {
+  thin: "100",
+  hairline: "100",
+  extralight: "200",
+  "extra light": "200",
+  light: "300",
+  normal: "400",
+  regular: "400",
+  medium: "500",
+  semibold: "600",
+  "semi bold": "600",
+  bold: "700",
+  extrabold: "800",
+  "extra bold": "800",
+  black: "900",
+  heavy: "900",
+};
+
+export function normalizeTextFontWeight(weight: string | number | undefined): string | undefined {
+  if (weight === undefined) return undefined;
+  const value = String(weight).trim().toLowerCase();
+  return NAMED_FONT_WEIGHTS[value] || value;
+}
+
+export function isBoldTextFontWeight(weight: string | number | undefined): boolean {
+  const normalizedWeight = normalizeTextFontWeight(weight);
+  if (normalizedWeight === undefined) return false;
+  const numericWeight = Number(normalizedWeight);
+  return Number.isFinite(numericWeight) && numericWeight >= 500;
+}
+
+export function promoteTextStyleToLayer(
+  text: string,
+  spans: TextSpan[] | undefined,
+  style: TextSpanStyle,
+): { layerStyle: TextSpanStyle; textSpans?: TextSpan[] } {
+  const normalizedStyle: TextSpanStyle = { ...style };
+  if (normalizedStyle.fontWeight !== undefined) {
+    normalizedStyle.fontWeight = normalizeTextFontWeight(normalizedStyle.fontWeight);
+  }
+
+  const styledSpans = applyTextSpanStyle(text, spans, 0, text.length, normalizedStyle);
+  const compactSpans = styledSpans.map((span) => {
+    const nextSpan: TextSpan = { ...span };
+    for (const key of LAYER_STYLE_KEYS) {
+      if (normalizedStyle[key] !== undefined && nextSpan[key] === normalizedStyle[key]) {
+        delete nextSpan[key];
+      }
+    }
+    return nextSpan;
+  });
+  const normalizedSpans = normalizeTextSpans(text, compactSpans);
+  const hasSpanStyles = normalizedSpans.some((span) =>
+    Object.keys(span).some((key) => key !== "text"),
+  );
+  const layerStyle: TextSpanStyle = {};
+  for (const key of LAYER_STYLE_KEYS) {
+    if (normalizedStyle[key] !== undefined) layerStyle[key] = normalizedStyle[key] as never;
+  }
+
+  return {
+    layerStyle,
+    textSpans: hasSpanStyles ? normalizedSpans : undefined,
+  };
+}
+
 export function sameTextSpanStyle(a: TextSpanStyle | undefined, b: TextSpanStyle | undefined) {
   return STYLE_KEYS.every((key) => a?.[key] === b?.[key]);
 }

@@ -20,6 +20,8 @@ import {
   scaleTextSpanFontSizes,
   updateTextLineAlignments,
   updateTextLineHeights,
+  normalizeTextFontWeight,
+  promoteTextStyleToLayer,
   type TextSpanStyle,
 } from "../utils/textSpans";
 import { useTextEditorStore, type TextFormatCommand } from "@/renderer/store/textEditorStore";
@@ -499,6 +501,14 @@ export class TextTool extends BaseTool {
       }
     }
 
+    const isWholeTextSelection = text.length > 0 && start === 0 && end === text.length;
+    if (isWholeTextSelection && command.type === "setStyle") {
+      const promoted = promoteTextStyleToLayer(text, layer.textSpans, style);
+      this.updateText(text, context, promoted.textSpans, undefined, undefined, promoted.layerStyle);
+      this.syncEditorStore({ ...layer, ...promoted.layerStyle, textSpans: promoted.textSpans });
+      return;
+    }
+
     const textSpans =
       command.type === "scaleFontSize"
         ? scaleTextSpanFontSizes(
@@ -509,9 +519,18 @@ export class TextTool extends BaseTool {
             Number(command.to) / Number(command.from),
             layer.fontSize || Number(command.from) || 24,
           )
-        : applyTextSpanStyle(text, layer.textSpans, start, end, style);
-    this.updateText(text, context, textSpans);
-    this.syncEditorStore({ ...layer, textSpans });
+        : applyTextSpanStyle(text, layer.textSpans, start, end, {
+            ...style,
+            ...(style.fontWeight !== undefined
+              ? { fontWeight: normalizeTextFontWeight(style.fontWeight) }
+              : {}),
+          });
+    const layerUpdates =
+      isWholeTextSelection && command.type === "scaleFontSize" && command.to !== undefined
+        ? { fontSize: Number(command.to) }
+        : undefined;
+    this.updateText(text, context, textSpans, undefined, undefined, layerUpdates);
+    this.syncEditorStore({ ...layer, ...layerUpdates, textSpans });
   }
 
   onMouseDown(e: MouseEvent, context: ToolContext): void {
@@ -1415,6 +1434,7 @@ export class TextTool extends BaseTool {
     textSpans?: Layer["textSpans"],
     textLineAlignments?: Record<number, TextAlignment> | null,
     textLineHeights?: Record<number, number> | null,
+    layerUpdates: Partial<Layer> = {},
   ) {
     if (!this.editingLayerId) return;
     const layer = context.project.layers.find((l) => l.id === this.editingLayerId);
@@ -1442,6 +1462,7 @@ export class TextTool extends BaseTool {
         textLineHeights === undefined ? layer.textLineHeights : textLineHeights || undefined,
       textUndoStack: newUndoStack,
       textRedoStack: [],
+      ...layerUpdates,
     };
     let dimensionUpdates = {};
 
@@ -1451,6 +1472,7 @@ export class TextTool extends BaseTool {
         width: metrics.width,
         height: metrics.height,
         x: metrics.x ?? layer.x,
+        y: metrics.y ?? layer.y,
       };
     }
 
