@@ -3,6 +3,7 @@
  */
 import { BaseTool, ToolContext, ToolId } from "./BaseTool";
 import { Layer } from "@/renderer/store/projectStore";
+import { ToolSettings } from "@/renderer/store/toolStore";
 import { useUIStore } from "@/renderer/store/uiStore";
 
 interface CropState {
@@ -34,6 +35,8 @@ export class CropTool extends BaseTool {
   private handleStartOffset = { x: 0, y: 0 };
   private isCropping = false;
   private context: ToolContext | null = null;
+  private unsubscribeStore: (() => void) | null = null;
+  private lastRatioConfig: string | null = null;
   private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
   private readonly HANDLE_SIZE = 8;
@@ -46,11 +49,11 @@ export class CropTool extends BaseTool {
     }
   }
 
-  private resetCrop(context: ToolContext) {
+  private resetCrop(context: ToolContext, useSelection = true) {
     const { project } = context;
 
     // Use selection bounds if available
-    if (project.selection.hasSelection && project.selection.bounds) {
+    if (useSelection && project.selection.hasSelection && project.selection.bounds) {
       const b = project.selection.bounds;
       const left = Math.round(b.x);
       const top = Math.round(b.y);
@@ -83,6 +86,126 @@ export class CropTool extends BaseTool {
     context.updateToolSettings("crop", { isDirty: false });
   }
 
+  private getValidRatio(settings: ToolSettings["crop"]): number | null {
+    if (settings.mode === "Free") return null;
+    if (
+      !Number.isFinite(settings.ratioW) ||
+      !Number.isFinite(settings.ratioH) ||
+      settings.ratioW <= 0 ||
+      settings.ratioH <= 0
+    ) {
+      return null;
+    }
+
+    return settings.ratioW / settings.ratioH;
+  }
+
+  private getCropCenter(crop: CropState): { x: number; y: number } {
+    const localCenterX = crop.width * crop.scaleX * (0.5 - crop.anchor.x);
+    const localCenterY = crop.height * crop.scaleY * (0.5 - crop.anchor.y);
+    const rotation = (crop.rotation * Math.PI) / 180;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+
+    return {
+      x: crop.x + localCenterX * cos - localCenterY * sin,
+      y: crop.y + localCenterX * sin + localCenterY * cos,
+    };
+  }
+
+  private applyAutomaticRatio(context: ToolContext, settings: ToolSettings["crop"]): boolean {
+    if (!this.cropState) return false;
+
+    const ratio = this.getValidRatio(settings);
+    if (!ratio) return false;
+
+    const crop = this.cropState;
+    const currentWidth = Math.abs(crop.width * crop.scaleX);
+    const currentHeight = Math.abs(crop.height * crop.scaleY);
+    if (currentWidth <= 0 || currentHeight <= 0) return false;
+
+    let targetWidth = currentWidth;
+    let targetHeight = currentHeight;
+    if (currentWidth / currentHeight > ratio) {
+      targetWidth = currentHeight * ratio;
+    } else {
+      targetHeight = currentWidth / ratio;
+    }
+
+    if (
+      Math.abs(targetWidth - currentWidth) < 0.000001 &&
+      Math.abs(targetHeight - currentHeight) < 0.000001
+    ) {
+      return false;
+    }
+
+    const center = this.getCropCenter(crop);
+    const widthSign = Math.sign(crop.scaleX) || 1;
+    const heightSign = Math.sign(crop.scaleY) || 1;
+
+    crop.scaleX = (targetWidth / Math.abs(crop.width)) * widthSign;
+    crop.scaleY = (targetHeight / Math.abs(crop.height)) * heightSign;
+
+    const newLocalCenterX = crop.width * crop.scaleX * (0.5 - crop.anchor.x);
+    const newLocalCenterY = crop.height * crop.scaleY * (0.5 - crop.anchor.y);
+    const rotation = (crop.rotation * Math.PI) / 180;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    crop.x = center.x - (newLocalCenterX * cos - newLocalCenterY * sin);
+    crop.y = center.y - (newLocalCenterX * sin + newLocalCenterY * cos);
+
+    context.updateToolSettings("crop", { isDirty: true });
+    return true;
+  }
+
+  private getRatioConfigKey(settings: ToolSettings["crop"]): string {
+    return `${settings.mode}:${settings.ratioW}:${settings.ratioH}`;
+  }
+
+  private handleCropSettingsChange = (settings: ToolSettings) => {
+    if (!this.context || !this.isCropping) return;
+
+    const cropSettings = settings.crop;
+    let effectiveSettings = cropSettings;
+    if (cropSettings.mode === "Original Ratio") {
+      effectiveSettings = {
+        ...cropSettings,
+        ratioW: this.context.project.width,
+        ratioH: this.context.project.height,
+      };
+    }
+
+    const ratioConfigKey = this.getRatioConfigKey(effectiveSettings);
+    if (ratioConfigKey === this.lastRatioConfig) return;
+
+    this.lastRatioConfig = ratioConfigKey;
+    if (!this.getValidRatio(effectiveSettings)) return;
+
+    if (
+      cropSettings.mode === "Original Ratio" &&
+      (cropSettings.ratioW !== effectiveSettings.ratioW ||
+        cropSettings.ratioH !== effectiveSettings.ratioH)
+    ) {
+      this.context.updateToolSettings("crop", {
+        ratioW: effectiveSettings.ratioW,
+        ratioH: effectiveSettings.ratioH,
+      });
+    }
+
+    if (
+      !this.cropState ||
+      Math.abs(this.cropState.width * this.cropState.scaleX) <= 0 ||
+      Math.abs(this.cropState.height * this.cropState.scaleY) <= 0
+    ) {
+      return;
+    }
+
+    // Changing a ratio should start from the project bounds, otherwise each
+    // successive preset change would shrink the current crop again.
+    this.resetCrop(this.context, false);
+    this.applyAutomaticRatio(this.context, effectiveSettings);
+  };
+
   onActivate(context: ToolContext): void {
     if (this.isCropping) return;
 
@@ -113,12 +236,21 @@ export class CropTool extends BaseTool {
     const { project } = context;
     // Update ratio settings based on project if not set
     const settings = context.settings.crop;
+    let effectiveSettings = settings;
     if (settings.mode === "Original Ratio") {
       context.updateToolSettings("crop", {
         ratioW: project.width,
         ratioH: project.height,
       });
+      effectiveSettings = {
+        ...settings,
+        ratioW: project.width,
+        ratioH: project.height,
+      };
     }
+
+    this.applyAutomaticRatio(context, effectiveSettings);
+    this.lastRatioConfig = this.getRatioConfigKey(effectiveSettings);
 
     // Clear selection when entering crop mode
     context.updateProject({
@@ -126,6 +258,7 @@ export class CropTool extends BaseTool {
     });
 
     context.updateToolSettings("crop", { isDirty: false });
+    this.unsubscribeStore = context.subscribe(this.handleCropSettingsChange);
   }
 
   onDeactivate(context: ToolContext): void {
@@ -136,8 +269,13 @@ export class CropTool extends BaseTool {
       window.removeEventListener("forge:crop-reset", handleReset);
       (this as any)._listeners = null;
     }
+    if (this.unsubscribeStore) {
+      this.unsubscribeStore();
+      this.unsubscribeStore = null;
+    }
     this.isCropping = false;
     this.cropState = null;
+    this.lastRatioConfig = null;
     this.activeSnapLines = [];
     context.updateToolSettings("crop", { isDirty: false });
     this.context = null;
@@ -453,9 +591,8 @@ export class CropTool extends BaseTool {
       const keepAspect = e.shiftKey || settings.mode !== "Free";
 
       const ratio =
-        settings.mode === "Fixed Ratio"
-          ? settings.ratioW / settings.ratioH
-          : (startT.width * startT.scaleX) / (startT.height * startT.scaleY) || 1;
+        this.getValidRatio(settings) ??
+        ((startT.width * startT.scaleX) / (startT.height * startT.scaleY) || 1);
 
       const rot = (startT.rotation * Math.PI) / 180;
       const cos = Math.cos(rot);

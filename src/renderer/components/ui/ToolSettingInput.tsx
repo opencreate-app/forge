@@ -127,6 +127,8 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
             e.stopPropagation();
             if (e.key === "Enter") setIsOpen(false);
           }}
+          min={min}
+          max={max}
           onClick={(e) => e.stopPropagation()}
           className="bg-transparent border-none text-[0.75rem] w-10 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none text-white font-medium"
         />

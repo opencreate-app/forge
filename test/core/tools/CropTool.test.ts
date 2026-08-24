@@ -21,6 +21,142 @@ describe("CropTool", () => {
     expect(state.height).toBe(1000);
   });
 
+  it("should apply a fixed ratio when activated", () => {
+    context.settings.crop = {
+      mode: "Fixed Ratio",
+      ratioW: 16,
+      ratioH: 9,
+      deleteCropped: true,
+      isDirty: false,
+    };
+
+    const tool = new CropTool();
+    tool.onActivate(context);
+
+    const state = (tool as any).cropState;
+    expect(state.width).toBe(1000);
+    expect(state.height * state.scaleY).toBe(562.5);
+    expect(state.x).toBe(500);
+    expect(state.y).toBe(500);
+  });
+
+  it("should apply fixed ratio changes while active", () => {
+    const tool = new CropTool();
+    tool.onActivate(context);
+
+    const onSettingsChange = context.subscribe.mock.calls[0][0];
+    const fixedCropSettings = {
+      mode: "Fixed Ratio",
+      ratioW: 16,
+      ratioH: 9,
+      deleteCropped: true,
+      isDirty: false,
+    };
+    onSettingsChange({ ...context.settings, crop: fixedCropSettings });
+
+    let state = (tool as any).cropState;
+    expect(state.width * state.scaleX).toBe(1000);
+    expect(state.height * state.scaleY).toBe(562.5);
+    expect(state.x).toBe(500);
+    expect(state.y).toBe(500);
+
+    onSettingsChange({
+      ...context.settings,
+      crop: { ...fixedCropSettings, ratioW: 4, ratioH: 3 },
+    });
+
+    state = (tool as any).cropState;
+    expect(state.width * state.scaleX).toBe(1000);
+    expect(state.height * state.scaleY).toBe(750);
+    expect(state.x).toBe(500);
+    expect(state.y).toBe(500);
+  });
+
+  it("should recalculate ratio changes from project bounds", () => {
+    context.settings.crop = {
+      mode: "Fixed Ratio",
+      ratioW: 16,
+      ratioH: 9,
+      deleteCropped: true,
+      isDirty: false,
+    };
+
+    const tool = new CropTool();
+    tool.onActivate(context);
+
+    const onSettingsChange = context.subscribe.mock.calls[0][0];
+    onSettingsChange({
+      ...context.settings,
+      crop: { ...context.settings.crop, ratioW: 4, ratioH: 3 },
+    });
+    onSettingsChange({
+      ...context.settings,
+      crop: { ...context.settings.crop, ratioW: 16, ratioH: 9 },
+    });
+
+    const state = (tool as any).cropState;
+    expect(state.width * state.scaleX).toBe(1000);
+    expect(state.height * state.scaleY).toBe(562.5);
+    expect(state.x).toBe(500);
+    expect(state.y).toBe(500);
+  });
+
+  it("should use the project ratio for Original Ratio mode", () => {
+    context.project.width = 1600;
+    context.project.height = 900;
+    context.project.selection = {
+      hasSelection: true,
+      bounds: { x: 100, y: 100, width: 600, height: 600 },
+    };
+    context.settings.crop = {
+      mode: "Original Ratio",
+      ratioW: 1,
+      ratioH: 1,
+      deleteCropped: true,
+      isDirty: false,
+    };
+
+    const tool = new CropTool();
+    tool.onActivate(context);
+
+    const state = (tool as any).cropState;
+    expect(state.width * state.scaleX).toBe(600);
+    expect(state.height * state.scaleY).toBe(337.5);
+    expect(state.x).toBe(400);
+    expect(state.y).toBe(400);
+  });
+
+  it("should ignore invalid ratios and zero-sized crops", () => {
+    context.settings.crop = {
+      mode: "Fixed Ratio",
+      ratioW: 0,
+      ratioH: 9,
+      deleteCropped: true,
+      isDirty: false,
+    };
+
+    const tool = new CropTool();
+    tool.onActivate(context);
+
+    let state = (tool as any).cropState;
+    expect(state.width).toBe(1000);
+    expect(state.height).toBe(1000);
+
+    state.width = 0;
+    state.height = 0;
+    const onSettingsChange = context.subscribe.mock.calls[0][0];
+    onSettingsChange({
+      ...context.settings,
+      crop: { ...context.settings.crop, ratioW: 16, ratioH: 9 },
+    });
+
+    state = (tool as any).cropState;
+    expect(state.width).toBe(0);
+    expect(state.height).toBe(0);
+    expect(Number.isFinite(state.scaleX)).toBe(true);
+    expect(Number.isFinite(state.scaleY)).toBe(true);
+  });
+
   it("should snap new crop start to pixels", () => {
     const tool = new CropTool();
     tool.onActivate(context);
