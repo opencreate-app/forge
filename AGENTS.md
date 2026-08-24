@@ -33,3 +33,15 @@ Tests use Vitest with Testing Library and canvas mocks. Name files `*.test.ts` o
 ## Commit & Pull Request Guidelines
 
 Commits follow Conventional Commits with a scope where useful, for example `feat(tools): add hardness property to Brush tool` or `fix(updater): improve status reporting`. Keep commits focused. Branches conventionally use `feat/`, `fix/`, or `docs/` prefixes. Pull requests should target `main`, explain the change and testing performed, link the relevant issue, and include screenshots or recordings for visible UI changes. Contributors must follow the GNU GPL v3 terms in `LICENSE`.
+
+### Commit messages should be structured as follows:
+
+```
+<type>(<scope>): <subject>
+
+- Clarify the change in a concise manner.
+- Use imperative mood in the subject line.
+- Include a body if necessary to explain the reasoning behind the change.
+```
+
+If possible, use `$'- New line about the change.\n- Another line about other changes.'` for `\n` to create a new line in the commit message body.
