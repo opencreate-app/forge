@@ -88,6 +88,10 @@ TODO: OpenCreate Forge
   - [x] Ele é escrolável horizontalmente completo, mas não tem feedback visual de que é escrolável, fixar a home e colocar uma sombra nas laterais automaticamente quando tiver mais abas do que o espaço disponível
   - [x] Se houver mais abas do que o espaço disponível, mostrar dois botões de scroll (esquerda e direita, depois das abas de projeto) para scrollar as abas
   - [x] Feat: Indicador na esquerda ou direita na área das abas de projetos, mostrando onde está a aba ativa, caso ela esteja fora da área visível
+- [x] Duplicar uma camada com MoveTool + Alt+Drag (igual Photoshop/Photopea)
+- [x] Mover conteúdo da seleção com MoveTool e aplicar na camada se mudar de ferramenta ou mudar a seleção
+- [x] Mover conteúdo selecionado com MoveTool + setas do teclado
+- [x] Se nas preferencias de usuário não habilitar o salvamento do histórico, garantir que o histórico da camada de texto não é salvo
 
 <!-- ## Alpha 2.1 (Patch 1) -->
 
