@@ -45,7 +45,9 @@ jobs:
         if: matrix.platform == 'ubuntu'
         uses: actions/cache@v4
         with:
-          path: ~/.cache/electron
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
           key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             electron-${{ matrix.runner }}-${{ matrix.arch }}-
@@ -54,7 +56,9 @@ jobs:
         if: matrix.platform == 'macos'
         uses: actions/cache@v4
         with:
-          path: ~/Library/Caches/electron
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
           key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             electron-${{ matrix.runner }}-${{ matrix.arch }}-
@@ -63,7 +67,9 @@ jobs:
         if: matrix.platform == 'windows'
         uses: actions/cache@v4
         with:
-          path: ~/AppData/Local/electron/Cache
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
           key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             electron-${{ matrix.runner }}-${{ matrix.arch }}-
@@ -110,13 +116,33 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          if [ "${{ matrix.platform }}" == "macos" ]; then
-            npm run build -- --publish never --mac --${{ matrix.arch }}
-          elif [ "${{ matrix.platform }}" == "windows" ]; then
-            npm run build -- --publish never --win --x64
-          else
-            npm run build -- --publish never --linux --x64
-          fi
+          run_build() {
+            if [ "${{ matrix.platform }}" == "macos" ]; then
+              npm run build -- --publish never --mac --${{ matrix.arch }}
+            elif [ "${{ matrix.platform }}" == "windows" ]; then
+              npm run build -- --publish never --win --x64
+            else
+              npm run build -- --publish never --linux --x64
+            fi
+          }
+
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Build attempt $attempt/$max_attempts"
+            if run_build; then
+              exit 0
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              exit "$status"
+            fi
+
+            delay=$((attempt * 10))
+            echo "Build failed with exit code $status; retrying in ${delay}s."
+            sleep "$delay"
+          done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
