@@ -1,7 +1,7 @@
 /**
  * Purpose: Abstract base class and context definition for all tools, defining the interface for mouse and keyboard events and rendering.
  */
-import { Project, Layer, HistoryEntry } from "@/renderer/store/projectStore";
+import { Project, Layer, HistoryEntry, HistoryState } from "@/renderer/store/projectStore";
 import { ToolSettings, ToolId } from "@/renderer/store/toolStore";
 
 export type { ToolId };
@@ -84,9 +84,9 @@ export interface ToolContext {
   /** Sets the last used selection mask dataURL. */
   setLastSelectionMask: (mask: string | undefined) => void;
   /** Lifts the selection from a layer into a floating state. */
-  floatSelection: (layerId: string) => Promise<boolean>;
+  floatSelection: (layerId: string, historyState?: HistoryState) => Promise<boolean>;
   /** Merges a floating selection back into its target layer. */
-  commitFloatingLayer: () => Promise<void>;
+  commitFloatingLayer: () => Promise<boolean>;
   /** Clears the current selection. */
   clearSelection: () => Promise<void>;
   /** Deletes the selected pixels/content from the active layer. */
@@ -140,7 +140,7 @@ export abstract class BaseTool {
    * Called when a key is pressed.
    * @returns true if the tool consumed the event, false otherwise.
    */
-  onKeyDown(_e: KeyboardEvent, _context: ToolContext): boolean {
+  onKeyDown(_e: KeyboardEvent, _context: ToolContext): boolean | Promise<boolean> {
     return false;
   }
 

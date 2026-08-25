@@ -7,6 +7,7 @@ import { useUIStore } from "@/renderer/store/uiStore";
 
 const AUTO_SCROLL_MARGIN = 48;
 const AUTO_SCROLL_MAX_SPEED = 20;
+const SELECTION_ARROW_HISTORY_DELAY = 400;
 
 export class SelectTool extends BaseTool {
   id: ToolId = "select";
@@ -22,6 +23,8 @@ export class SelectTool extends BaseTool {
   private selectionMoveStartBounds = { x: 0, y: 0, width: 0, height: 0 };
 
   private historySnapshot: HistoryState | null = null;
+  private selectionArrowHistory: HistoryState | null = null;
+  private selectionArrowHistoryTimer: ReturnType<typeof setTimeout> | null = null;
   private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
   private relativeSnapPointsX: number[] = [];
   private relativeSnapPointsY: number[] = [];
@@ -29,8 +32,15 @@ export class SelectTool extends BaseTool {
   private autoScrollVelocity = { x: 0, y: 0 };
   private selectionPreviewShift = false;
 
-  onMouseDown(e: MouseEvent, context: ToolContext): void {
+  async onMouseDown(e: MouseEvent, context: ToolContext): Promise<void> {
     if (e.button !== 0) return;
+
+    this.flushSelectionArrowHistory(context);
+
+    if (context.project.selection.floatingLayer) {
+      const committed = await context.commitFloatingLayer();
+      if (!committed) return;
+    }
 
     this.historySnapshot = createHistoryState(context.project);
 
@@ -279,10 +289,10 @@ export class SelectTool extends BaseTool {
       const dx = e.key === "ArrowLeft" ? -distance : e.key === "ArrowRight" ? distance : 0;
       const dy = e.key === "ArrowUp" ? -distance : e.key === "ArrowDown" ? distance : 0;
 
-      context.addHistoryEntry({
-        description: "Move Selection",
-        state: createHistoryState(context.project),
-      });
+      if (!this.selectionArrowHistory) {
+        this.selectionArrowHistory = createHistoryState(context.project);
+      }
+
       context.updateProject({
         selection: {
           ...context.project.selection,
@@ -291,8 +301,11 @@ export class SelectTool extends BaseTool {
         isDirty: true,
       });
       context.updateSelectionEdges();
+      this.scheduleSelectionArrowHistoryFlush(context);
       return true;
     }
+
+    this.flushSelectionArrowHistory(context);
 
     if (e.key !== "Delete" && e.key !== "Backspace") return false;
 
@@ -364,9 +377,10 @@ export class SelectTool extends BaseTool {
       });
     }
 
-    // Commit if creating new selection in replace mode
-    if (mode === "replace" && context.project.selection.floatingLayer) {
-      await context.commitFloatingLayer();
+    // Commit before applying any selection change.
+    if (context.project.selection.floatingLayer) {
+      const committed = await context.commitFloatingLayer();
+      if (!committed) return;
     }
 
     const { canvas: selCanvas, ctx: selCtx } = context.getSelectionCanvas();
@@ -587,11 +601,38 @@ export class SelectTool extends BaseTool {
   }
 
   onDeactivate(context: ToolContext): void {
+    this.flushSelectionArrowHistory(context);
     this.isSelecting = false;
     this.isMovingSelection = false;
     this.activeSnapLines = [];
     this.autoScrollVelocity = { x: 0, y: 0 };
     context.setInteracting(false);
+  }
+
+  private scheduleSelectionArrowHistoryFlush(context: ToolContext): void {
+    if (this.selectionArrowHistoryTimer) {
+      clearTimeout(this.selectionArrowHistoryTimer);
+    }
+
+    this.selectionArrowHistoryTimer = setTimeout(() => {
+      this.selectionArrowHistoryTimer = null;
+      this.flushSelectionArrowHistory(context);
+    }, SELECTION_ARROW_HISTORY_DELAY);
+  }
+
+  private flushSelectionArrowHistory(context: ToolContext): void {
+    if (this.selectionArrowHistoryTimer) {
+      clearTimeout(this.selectionArrowHistoryTimer);
+      this.selectionArrowHistoryTimer = null;
+    }
+
+    if (!this.selectionArrowHistory) return;
+
+    context.addHistoryEntry({
+      description: "Move Selection",
+      state: this.selectionArrowHistory,
+    });
+    this.selectionArrowHistory = null;
   }
 
   private updateAutoScrollVelocity(offsetX: number, offsetY: number, context: ToolContext) {

@@ -11,6 +11,38 @@ describe("Selection and Transform Tools", () => {
   });
 
   describe("SelectTool", () => {
+    it("commits floating content before starting a new selection", async () => {
+      context.project.selection = {
+        hasSelection: true,
+        bounds: { x: 10, y: 10, width: 20, height: 20 },
+        mask: "data:image/png;base64,selection",
+        floatingLayer: {
+          id: "floating-selection",
+          name: "Floating Selection",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          blendMode: "source-over",
+        },
+      };
+      context.settings.select.mode = "unite";
+      context.commitFloatingLayer = vi.fn(async () => {
+        context.project.selection.floatingLayer = null;
+        return true;
+      });
+
+      const tool = new SelectTool();
+      await tool.onMouseDown({ button: 0, offsetX: 100, offsetY: 100 } as MouseEvent, context);
+
+      expect(context.commitFloatingLayer).toHaveBeenCalledOnce();
+    });
+
     it("should create a rectangle selection", () => {
       const tool = new SelectTool();
       tool.onMouseDown({ button: 0, offsetX: 50, offsetY: 50 } as MouseEvent, context);
@@ -110,10 +142,55 @@ describe("Selection and Transform Tools", () => {
         }),
         isDirty: true,
       });
+      expect(context.addHistoryEntry).not.toHaveBeenCalled();
+      expect(context.updateSelectionEdges).toHaveBeenCalledOnce();
+      tool.onDeactivate(context);
+    });
+
+    it("groups consecutive arrow key moves into one history entry", () => {
+      const tool = new SelectTool();
+      const selectionCanvas = document.createElement("canvas");
+      selectionCanvas.width = 20;
+      selectionCanvas.height = 20;
+      context.project.selection = {
+        hasSelection: true,
+        bounds: { x: 10, y: 15, width: 20, height: 25 },
+        mask: "data:image/png;base64,selection",
+      };
+      context.updateProject = vi.fn((updates: Record<string, unknown>) =>
+        Object.assign(context.project, updates),
+      );
+      context.getSelectionCanvas = vi.fn(() => ({
+        canvas: selectionCanvas,
+        ctx: selectionCanvas.getContext("2d")!,
+      }));
+
+      const firstHandled = tool.onKeyDown(
+        { key: "ArrowRight", shiftKey: false, preventDefault: vi.fn() } as unknown as KeyboardEvent,
+        context,
+      );
+      const secondHandled = tool.onKeyDown(
+        { key: "ArrowDown", shiftKey: false, preventDefault: vi.fn() } as unknown as KeyboardEvent,
+        context,
+      );
+
+      expect(firstHandled).toBe(true);
+      expect(secondHandled).toBe(true);
+      expect(context.project.selection.bounds).toEqual({
+        x: 11,
+        y: 16,
+        width: 20,
+        height: 25,
+      });
+      expect(context.addHistoryEntry).not.toHaveBeenCalled();
+
+      tool.onDeactivate(context);
+
+      expect(context.addHistoryEntry).toHaveBeenCalledOnce();
       expect(context.addHistoryEntry).toHaveBeenCalledWith(
         expect.objectContaining({ description: "Move Selection" }),
       );
-      expect(context.updateSelectionEdges).toHaveBeenCalledOnce();
+      expect(context.updateSelectionEdges).toHaveBeenCalledTimes(2);
     });
 
     it("moves the selection ten pixels with Shift and an arrow", () => {
@@ -136,6 +213,34 @@ describe("Selection and Transform Tools", () => {
         }),
         isDirty: true,
       });
+      tool.onDeactivate(context);
+    });
+
+    it("flushes pending arrow movement before deleting the selection", () => {
+      const tool = new SelectTool();
+      context.project.selection = {
+        hasSelection: true,
+        bounds: { x: 10, y: 15, width: 20, height: 25 },
+        mask: "data:image/png;base64,selection",
+      };
+      context.deleteSelectionContents = vi.fn().mockResolvedValue(true);
+
+      tool.onKeyDown(
+        { key: "ArrowRight", shiftKey: false, preventDefault: vi.fn() } as unknown as KeyboardEvent,
+        context,
+      );
+      const handled = tool.onKeyDown(
+        {
+          key: "Delete",
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        } as unknown as KeyboardEvent,
+        context,
+      );
+
+      expect(handled).toBe(true);
+      expect(context.addHistoryEntry).toHaveBeenCalledOnce();
+      expect(context.deleteSelectionContents).toHaveBeenCalledOnce();
     });
 
     it("auto-scrolls continuously while the pointer is near a viewport edge", () => {

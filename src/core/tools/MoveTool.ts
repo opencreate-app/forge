@@ -18,6 +18,7 @@ export class MoveTool extends BaseTool {
   private duplicatePending = false;
   private duplicateSourceIds: string[] = [];
   private snapExcludedLayerIds = new Set<string>();
+  private floatingSelectionMovePromise: Promise<boolean> | null = null;
   private historySnapshot: HistoryState | null = null;
   private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
@@ -160,7 +161,7 @@ export class MoveTool extends BaseTool {
       !project.selection.floatingLayer
     ) {
       if (!context.isLayerLocked(activeLayerId)) {
-        const success = await context.floatSelection(activeLayerId);
+        const success = await context.floatSelection(activeLayerId, this.historySnapshot);
         if (success) {
           this.isFloating = true;
         }
@@ -383,7 +384,7 @@ export class MoveTool extends BaseTool {
       const dx = Math.round(x - this.startX);
       const dy = Math.round(y - this.startY);
 
-      if (this.historySnapshot && (dx !== 0 || dy !== 0)) {
+      if (this.historySnapshot && !this.isFloating && (dx !== 0 || dy !== 0)) {
         context.addHistoryEntry({
           description: "Move Tool",
           state: this.historySnapshot,
@@ -400,11 +401,72 @@ export class MoveTool extends BaseTool {
     this.historySnapshot = null;
   }
 
-  onKeyDown(e: KeyboardEvent, context: ToolContext): boolean {
+  private async moveFloatingSelectionWithArrow(
+    e: KeyboardEvent,
+    context: ToolContext,
+  ): Promise<boolean> {
+    const { project } = context;
+    let floatingLayer = project.selection.floatingLayer;
+
+    if (!floatingLayer) {
+      const activeLayerId = project.activeLayerId;
+      if (!activeLayerId) return false;
+
+      if (!this.floatingSelectionMovePromise) {
+        this.floatingSelectionMovePromise = context.floatSelection(
+          activeLayerId,
+          createHistoryState(project),
+        );
+      }
+
+      const success = await this.floatingSelectionMovePromise;
+      this.floatingSelectionMovePromise = null;
+      if (!success) return false;
+      floatingLayer = context.project.selection.floatingLayer;
+    }
+
+    if (!floatingLayer) return false;
+
+    const distance = e.shiftKey ? 8 : 1;
+    const dx = e.key === "ArrowLeft" ? -distance : e.key === "ArrowRight" ? distance : 0;
+    const dy = e.key === "ArrowUp" ? -distance : e.key === "ArrowDown" ? distance : 0;
+    const bounds = context.project.selection.bounds ?? {
+      x: floatingLayer.x,
+      y: floatingLayer.y,
+      width: floatingLayer.width,
+      height: floatingLayer.height,
+    };
+
+    context.updateProject({
+      selection: {
+        ...context.project.selection,
+        floatingLayer: {
+          ...floatingLayer,
+          x: floatingLayer.x + dx,
+          y: floatingLayer.y + dy,
+        },
+        bounds: {
+          ...bounds,
+          x: bounds.x + dx,
+          y: bounds.y + dy,
+        },
+      },
+      isDirty: true,
+    });
+    context.updateSelectionEdges();
+    return true;
+  }
+
+  onKeyDown(e: KeyboardEvent, context: ToolContext): boolean | Promise<boolean> {
     const isArrow = e.key.startsWith("Arrow");
     if (!isArrow) return false;
 
     const { project } = context;
+    if (project.selection.hasSelection || project.selection.floatingLayer) {
+      e.preventDefault();
+      return this.moveFloatingSelectionWithArrow(e, context);
+    }
+
     const targetIds = this.getTargetLayerIds(context);
     if (targetIds.length === 0) return false;
 
@@ -444,6 +506,18 @@ export class MoveTool extends BaseTool {
 
     context.updateProject({ layers, isDirty: true });
     return true;
+  }
+
+  onDeactivate(_context: ToolContext): void {
+    this.isDragging = false;
+    this.isFloating = false;
+    this.movingLayerIds = [];
+    this.initialPositions.clear();
+    this.duplicatePending = false;
+    this.duplicateSourceIds = [];
+    this.snapExcludedLayerIds.clear();
+    this.floatingSelectionMovePromise = null;
+    this.historySnapshot = null;
   }
 
   onRender(ctx: CanvasRenderingContext2D, context: ToolContext): void {

@@ -1,7 +1,13 @@
 /**
  * Purpose: Core engine class responsible for project rendering, viewport management (zoom/pan), tool orchestration, and selection handling.
  */
-import { Layer, Project, useProjectStore, Guide } from "@/renderer/store/projectStore";
+import {
+  HistoryState,
+  Layer,
+  Project,
+  useProjectStore,
+  Guide,
+} from "@/renderer/store/projectStore";
 import { StrokeStyle, DropShadowStyle, InnerShadowStyle } from "@/renderer/store/layerStylesStore";
 import { BaseTool, ToolContext } from "../tools/BaseTool";
 import { MoveTool } from "../tools/MoveTool";
@@ -107,6 +113,9 @@ export class ForgeEngine {
   private sceneSnapshotReady = false;
 
   private currentToolId: string | null = null;
+  private floatingSelectionHistory: HistoryState | null = null;
+  private toolTransitionPromise: Promise<void> | null = null;
+  private isToolTransitioning = false;
   private onViewportChange?: (zoom: number, x: number, y: number) => void;
   private temporaryColorPickerActive = false;
   private lastPointerPosition: { x: number; y: number } | null = null;
@@ -238,8 +247,8 @@ export class ForgeEngine {
   /**
    * Selects the entire canvas area.
    */
-  private handleSelectAll = () => {
-    this.selectAll();
+  private handleSelectAll = async () => {
+    await this.selectAll();
   };
 
   /**
@@ -780,11 +789,12 @@ export class ForgeEngine {
    */
   private async clearSelection() {
     if (!this.project) return;
+    if (this.project.selection.floatingLayer) {
+      const committed = await this.commitFloatingLayer();
+      if (!committed) return;
+    }
     if (this.project.selection.hasSelection) {
       useProjectStore.getState().pushHistory(this.project.id, "Deselect");
-    }
-    if (this.project.selection.floatingLayer) {
-      await this.commitFloatingLayer();
     }
     useProjectStore.getState().updateProject(this.project.id, {
       selection: { hasSelection: false, bounds: null, mask: undefined, floatingLayer: null },
@@ -924,9 +934,17 @@ export class ForgeEngine {
       }
 
       const consumed = tool.onKeyDown(e, context);
-      if (consumed) {
-        e.stopImmediatePropagation();
+      if (typeof consumed === "boolean") {
+        if (consumed) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return;
+        }
+      } else {
         e.preventDefault();
+        void consumed.then((wasConsumed) => {
+          if (wasConsumed) e.stopImmediatePropagation();
+        });
         return;
       }
     }
@@ -1193,6 +1211,8 @@ export class ForgeEngine {
    * Handles mouse release events.
    */
   private handleMouseUp(e: MouseEvent) {
+    if (this.isToolTransitioning) return;
+
     if (this.isPanning) {
       this.isPanning = false;
       this.canvas.style.cursor = "default";
@@ -1252,6 +1272,27 @@ export class ForgeEngine {
   /** Returns the tool that should receive pointer events and render previews. */
   private getInteractionTool(): BaseTool | null {
     return this.temporaryColorPickerActive ? this.getColorPickerTool() : this.getActiveTool();
+  }
+
+  /**
+   * Commits floating selection content before activating a different tool.
+   * The render loop retries the transition after the asynchronous canvas composition completes.
+   */
+  private waitForFloatingSelectionCommit(): void {
+    if (this.toolTransitionPromise || !this.project?.selection.floatingLayer) return;
+
+    this.isToolTransitioning = true;
+    this.toolTransitionPromise = this.commitFloatingLayer()
+      .then((committed) => {
+        if (!committed && this.currentToolId) {
+          useToolStore.getState().setActiveTool(this.currentToolId as any);
+        }
+      })
+      .finally(() => {
+        this.toolTransitionPromise = null;
+        this.isToolTransitioning = false;
+        this.render();
+      });
   }
 
   private getColorPickerTool(): ColorPickerTool {
@@ -1362,7 +1403,8 @@ export class ForgeEngine {
       setLastSelectionMask: (mask: string | undefined) => {
         this.lastSelectionMask = mask;
       },
-      floatSelection: (layerId: string) => this.floatSelection(layerId),
+      floatSelection: (layerId: string, historyState?: HistoryState) =>
+        this.floatSelection(layerId, historyState),
       commitFloatingLayer: () => this.commitFloatingLayer(),
       clearSelection: () => this.clearSelection(),
       deleteSelectionContents: () => this.deleteSelectionContents(),
@@ -1568,6 +1610,7 @@ export class ForgeEngine {
    */
   private handleMouseDown(e: MouseEvent) {
     if (!this.project) return;
+    if (this.isToolTransitioning) return;
     this.stopViewportAnimation();
 
     if (e.button === 0) {
@@ -1617,6 +1660,7 @@ export class ForgeEngine {
    */
   private handleDoubleClick(e: MouseEvent) {
     if (!this.project) return;
+    if (this.isToolTransitioning) return;
     const context = this.getToolContext();
     const tool = this.getActiveTool();
     if (!context || !tool) return;
@@ -1637,6 +1681,7 @@ export class ForgeEngine {
 
   private handleContextMenu(e: MouseEvent) {
     if (!this.project) return;
+    if (this.isToolTransitioning) return;
     if (this.temporaryColorPickerActive) {
       const context = this.getToolContext();
       if (context) this.getColorPickerTool().cancelTemporaryPreview(context);
@@ -1666,6 +1711,7 @@ export class ForgeEngine {
    */
   private handleMouseMove(e: MouseEvent) {
     if (!this.project) return;
+    if (this.isToolTransitioning) return;
 
     const rect = this.canvas.getBoundingClientRect();
     const offsetX = e.clientX - rect.left;
@@ -2362,22 +2408,26 @@ export class ForgeEngine {
     // Detect tool change
     const activeToolId = useToolStore.getState().activeToolId;
     if (activeToolId !== this.currentToolId) {
-      const context = this.getToolContext();
-      if (context) {
-        if (this.temporaryColorPickerActive) {
-          this.getColorPickerTool().cancelTemporaryPreview(context);
-          this.temporaryColorPickerActive = false;
-        }
+      if (this.project.selection.floatingLayer) {
+        this.waitForFloatingSelectionCommit();
+      } else if (!this.toolTransitionPromise) {
+        const context = this.getToolContext();
+        if (context) {
+          if (this.temporaryColorPickerActive) {
+            this.getColorPickerTool().cancelTemporaryPreview(context);
+            this.temporaryColorPickerActive = false;
+          }
 
-        if (this.currentToolId && this.tools[this.currentToolId]) {
-          this.tools[this.currentToolId].onDeactivate(context);
+          if (this.currentToolId && this.tools[this.currentToolId]) {
+            this.tools[this.currentToolId].onDeactivate(context);
+          }
+          this.currentToolId = activeToolId;
+          if (this.currentToolId && this.tools[this.currentToolId]) {
+            this.tools[this.currentToolId].onActivate(context);
+          }
+          // Reset default cursor when switching
+          this.canvas.style.cursor = "default";
         }
-        this.currentToolId = activeToolId;
-        if (this.currentToolId && this.tools[this.currentToolId]) {
-          this.tools[this.currentToolId].onActivate(context);
-        }
-        // Reset default cursor when switching
-        this.canvas.style.cursor = "default";
       }
     }
 
@@ -3741,7 +3791,7 @@ export class ForgeEngine {
   /**
    * Extracts the selection into a floating layer.
    */
-  private async floatSelection(layerId: string): Promise<boolean> {
+  private async floatSelection(layerId: string, historyState?: HistoryState): Promise<boolean> {
     if (!this.project || !this.project.selection.hasSelection || !this.project.selection.bounds)
       return false;
 
@@ -3795,9 +3845,12 @@ export class ForgeEngine {
     this.layerReadyCache.set(layer.id, true);
 
     // Update Store
+    const newLayerData = newLayerCanvas.toDataURL();
+    (newLayerCanvas as HTMLCanvasElement & { _dataUrl?: string })._dataUrl = newLayerData;
     useProjectStore.getState().updateLayer(this.project.id, layer.id, {
-      data: newLayerCanvas.toDataURL(),
+      data: newLayerData,
     });
+    this.refreshProjectFromStore(this.project.id);
 
     useProjectStore.getState().updateProject(this.project.id, {
       selection: {
@@ -3805,6 +3858,11 @@ export class ForgeEngine {
         floatingLayer: floatingLayer,
       },
     });
+    this.refreshProjectFromStore(this.project.id);
+
+    if (historyState) {
+      this.floatingSelectionHistory = historyState;
+    }
 
     // Update local project reference immediately to avoid stale reads in the same frame
     this.project.selection.floatingLayer = floatingLayer;
@@ -3815,12 +3873,12 @@ export class ForgeEngine {
   /**
    * Commits the floating selection back to its source layer.
    */
-  private async commitFloatingLayer() {
-    if (!this.project || !this.project.selection.floatingLayer || !this.project.activeLayerId)
-      return;
+  private async commitFloatingLayer(): Promise<boolean> {
+    if (!this.project || !this.project.selection.floatingLayer) return true;
+    if (!this.project.activeLayerId) return false;
 
     const activeLayer = this.project.layers.find((l) => l.id === this.project?.activeLayerId);
-    if (!activeLayer || activeLayer.type !== "raster") return;
+    if (!activeLayer || activeLayer.type !== "raster") return false;
 
     const floatingLayer = this.project.selection.floatingLayer;
     const activeCanvas = await this.ensureLayerCanvas(activeLayer);
@@ -3856,13 +3914,16 @@ export class ForgeEngine {
     this.layerCanvasCache.set(activeLayer.id, finalCanvas);
     this.layerReadyCache.set(activeLayer.id, true);
 
+    const finalData = finalCanvas.toDataURL();
+    (finalCanvas as HTMLCanvasElement & { _dataUrl?: string })._dataUrl = finalData;
     useProjectStore.getState().updateLayer(this.project.id, activeLayer.id, {
       x: minX,
       y: minY,
       width: newW,
       height: newH,
-      data: finalCanvas.toDataURL(),
+      data: finalData,
     });
+    this.refreshProjectFromStore(this.project.id);
 
     useProjectStore.getState().updateProject(this.project.id, {
       selection: {
@@ -3870,15 +3931,37 @@ export class ForgeEngine {
         floatingLayer: null,
       },
     });
+    this.refreshProjectFromStore(this.project.id);
+
+    if (this.floatingSelectionHistory) {
+      useProjectStore.getState().addHistoryEntry(this.project.id, {
+        description: "Move Selection",
+        state: this.floatingSelectionHistory,
+      });
+      this.floatingSelectionHistory = null;
+    }
 
     this.project.selection.floatingLayer = null;
+    return true;
+  }
+
+  private refreshProjectFromStore(projectId: string): void {
+    const updatedProject = useProjectStore
+      .getState()
+      .projects.find((project) => project.id === projectId);
+    if (updatedProject) this.applyProjectUpdate(updatedProject);
   }
 
   /**
    * Selects all pixels in the project.
    */
-  public selectAll() {
+  public async selectAll() {
     if (!this.project) return;
+
+    if (this.project.selection.floatingLayer) {
+      const committed = await this.commitFloatingLayer();
+      if (!committed) return;
+    }
 
     useProjectStore.getState().pushHistory(this.project.id, "Select All");
 

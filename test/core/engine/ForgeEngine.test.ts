@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ForgeEngine } from "@/core/engine/ForgeEngine";
 import { createMockProject } from "../../mocks";
 import { useToolStore } from "@store/toolStore";
+import { createHistoryState, useProjectStore } from "@store/projectStore";
 
 describe("ForgeEngine", () => {
   let canvas: HTMLCanvasElement;
@@ -114,6 +115,127 @@ describe("ForgeEngine", () => {
     engine.sampleColorAtScreen(210, 170);
 
     expect(context.getImageData).toHaveBeenCalledWith(400, 300, 1, 1);
+  });
+
+  it("commits a floating selection into the source layer and records one history entry", async () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const project = createMockProject({
+      layers: [
+        {
+          ...createMockProject().layers[0],
+          data: "data:image/png;base64,source",
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+        },
+      ],
+      selection: {
+        hasSelection: true,
+        bounds: { x: 8, y: 8, width: 5, height: 5 },
+        floatingLayer: {
+          id: "floating-selection",
+          name: "Floating Selection",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 8,
+          y: 8,
+          width: 5,
+          height: 5,
+          data: "data:image/png;base64,floating",
+          blendMode: "source-over",
+        },
+      },
+    });
+    const historyState = createHistoryState(createMockProject());
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = 10;
+    sourceCanvas.height = 10;
+    const floatingCanvas = document.createElement("canvas");
+    floatingCanvas.width = 5;
+    floatingCanvas.height = 5;
+
+    const store = useProjectStore.getState();
+    const originalActions = {
+      updateLayer: store.updateLayer,
+      updateProject: store.updateProject,
+      addHistoryEntry: store.addHistoryEntry,
+    };
+    const updateLayer = vi.fn();
+    const updateProject = vi.fn();
+    const addHistoryEntry = vi.fn();
+    useProjectStore.setState({ updateLayer, updateProject, addHistoryEntry } as never);
+
+    try {
+      engine.setProject(project);
+      const engineState = engine as any;
+      engineState.layerCanvasCache.set("layer-1", sourceCanvas);
+      engineState.layerReadyCache.set("layer-1", true);
+      engineState.layerCanvasCache.set("floating-selection", floatingCanvas);
+      engineState.layerReadyCache.set("floating-selection", true);
+      engineState.floatingSelectionHistory = historyState;
+
+      await engineState.commitFloatingLayer();
+
+      expect(project.selection.floatingLayer).toBeNull();
+      expect(updateLayer).toHaveBeenCalledWith(
+        project.id,
+        "layer-1",
+        expect.objectContaining({ x: 0, y: 0, width: 13, height: 13 }),
+      );
+      expect(addHistoryEntry).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({ description: "Move Selection", state: historyState }),
+      );
+    } finally {
+      useProjectStore.setState(originalActions);
+      engine.stopRenderLoop();
+    }
+  });
+
+  it("waits for the floating selection commit before changing tools", async () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const project = createMockProject({
+      selection: {
+        hasSelection: true,
+        bounds: { x: 0, y: 0, width: 10, height: 10 },
+        floatingLayer: {
+          id: "floating-selection",
+          name: "Floating Selection",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          blendMode: "source-over",
+        },
+      },
+    });
+    engine.setProject(project);
+    const engineState = engine as any;
+    engineState.currentToolId = "move";
+    engineState.commitFloatingLayer = vi.fn(async () => {
+      project.selection.floatingLayer = null;
+      return true;
+    });
+    useToolStore.getState().setActiveTool("select");
+
+    engine.render();
+    expect(engineState.currentToolId).toBe("move");
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(engineState.currentToolId).toBe("select");
+
+    useToolStore.getState().setActiveTool("move");
+    engine.stopRenderLoop();
   });
 
   it("samples the scene snapshot after rendering and ignores tool overlays", () => {

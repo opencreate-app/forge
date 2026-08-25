@@ -152,6 +152,90 @@ describe("MoveTool", () => {
     expect(context.addHistoryEntry).not.toHaveBeenCalled();
   });
 
+  it("should defer history for a moved floating selection until it is committed", async () => {
+    const tool = new MoveTool();
+    const project = createMockProject({
+      selection: {
+        hasSelection: true,
+        bounds: { x: 0, y: 0, width: 20, height: 20 },
+      },
+    });
+    context.project = project;
+    context.floatSelection = vi.fn(async () => {
+      project.selection.floatingLayer = {
+        id: "floating-selection",
+        name: "Floating Selection",
+        type: "raster",
+        visible: true,
+        locked: false,
+        opacity: 100,
+        fill: 100,
+        x: 0,
+        y: 0,
+        width: 20,
+        height: 20,
+        blendMode: "source-over",
+      };
+      return true;
+    });
+    context.screenToProject = vi
+      .fn()
+      .mockReturnValueOnce({ x: 5, y: 5 })
+      .mockReturnValue({ x: 15, y: 10 });
+
+    await tool.onMouseDown({ button: 0, offsetX: 5, offsetY: 5 } as MouseEvent, context);
+    tool.onMouseMove({ offsetX: 15, offsetY: 10 } as MouseEvent, context);
+    tool.onMouseUp({ offsetX: 15, offsetY: 10 } as MouseEvent, context);
+
+    expect(context.floatSelection).toHaveBeenCalledWith("layer-1", expect.anything());
+    expect(context.addHistoryEntry).not.toHaveBeenCalled();
+  });
+
+  it("should move selected pixels with arrow keys and group the sequence", async () => {
+    const tool = new MoveTool();
+    const project = createMockProject({
+      selection: {
+        hasSelection: true,
+        bounds: { x: 10, y: 15, width: 20, height: 25 },
+      },
+    });
+    context.project = project;
+    context.updateProject = vi.fn((updates) => Object.assign(project, updates));
+    context.floatSelection = vi.fn(async () => {
+      project.selection.floatingLayer = {
+        id: "floating-selection",
+        name: "Floating Selection",
+        type: "raster",
+        visible: true,
+        locked: false,
+        opacity: 100,
+        fill: 100,
+        x: 10,
+        y: 15,
+        width: 20,
+        height: 25,
+        blendMode: "source-over",
+      };
+      return true;
+    });
+
+    const firstHandled = await tool.onKeyDown(
+      { key: "ArrowRight", shiftKey: false, preventDefault: vi.fn() } as unknown as KeyboardEvent,
+      context,
+    );
+    const secondHandled = await tool.onKeyDown(
+      { key: "ArrowDown", shiftKey: true, preventDefault: vi.fn() } as unknown as KeyboardEvent,
+      context,
+    );
+
+    expect(firstHandled).toBe(true);
+    expect(secondHandled).toBe(true);
+    expect(context.floatSelection).toHaveBeenCalledOnce();
+    expect(project.selection.floatingLayer).toMatchObject({ x: 11, y: 23 });
+    expect(project.selection.bounds).toMatchObject({ x: 11, y: 23 });
+    expect(context.addHistoryEntry).not.toHaveBeenCalled();
+  });
+
   it("should move group children when moving a group", () => {
     const tool = new MoveTool();
     const project = createMockProject();
