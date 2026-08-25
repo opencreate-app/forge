@@ -558,35 +558,42 @@ export const createHistoryState = (project: Project): HistoryState => ({
  * Prepares a project for serialization (saving to disk).
  * Includes history stacks but may limit them to avoid excessively large files.
  */
-export const getSerializableProject = (project: Project): any => {
+const serializeProject = (project: Project, saveHistory: boolean, historyLimit: number): any => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { isDirty, filePath, undoStack, redoStack, ...rest } = project;
 
-  const saveHistory = usePreferencesStore.getState().saveHistory;
-  const historyLimit = usePreferencesStore.getState().historyLimit;
+  const processedLayers = rest.layers.map((layer) => {
+    const processedLayer = saveHistory
+      ? { ...layer }
+      : (() => {
+          const {
+            textUndoStack: _textUndoStack,
+            textRedoStack: _textRedoStack,
+            ...layerRest
+          } = layer;
+          return layerRest;
+        })();
 
-  // We keep the history but limit it to avoid massive files due to Base64 data duplication.
-  const persistedUndoStack = saveHistory ? undoStack.slice(-historyLimit) : [];
+    if (layer.dataObject) {
+      processedLayer.dataObject = serializeProject(layer.dataObject, saveHistory, historyLimit);
+    }
 
-  // Strip text history if saveHistory is off
-  const processedLayers = saveHistory
-    ? rest.layers
-    : rest.layers.map((layer) => {
-        const {
-          textUndoStack: _textUndoStack,
-          textRedoStack: _textRedoStack,
-          ...layerRest
-        } = layer;
-        return layerRest;
-      });
+    return processedLayer;
+  });
 
   return {
     ...rest,
     layers: processedLayers,
-    undoStack: persistedUndoStack,
+    // We keep the history but limit it to avoid massive files due to Base64 data duplication.
+    undoStack: saveHistory ? undoStack.slice(-historyLimit) : [],
     redoStack: [], // Redo stack is typically not persisted across sessions
     updatedAt: new Date().toISOString(),
   };
+};
+
+export const getSerializableProject = (project: Project): any => {
+  const { saveHistory, historyLimit } = usePreferencesStore.getState();
+  return serializeProject(project, saveHistory, historyLimit);
 };
 
 export const useProjectStore = create<ProjectState>((set, get) => ({

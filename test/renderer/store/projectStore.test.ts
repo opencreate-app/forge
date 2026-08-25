@@ -1,10 +1,263 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useProjectStore, Project } from "@/renderer/store/projectStore";
+import { getSerializableProject, useProjectStore, Project } from "@/renderer/store/projectStore";
+import { usePreferencesStore } from "@/renderer/store/preferencesStore";
 
 describe("projectStore", () => {
   beforeEach(() => {
     const { projects } = useProjectStore.getState();
     projects.forEach((p) => useProjectStore.getState().removeProject(p.id));
+    usePreferencesStore.setState({ saveHistory: false, historyLimit: 50 });
+  });
+
+  it("does not serialize text history when project history saving is disabled", () => {
+    const textUndoStack = [{ text: "before", textSpans: [{ text: "before" }] }];
+    const textRedoStack = [{ text: "after", textSpans: [{ text: "after" }] }];
+    const project: Project = {
+      id: "text-history-disabled",
+      name: "Text History",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "text-layer",
+          name: "Text",
+          type: "text",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 20,
+          blendMode: "source-over",
+          text: "current",
+          textUndoStack,
+          textRedoStack,
+        },
+      ],
+      guides: [],
+      activeLayerId: "text-layer",
+      selectedLayerIds: ["text-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [],
+      redoStack: [],
+    };
+
+    const serializable = getSerializableProject(project);
+
+    expect(serializable.layers[0]).not.toHaveProperty("textUndoStack");
+    expect(serializable.layers[0]).not.toHaveProperty("textRedoStack");
+    expect(project.layers[0]).toMatchObject({ textUndoStack, textRedoStack });
+  });
+
+  it("does not serialize text history inside nested Smart Objects", () => {
+    const nestedTextLayer = {
+      id: "nested-text",
+      name: "Nested Text",
+      type: "text" as const,
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 20,
+      blendMode: "source-over" as GlobalCompositeOperation,
+      text: "nested",
+      textUndoStack: [{ text: "old" }],
+      textRedoStack: [{ text: "new" }],
+    };
+    const nestedProject: Project = {
+      id: "nested-project",
+      name: "Nested",
+      width: 100,
+      height: 100,
+      layers: [nestedTextLayer],
+      guides: [],
+      activeLayerId: nestedTextLayer.id,
+      selectedLayerIds: [nestedTextLayer.id],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [
+        {
+          description: "Nested change",
+          state: {
+            width: 100,
+            height: 100,
+            layers: [],
+            guides: [],
+            activeLayerId: null,
+            selectedLayerIds: [],
+            selection: { hasSelection: false, bounds: null },
+          },
+        },
+      ],
+      redoStack: [],
+    };
+    const project = {
+      id: "smart-object-history-disabled",
+      name: "Smart Object",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "smart-layer",
+          name: "Smart Object",
+          type: "smart_object" as const,
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over" as GlobalCompositeOperation,
+          dataObject: nestedProject,
+        },
+      ],
+      guides: [],
+      activeLayerId: "smart-layer",
+      selectedLayerIds: ["smart-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [],
+      redoStack: [],
+    } satisfies Project;
+
+    const serializable = getSerializableProject(project);
+    const serializedNestedProject = serializable.layers[0].dataObject;
+
+    expect(serializedNestedProject.undoStack).toEqual([]);
+    expect(serializedNestedProject.layers[0]).not.toHaveProperty("textUndoStack");
+    expect(serializedNestedProject.layers[0]).not.toHaveProperty("textRedoStack");
+    expect(nestedProject.layers[0]).toHaveProperty("textUndoStack");
+  });
+
+  it("preserves text history when project history saving is enabled", () => {
+    usePreferencesStore.setState({ saveHistory: true });
+    const textUndoStack = [{ text: "before" }];
+    const project = {
+      id: "text-history-enabled",
+      name: "Text History",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "text-layer",
+          name: "Text",
+          type: "text" as const,
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 20,
+          blendMode: "source-over" as GlobalCompositeOperation,
+          text: "current",
+          textUndoStack,
+        },
+      ],
+      guides: [],
+      activeLayerId: "text-layer",
+      selectedLayerIds: ["text-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [],
+      redoStack: [],
+    } satisfies Project;
+
+    const serializable = getSerializableProject(project);
+
+    expect(serializable.layers[0].textUndoStack).toEqual(textUndoStack);
+  });
+
+  it("applies the history limit to nested projects when history saving is enabled", () => {
+    usePreferencesStore.setState({ saveHistory: true, historyLimit: 1 });
+    const historyState = {
+      width: 100,
+      height: 100,
+      layers: [],
+      guides: [],
+      activeLayerId: null,
+      selectedLayerIds: [],
+      selection: { hasSelection: false, bounds: null },
+    };
+    const nestedProject: Project = {
+      id: "limited-nested-project",
+      name: "Nested",
+      width: 100,
+      height: 100,
+      layers: [],
+      guides: [],
+      activeLayerId: null,
+      selectedLayerIds: [],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [
+        { description: "First", state: historyState },
+        { description: "Second", state: historyState },
+      ],
+      redoStack: [],
+    };
+    const project = {
+      id: "limited-smart-object",
+      name: "Smart Object",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "smart-layer",
+          name: "Smart Object",
+          type: "smart_object" as const,
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over" as GlobalCompositeOperation,
+          dataObject: nestedProject,
+        },
+      ],
+      guides: [],
+      activeLayerId: "smart-layer",
+      selectedLayerIds: ["smart-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [],
+      redoStack: [],
+    } satisfies Project;
+
+    const serializable = getSerializableProject(project);
+
+    expect(serializable.layers[0].dataObject.undoStack).toHaveLength(1);
+    expect(serializable.layers[0].dataObject.undoStack[0].description).toBe("Second");
   });
 
   it("should add a new project", () => {
