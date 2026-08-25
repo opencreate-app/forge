@@ -398,7 +398,7 @@ interface ProjectState {
   /** Duplicates an existing layer. */
   duplicateLayer: (projectId: string, layerId: string) => void;
   /** Duplicates multiple existing layers. */
-  duplicateLayers: (projectId: string, layerIds: string[]) => void;
+  duplicateLayers: (projectId: string, layerIds: string[], skipHistory?: boolean) => string[];
   /** Updates properties of a specific layer. */
   updateLayer: (
     projectId: string,
@@ -1000,7 +1000,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     get().duplicateLayers(projectId, [layerId]);
   },
 
-  duplicateLayers: (projectId: string, layerIds: string[]) =>
+  duplicateLayers: (projectId: string, layerIds: string[], skipHistory = false) => {
+    const newlyCreatedIds: string[] = [];
+
     set((state) => {
       const project = state.projects.find((p) => p.id === projectId);
       if (!project) return state;
@@ -1014,18 +1016,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
       if (targets.length === 0) return state;
 
-      // Push to history
-      const historyState = createHistoryState(project);
-      const newUndoStack = [
-        ...project.undoStack,
-        {
-          description: targets.length > 1 ? "Duplicate Layers" : "Duplicate Layer",
-          state: historyState,
-        },
-      ];
-      if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+      let newUndoStack = project.undoStack;
+      if (!skipHistory) {
+        const historyState = createHistoryState(project);
+        newUndoStack = [
+          ...project.undoStack,
+          {
+            description: targets.length > 1 ? "Duplicate Layers" : "Duplicate Layer",
+            state: historyState,
+          },
+        ];
+        if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+      }
 
-      const newlyCreatedIds: string[] = [];
       const allNewClones: Layer[] = [];
       let maxInsertionIndex = -1;
 
@@ -1110,7 +1113,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           };
         }),
       };
-    }),
+    });
+
+    return newlyCreatedIds;
+  },
 
   reorderLayers: (projectId, layerIds, targetLayerId, position) =>
     set((state) => {

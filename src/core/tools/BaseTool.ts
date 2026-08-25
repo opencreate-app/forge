@@ -45,6 +45,8 @@ export interface ToolContext {
   updateViewport: (zoom: number, panX: number, panY: number) => void;
   /** Updates the project state. */
   updateProject: (updates: Partial<Project>) => void;
+  /** Duplicates selected layers and returns the IDs of the new top-level layers. */
+  duplicateLayers: (layerIds: string[], skipHistory?: boolean) => string[];
   /** Pushes a new entry to the undo history. */
   pushHistory: (description: string) => void;
   /** Adds a raw history entry. */

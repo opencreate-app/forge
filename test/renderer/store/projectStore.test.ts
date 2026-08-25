@@ -579,6 +579,54 @@ describe("projectStore", () => {
     expect(project.selectedLayerIds).toEqual([g1Copy?.id, l2Copy?.id]);
   });
 
+  it("should duplicate layers without adding an intermediate history entry", () => {
+    const store = useProjectStore.getState();
+    const projectId = "p-no-duplicate-history";
+    store.addProject({
+      id: projectId,
+      name: "Test Project",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "layer",
+          name: "Layer",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "layer",
+      selectedLayerIds: ["layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    const initialHistoryLength = useProjectStore
+      .getState()
+      .projects.find((p) => p.id === projectId)!.undoStack.length;
+    const createdIds = store.duplicateLayers(projectId, ["layer"], true);
+    const project = useProjectStore.getState().projects.find((p) => p.id === projectId)!;
+
+    expect(createdIds).toHaveLength(1);
+    expect(project.layers).toHaveLength(2);
+    expect(project.undoStack).toHaveLength(initialHistoryLength);
+    expect(project.selectedLayerIds).toEqual(createdIds);
+  });
+
   it("should resize project, scale layer coordinates and dimensions, scale guides, and keep history", async () => {
     const store = useProjectStore.getState();
     const projectId = "p-resize";

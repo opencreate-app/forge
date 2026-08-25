@@ -1318,6 +1318,19 @@ export class ForgeEngine {
           if (updatedProject) this.applyProjectUpdate(updatedProject);
         }
       },
+      duplicateLayers: (layerIds: string[], skipHistory = false) => {
+        if (!this.project) return [];
+
+        const projectId = this.project.id;
+        const createdIds = useProjectStore
+          .getState()
+          .duplicateLayers(projectId, layerIds, skipHistory);
+        const updatedProject = useProjectStore
+          .getState()
+          .projects.find((project) => project.id === projectId);
+        if (updatedProject) this.applyProjectUpdate(updatedProject);
+        return createdIds;
+      },
       pushHistory: (description: string) => {
         if (this.project) {
           useProjectStore.getState().pushHistory(this.project.id, description);

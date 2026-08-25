@@ -66,6 +66,7 @@ export const createMockToolContext = (overrides: Partial<ToolContext> = {}): Too
     }),
     updateViewport: vi.fn(),
     updateProject: vi.fn(),
+    duplicateLayers: vi.fn().mockReturnValue([]),
     pushHistory: vi.fn(),
     addHistoryEntry: vi.fn(),
     invalidateCache: vi.fn(),
