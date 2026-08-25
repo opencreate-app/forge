@@ -265,7 +265,7 @@ jobs:
           cat <<EOF > body.md
           ## Downloads
 
-          > macOS builds use an ad-hoc signature and are not notarized. On first launch, use Finder and approve the app in **System Settings → Privacy & Security → Open Anyway** if macOS asks for confirmation.
+          ⚠️ macOS builds use an ad-hoc signature and are not notarized. On first launch, use Finder and approve the app in **System Settings → Privacy & Security → Open Anyway** if macOS asks for confirmation.
 
           <table>
           <thead>
@@ -287,14 +287,14 @@ jobs:
           <tr>
           <td rowspan="4"><strong>macOS</strong></td>
           <td rowspan="2">Apple Silicon (arm64)</td>
-          <td><a href="$BASE_URL/$MAC_ARM64_DMG">Download (DMG)</a></td>
+          <td><a href="$BASE_URL/$MAC_ARM64_DMG">Installer (DMG)</a></td>
           </tr>
           <tr>
           <td><a href="$BASE_URL/$MAC_ARM64_ZIP">Portable (ZIP/APP)</a></td>
           </tr>
           <tr>
           <td rowspan="2">Intel (x64)</td>
-          <td><a href="$BASE_URL/$MAC_X64_DMG">DMG</a></td>
+          <td><a href="$BASE_URL/$MAC_X64_DMG">Installer (DMG)</a></td>
           </tr>
           <tr>
           <td><a href="$BASE_URL/$MAC_X64_ZIP">Portable (ZIP/APP)</a></td>
