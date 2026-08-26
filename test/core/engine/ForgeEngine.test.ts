@@ -275,6 +275,46 @@ describe("ForgeEngine", () => {
     expect(onViewportChange).toHaveBeenCalledWith(2, -400, -300);
   });
 
+  it("applies logarithmic keyboard zoom steps and respects zoom limits", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange);
+    engine.resizeViewport(800, 600, 1);
+    const project = createMockProject({ zoom: 1, panX: 0, panY: 0 });
+    engine.setProject(project);
+    const targetZooms: number[] = [];
+    vi.spyOn(engine, "animateZoom").mockImplementation((targetZoom) => {
+      targetZooms.push(targetZoom);
+    });
+
+    window.dispatchEvent(new CustomEvent("forge:zoom-to", { detail: { step: 1 } }));
+    window.dispatchEvent(new CustomEvent("forge:zoom-to", { detail: { step: -1 } }));
+
+    expect(targetZooms[0]).toBeCloseTo(1.1);
+    expect(targetZooms[1]).toBeCloseTo(1 / 1.1);
+
+    project.zoom = 10;
+    window.dispatchEvent(new CustomEvent("forge:zoom-to", { detail: { step: 1 } }));
+    expect(targetZooms[2]).toBeCloseTo(11);
+
+    project.zoom = 50;
+    window.dispatchEvent(new CustomEvent("forge:zoom-to", { detail: { step: 1 } }));
+    project.zoom = 0.05;
+    window.dispatchEvent(new CustomEvent("forge:zoom-to", { detail: { step: -1 } }));
+
+    expect(targetZooms[3]).toBe(50);
+    expect(targetZooms[4]).toBe(0.05);
+  });
+
+  it("bases consecutive keyboard zoom steps on the current animation target", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange);
+    engine.resizeViewport(800, 600, 1);
+    engine.setProject(createMockProject({ zoom: 1, panX: 0, panY: 0 }));
+
+    window.dispatchEvent(new CustomEvent("forge:zoom-to", { detail: { step: 1 } }));
+    window.dispatchEvent(new CustomEvent("forge:zoom-to", { detail: { step: 1 } }));
+
+    expect((engine as any).targetViewport.zoom).toBeCloseTo(1.21);
+  });
+
   it("upscales small project thumbnails with nearest-neighbor rendering", async () => {
     const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
     engine.setProject(createMockProject({ width: 16, height: 16, layers: [] }));

@@ -80,6 +80,7 @@ export class ForgeEngine {
 
   private ZOOM_SENSITIVITY = 0.05;
   private ZOOM_SMOOTHING = 0.15;
+  private readonly KEYBOARD_ZOOM_FACTOR = 1.1;
   private animationFrameId: number | null = null;
   private viewportAnimationId: number | null = null;
   private targetViewport: { zoom: number; panX: number; panY: number } | null = null;
@@ -290,22 +291,8 @@ export class ForgeEngine {
 
     if (step !== undefined) {
       const baseZoom = this.targetViewport ? this.targetViewport.zoom : this.project.zoom;
-      let nextZoom: number;
-
-      // Define increment based on magnitude (1-9% -> 0.1, 10-99% -> 1.0, etc)
-      // This keeps the perceived speed constant at high zoom levels
-      const magnitude = Math.pow(10, Math.floor(Math.log10(baseZoom)));
-      const factor = Math.max(0.1, magnitude * 0.1);
-
-      if (step > 0) {
-        // Zoom In: Snap to next multiple of factor
-        nextZoom = (Math.floor(baseZoom / factor + 0.001) + 1) * factor;
-        nextZoom = Math.min(nextZoom, 50);
-      } else {
-        // Zoom Out: Snap to previous multiple of factor
-        nextZoom = (Math.ceil(baseZoom / factor - 0.001) - 1) * factor;
-        nextZoom = Math.max(nextZoom, 0.01);
-      }
+      const zoomMultiplier = step > 0 ? this.KEYBOARD_ZOOM_FACTOR : 1 / this.KEYBOARD_ZOOM_FACTOR;
+      const nextZoom = Math.min(Math.max(baseZoom * zoomMultiplier, 0.05), 50);
 
       this.animateZoom(nextZoom);
       return;
