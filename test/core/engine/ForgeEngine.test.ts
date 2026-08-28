@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ForgeEngine } from "@/core/engine/ForgeEngine";
+import { TextLayer } from "@/core/layers/TextLayer";
 import { createMockProject } from "../../mocks";
 import { useToolStore } from "@store/toolStore";
 import { createHistoryState, useProjectStore } from "@store/projectStore";
@@ -115,6 +116,133 @@ describe("ForgeEngine", () => {
     engine.sampleColorAtScreen(210, 170);
 
     expect(context.getImageData).toHaveBeenCalledWith(400, 300, 1, 1);
+  });
+
+  it("keeps styled text with an explicit zero rotation at its saved coordinates", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const textLayer = {
+      id: "styled-text",
+      name: "Styled text",
+      type: "text" as const,
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 287,
+      y: 978,
+      width: 506,
+      height: 240,
+      blendMode: "source-over" as const,
+      text: "ALPHA 3\nOUT NOW",
+      textType: "point" as const,
+      fontSize: 100,
+      fontFamily: "Cascadia Code",
+      fontWeight: "400",
+      color: "#000000",
+      textAlign: "center" as const,
+      lineHeight: 1.2,
+      textSpans: [{ text: "ALPHA 3\nOUT NOW", color: "#ffffff", tracking: 16 }],
+      rotation: 0,
+      styles: {
+        dropShadow: {
+          enabled: true,
+          color: "#000000",
+          opacity: 75,
+          angle: 90,
+          distance: 12,
+          spread: 0,
+          size: 24,
+          noise: 0,
+        },
+      },
+    };
+    engine.setProject(
+      createMockProject({
+        layers: [textLayer],
+        activeLayerId: null,
+        selectedLayerIds: [],
+      }),
+    );
+
+    const renderSpy = vi.spyOn(TextLayer, "render").mockImplementation(() => undefined);
+    try {
+      (engine as any).renderLayer(canvas.getContext("2d")!, textLayer);
+
+      expect(renderSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ x: textLayer.x, y: textLayer.y }),
+        expect.any(Map),
+        expect.any(Map),
+        undefined,
+        { skipStyles: true },
+      );
+    } finally {
+      renderSpy.mockRestore();
+      engine.stopRenderLoop();
+    }
+  });
+
+  it("renders transformed styled text from the local buffer origin", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const textLayer = {
+      id: "transformed-styled-text",
+      name: "Transformed styled text",
+      type: "text" as const,
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 100,
+      y: 80,
+      width: 200,
+      height: 60,
+      blendMode: "source-over" as const,
+      text: "Transformed",
+      textType: "point" as const,
+      fontSize: 30,
+      fontFamily: "Arial",
+      fontWeight: "400",
+      color: "#ffffff",
+      rotation: 25,
+      scaleX: 1.5,
+      scaleY: 0.75,
+      styles: {
+        dropShadow: {
+          enabled: true,
+          color: "#000000",
+          opacity: 75,
+          angle: 90,
+          distance: 12,
+          spread: 0,
+          size: 24,
+          noise: 0,
+        },
+      },
+    };
+    engine.setProject(
+      createMockProject({
+        layers: [textLayer],
+        activeLayerId: null,
+        selectedLayerIds: [],
+      }),
+    );
+
+    const renderSpy = vi.spyOn(TextLayer, "render").mockImplementation(() => undefined);
+    try {
+      (engine as any).renderLayer(canvas.getContext("2d")!, textLayer);
+
+      expect(renderSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }),
+        expect.any(Map),
+        expect.any(Map),
+        undefined,
+        { skipStyles: true, forceVector: true },
+      );
+    } finally {
+      renderSpy.mockRestore();
+      engine.stopRenderLoop();
+    }
   });
 
   it("commits a floating selection into the source layer and records one history entry", async () => {

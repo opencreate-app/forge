@@ -2610,12 +2610,13 @@ export class ForgeEngine {
           anchor: { x: number; y: number };
         }
       | undefined;
+    const hasEffectiveTextTransform = layer.type === "text" && this.hasTextLayerTransform(layer);
 
     if (
       !isEditing &&
       layer.type === "text" &&
       (hasStyles || hasMask) &&
-      (layer.rotation !== undefined || layer.scaleX !== undefined || layer.scaleY !== undefined)
+      hasEffectiveTextTransform
     ) {
       bufferedTextTransform = {
         x: layer.x + layer.width / 2,
@@ -2883,8 +2884,10 @@ export class ForgeEngine {
       height = Math.max(1, maxY - minY);
       contentLayer = {
         ...layer,
-        x: -textTransform.width * textTransform.anchor.x,
-        y: -textTransform.height * textTransform.anchor.y,
+        // The buffer context already translates the text to the transform anchor. Keeping the
+        // content at the local origin avoids applying the anchor offset twice.
+        x: 0,
+        y: 0,
         width: textTransform.width,
         height: textTransform.height,
         rotation: 0,
