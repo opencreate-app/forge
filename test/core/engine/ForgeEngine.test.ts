@@ -123,6 +123,69 @@ describe("ForgeEngine", () => {
     }
   });
 
+  it("uses the native Electron clipboard when available", async () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    engine.setProject(createMockProject());
+    const writeClipboardText = vi.fn().mockResolvedValue(true);
+    const originalElectronAPI = Object.getOwnPropertyDescriptor(window, "electronAPI");
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { writeClipboardText },
+    });
+
+    try {
+      await expect(engine.copyProject()).resolves.toBe(true);
+
+      expect(writeClipboardText).toHaveBeenCalledOnce();
+      expect(JSON.parse(writeClipboardText.mock.calls[0][0])).toMatchObject({
+        id: createMockProject().id,
+      });
+    } finally {
+      if (originalElectronAPI) {
+        Object.defineProperty(window, "electronAPI", originalElectronAPI);
+      } else {
+        Reflect.deleteProperty(window, "electronAPI");
+      }
+      engine.stopRenderLoop();
+    }
+  });
+
+  it("returns false when the native Electron clipboard fails", async () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    engine.setProject(createMockProject());
+    const writeClipboardText = vi.fn().mockResolvedValue(false);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalElectronAPI = Object.getOwnPropertyDescriptor(window, "electronAPI");
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { writeClipboardText },
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    try {
+      await expect(engine.copyProject()).resolves.toBe(false);
+
+      expect(writeClipboardText).toHaveBeenCalledOnce();
+      expect(writeText).not.toHaveBeenCalled();
+    } finally {
+      if (originalElectronAPI) {
+        Object.defineProperty(window, "electronAPI", originalElectronAPI);
+      } else {
+        Reflect.deleteProperty(window, "electronAPI");
+      }
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+      engine.stopRenderLoop();
+    }
+  });
+
   it("returns empty results when there is no current project", async () => {
     const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
 

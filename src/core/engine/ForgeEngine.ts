@@ -1934,7 +1934,13 @@ export class ForgeEngine {
     if (!json) return false;
 
     try {
-      await navigator.clipboard.writeText(json);
+      const writeClipboardText = window.electronAPI?.writeClipboardText;
+      if (writeClipboardText) {
+        const copied = await writeClipboardText(json);
+        if (!copied) return false;
+      } else {
+        await navigator.clipboard.writeText(json);
+      }
       console.log("ForgeEngine project copied to clipboard.");
       return true;
     } catch (error) {

@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   renameFile: (data: { oldPath: string; newPath: string }) =>
     ipcRenderer.invoke("fs:renameFile", data),
   getAppVersion: () => ipcRenderer.invoke("app:getVersion"),
+  writeClipboardText: (text: string) => ipcRenderer.invoke("clipboard:writeText", text),
   forceRefresh: () => ipcRenderer.invoke("app:force-refresh"),
   debugCrashRenderer: () => ipcRenderer.send("debug:crash-renderer"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),

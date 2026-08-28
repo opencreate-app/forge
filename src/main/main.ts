@@ -1,7 +1,7 @@
 /**
  * Purpose: Electron main process script that handles window management, native menus, and IPC handlers for file operations and system dialogs.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "electron";
 import path from "node:path";
 import { appendFileSync, mkdirSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -734,6 +734,11 @@ app
     });
 
     ipcMain.handle("app:getVersion", () => app.getVersion());
+
+    ipcMain.handle("clipboard:writeText", (_event, text: string) => {
+      clipboard.writeText(text);
+      return true;
+    });
 
     ipcMain.handle("app:force-refresh", (event) => {
       const senderWindow = BrowserWindow.fromWebContents(event.sender);
