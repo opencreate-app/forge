@@ -147,7 +147,7 @@ function createMenu(
         { type: "separator" },
         {
           label: "Export...",
-          accelerator: "CmdOrCtrl+E",
+          accelerator: "CmdOrCtrl+Shift+E",
           enabled: hasProject,
           click: () => win?.webContents.send("menu:action", "open-export-modal"),
         },
@@ -253,6 +253,12 @@ function createMenu(
           accelerator: "CmdOrCtrl+J",
           enabled: hasProject,
           click: () => win?.webContents.send("menu:action", "duplicate-layer"),
+        },
+        {
+          label: "Merge Layer(s)",
+          accelerator: "CmdOrCtrl+E",
+          enabled: hasProject,
+          click: () => win?.webContents.send("menu:action", "merge-layers"),
         },
         { type: "separator" },
         {

@@ -18,6 +18,7 @@ export const useMenuHandler = () => {
   const redo = useProjectStore((state) => state.redo);
   const addLayer = useProjectStore((state) => state.addLayer);
   const duplicateLayer = useProjectStore((state) => state.duplicateLayer);
+  const mergeLayers = useProjectStore((state) => state.mergeLayers);
   const removeLayers = useProjectStore((state) => state.removeLayers);
   const syncSmartObject = useProjectStore((state) => state.syncSmartObject);
   const setActiveTab = useUIStore((state) => state.setActiveTab);
@@ -385,6 +386,17 @@ export const useMenuHandler = () => {
           }
           break;
 
+        case "merge-layers":
+          if (
+            activeProjectId &&
+            activeProject &&
+            !isInputFocused &&
+            activeProject.selectedLayerIds.length > 0
+          ) {
+            await mergeLayers(activeProjectId, activeProject.selectedLayerIds);
+          }
+          break;
+
         case "remove-layer":
           if (
             activeProjectId &&
@@ -486,6 +498,7 @@ export const useMenuHandler = () => {
     redo,
     addLayer,
     duplicateLayer,
+    mergeLayers,
     removeLayers,
     setActiveTab,
     showToast,

@@ -658,6 +658,219 @@ describe("projectStore", () => {
     expect(rasterizedLayer?.dataObject).toBeUndefined();
   });
 
+  it("should merge selected layers into one raster layer and support undo/redo", async () => {
+    const store = useProjectStore.getState();
+    const projectId = "merge-project";
+    store.addProject({
+      id: projectId,
+      name: "Merge Project",
+      width: 800,
+      height: 600,
+      layers: [
+        {
+          id: "bottom",
+          name: "Bottom",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 80,
+          blendMode: "source-over",
+        },
+        {
+          id: "top",
+          name: "Top",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 75,
+          fill: 100,
+          x: 50,
+          y: 60,
+          width: 120,
+          height: 90,
+          blendMode: "multiply",
+        },
+        {
+          id: "untouched",
+          name: "Untouched",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 600,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "top",
+      selectedLayerIds: ["bottom", "top"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    await store.mergeLayers(projectId, ["bottom", "top"]);
+
+    let project = useProjectStore.getState().projects[0];
+    expect(project.layers).toHaveLength(2);
+    expect(project.layers[0]).toMatchObject({
+      name: "Top",
+      type: "raster",
+      x: 10,
+      y: 20,
+      width: 160,
+      height: 130,
+    });
+    expect(project.layers[0].data).toBeTruthy();
+    expect(project.layers[1].id).toBe("untouched");
+    expect(project.selectedLayerIds).toEqual([project.layers[0].id]);
+    expect(project.undoStack.at(-1)?.description).toBe("Merge Layers");
+
+    store.undo(projectId);
+    project = useProjectStore.getState().projects[0];
+    expect(project.layers.map((layer) => layer.id)).toEqual(["bottom", "top", "untouched"]);
+
+    store.redo(projectId);
+    project = useProjectStore.getState().projects[0];
+    expect(project.layers).toHaveLength(2);
+    expect(project.layers[0].type).toBe("raster");
+    expect(project.layers[0].name).toBe("Top");
+  });
+
+  it("should merge a single selected layer with its sibling below", async () => {
+    const store = useProjectStore.getState();
+    const projectId = "merge-down-project";
+    store.addProject({
+      id: projectId,
+      name: "Merge Down Project",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "below",
+          name: "Below",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 50,
+          height: 50,
+          blendMode: "source-over",
+        },
+        {
+          id: "selected",
+          name: "Selected",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 25,
+          y: 25,
+          width: 50,
+          height: 50,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "selected",
+      selectedLayerIds: ["selected"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    await store.mergeLayers(projectId, ["selected"]);
+
+    const project = useProjectStore.getState().projects[0];
+    expect(project.layers).toHaveLength(1);
+    expect(project.layers[0]).toMatchObject({
+      name: "Selected",
+      x: 0,
+      y: 0,
+      width: 75,
+      height: 75,
+    });
+  });
+
+  it("should not merge when an involved layer is locked", async () => {
+    const store = useProjectStore.getState();
+    const projectId = "locked-merge-project";
+    store.addProject({
+      id: projectId,
+      name: "Locked Merge Project",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "locked",
+          name: "Locked",
+          type: "raster",
+          visible: true,
+          locked: true,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over",
+        },
+        {
+          id: "other",
+          name: "Other",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "other",
+      selectedLayerIds: ["locked", "other"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    await store.mergeLayers(projectId, ["locked", "other"]);
+
+    const project = useProjectStore.getState().projects[0];
+    expect(project.layers.map((layer) => layer.id)).toEqual(["locked", "other"]);
+    expect(project.undoStack).toHaveLength(1);
+    expect(project.undoStack[0].description).toBe("Initial State");
+  });
+
   it("should remove multiple layers and their descendants", () => {
     const store = useProjectStore.getState();
     const projectId = "p1";

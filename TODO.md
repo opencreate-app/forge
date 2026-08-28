@@ -92,6 +92,7 @@ TODO: OpenCreate Forge
 - [x] Mover conteúdo da seleção com MoveTool e aplicar na camada se mudar de ferramenta ou mudar a seleção
 - [x] Mover conteúdo selecionado com MoveTool + setas do teclado
 - [x] Se nas preferencias de usuário não habilitar o salvamento do histórico, garantir que o histórico da camada de texto não é salvo
+- [x] Mesclar camadas selecionadas com atalho Ctrl+E e no context menu
 
 <!-- ## Alpha 2.1 (Patch 1) -->
 

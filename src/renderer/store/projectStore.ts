@@ -60,6 +60,84 @@ const transformDataUrl = async (
   }
 };
 
+const getDescendantIds = (layers: Layer[], parentId: string): string[] => {
+  const descendants: string[] = [];
+  const children = layers.filter((layer) => layer.parentId === parentId);
+
+  children.forEach((child) => {
+    descendants.push(child.id);
+    if (child.type === "group") {
+      descendants.push(...getDescendantIds(layers, child.id));
+    }
+  });
+
+  return descendants;
+};
+
+const isAncestorLocked = (layers: Layer[], layer: Layer): boolean => {
+  if (!layer.parentId) return false;
+  const parent = layers.find((candidate) => candidate.id === layer.parentId);
+  if (!parent) return false;
+  return parent.locked || isAncestorLocked(layers, parent);
+};
+
+const isEffectivelyVisible = (layers: Layer[], layer: Layer): boolean => {
+  if (!layer.visible) return false;
+  if (!layer.parentId) return true;
+
+  const parent = layers.find((candidate) => candidate.id === layer.parentId);
+  return parent ? isEffectivelyVisible(layers, parent) : true;
+};
+
+const renderLayersToDataUrl = async (
+  project: Project,
+  layerIds: Set<string>,
+  bounds: { x: number; y: number; width: number; height: number },
+): Promise<string> => {
+  const selectedLayers = project.layers.filter((layer) => layerIds.has(layer.id));
+  const nestedLayers = selectedLayers.map((layer) => {
+    const clonedLayer = JSON.parse(JSON.stringify(layer)) as Layer;
+    if (clonedLayer.mask) {
+      clonedLayer.mask.x -= bounds.x;
+      clonedLayer.mask.y -= bounds.y;
+    }
+
+    return {
+      ...clonedLayer,
+      x: layer.x - bounds.x,
+      y: layer.y - bounds.y,
+      visible: isEffectivelyVisible(project.layers, layer),
+      parentId: layer.parentId && layerIds.has(layer.parentId) ? layer.parentId : null,
+    };
+  });
+
+  const width = Math.max(1, Math.ceil(bounds.width));
+  const height = Math.max(1, Math.ceil(bounds.height));
+  const previewCanvas = document.createElement("canvas");
+  previewCanvas.width = width;
+  previewCanvas.height = height;
+
+  const tempEngine = new ForgeEngine(previewCanvas, () => {}, { headless: true });
+  tempEngine.setProject({
+    ...project,
+    width,
+    height,
+    layers: nestedLayers,
+    activeLayerId: nestedLayers[0]?.id || null,
+    selectedLayerIds: nestedLayers[0] ? [nestedLayers[0].id] : [],
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+  });
+
+  try {
+    await tempEngine.preloadImages();
+    return await tempEngine.exportProject("image/png", 1);
+  } finally {
+    tempEngine.stopRenderLoop();
+  }
+};
+
 /**
  * Represents a formatted segment of text with specific styling.
  */
@@ -416,6 +494,8 @@ interface ProjectState {
   toggleLayerLock: (projectId: string, layerId: string) => void;
   /** Groups specified layers. */
   groupLayers: (projectId: string, layerIds: string[]) => void;
+  /** Merges specified layers into a single raster layer. */
+  mergeLayers: (projectId: string, layerIds: string[]) => Promise<void>;
   /** Ungroups a specific group. */
   ungroupLayers: (projectId: string, groupId: string) => void;
   /** Toggles group expansion in the UI. */
@@ -1333,6 +1413,118 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ),
       };
     }),
+
+  mergeLayers: async (projectId, layerIds) => {
+    const project = get().projects.find((candidate) => candidate.id === projectId);
+    if (!project || layerIds.length === 0) return;
+
+    const requestedLayers = project.layers.filter((layer) => layerIds.includes(layer.id));
+    if (requestedLayers.length === 0) return;
+
+    const mergeIds = new Set(requestedLayers.map((layer) => layer.id));
+
+    // With one selected layer, follow the standard merge-down behavior and use
+    // the previous sibling in the same group as the second layer.
+    if (requestedLayers.length === 1) {
+      const selectedLayer = requestedLayers[0];
+      const siblings = project.layers.filter(
+        (layer) => (layer.parentId || null) === (selectedLayer.parentId || null),
+      );
+      const siblingIndex = siblings.findIndex((layer) => layer.id === selectedLayer.id);
+      const layerBelow = siblingIndex > 0 ? siblings[siblingIndex - 1] : undefined;
+
+      if (!layerBelow) {
+        useUIStore.getState().showToast("No layer below to merge with.", "warning");
+        return;
+      }
+      mergeIds.add(layerBelow.id);
+    }
+
+    // Groups are flattened together with all of their descendants.
+    Array.from(mergeIds).forEach((layerId) => {
+      const layer = project.layers.find((candidate) => candidate.id === layerId);
+      if (layer?.type === "group") {
+        getDescendantIds(project.layers, layer.id).forEach((descendantId) => {
+          mergeIds.add(descendantId);
+        });
+      }
+    });
+
+    const layersToMerge = project.layers.filter((layer) => mergeIds.has(layer.id));
+    if (layersToMerge.length < 2) return;
+
+    if (layersToMerge.some((layer) => layer.locked || isAncestorLocked(project.layers, layer))) {
+      useUIStore.getState().showToast("Unlock all layers before merging.", "warning");
+      return;
+    }
+
+    const styledBounds = getCombinedStyledBounds(layersToMerge);
+    if (styledBounds.width <= 0 || styledBounds.height <= 0) {
+      useUIStore
+        .getState()
+        .showToast("The selected layers have no visible content to merge.", "warning");
+      return;
+    }
+
+    const data = await renderLayersToDataUrl(project, mergeIds, styledBounds);
+    const topLevelLayers = layersToMerge.filter(
+      (layer) => !layer.parentId || !mergeIds.has(layer.parentId),
+    );
+    const topmostLayer = topLevelLayers[topLevelLayers.length - 1] || layersToMerge.at(-1)!;
+    const commonParentId = topLevelLayers.every(
+      (layer) => (layer.parentId || null) === (topLevelLayers[0].parentId || null),
+    )
+      ? topLevelLayers[0].parentId || null
+      : null;
+    const mergedLayerId = Math.random().toString(36).substr(2, 9);
+    const mergedLayer: Layer = {
+      id: mergedLayerId,
+      name: topmostLayer.name,
+      type: "raster",
+      visible: layersToMerge.some((layer) => isEffectivelyVisible(project.layers, layer)),
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: styledBounds.x,
+      y: styledBounds.y,
+      width: Math.max(1, Math.ceil(styledBounds.width)),
+      height: Math.max(1, Math.ceil(styledBounds.height)),
+      data,
+      blendMode: "source-over",
+      parentId: commonParentId,
+    };
+
+    const historyState = createHistoryState(project);
+    const newUndoStack = [
+      ...project.undoStack,
+      { description: "Merge Layers", state: historyState },
+    ];
+    if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+
+    const targetIndex = Math.max(...layersToMerge.map((layer) => project.layers.indexOf(layer)));
+    const remainingLayers = project.layers.filter((layer) => !mergeIds.has(layer.id));
+    const adjustedTargetIndex = project.layers
+      .slice(0, targetIndex + 1)
+      .filter((layer) => !mergeIds.has(layer.id)).length;
+    const newLayers = [...remainingLayers];
+    newLayers.splice(adjustedTargetIndex, 0, mergedLayer);
+
+    set((state) => ({
+      projects: state.projects.map((currentProject) =>
+        currentProject.id === projectId
+          ? {
+              ...currentProject,
+              layers: newLayers,
+              activeLayerId: mergedLayerId,
+              selectedLayerIds: [mergedLayerId],
+              isDirty: true,
+              undoStack: newUndoStack,
+              redoStack: [],
+            }
+          : currentProject,
+      ),
+    }));
+  },
 
   groupLayers: (projectId, layerIds) =>
     set((state) => {

@@ -15,6 +15,7 @@ import {
   Image as ImageIcon,
   Lock,
   Unlock,
+  Merge,
   RotateCcw,
   // Blend,
   // CircleDashed,
@@ -89,6 +90,7 @@ const LayerList: React.FC = () => {
   const updateLayer = useProjectStore((state) => state.updateLayer);
   const pushHistory = useProjectStore((state) => state.pushHistory);
   const groupLayers = useProjectStore((state) => state.groupLayers);
+  const mergeLayers = useProjectStore((state) => state.mergeLayers);
   const ungroupLayers = useProjectStore((state) => state.ungroupLayers);
   const toggleGroupExpansion = useProjectStore((state) => state.toggleGroupExpansion);
   const convertToSmartObject = useProjectStore((state) => state.convertToSmartObject);
@@ -134,6 +136,19 @@ const LayerList: React.FC = () => {
             groupLayers(activeProjectId, project.selectedLayerIds);
           }
         }
+      } else if (isCtrl && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") {
+        if (
+          document.activeElement?.tagName === "INPUT" ||
+          document.activeElement?.tagName === "TEXTAREA" ||
+          (document.activeElement as HTMLElement)?.isContentEditable
+        ) {
+          return;
+        }
+
+        e.preventDefault();
+        if (activeProjectId && project?.selectedLayerIds.length) {
+          void mergeLayers(activeProjectId, project.selectedLayerIds);
+        }
       }
     };
 
@@ -145,6 +160,7 @@ const LayerList: React.FC = () => {
     project?.activeLayerId,
     project?.layers,
     groupLayers,
+    mergeLayers,
     ungroupLayers,
   ]);
 
@@ -616,6 +632,12 @@ const LayerList: React.FC = () => {
               label: "Duplicate Layer(s)",
               icon: Copy,
               onClick: () => duplicateLayers(project.id, project.selectedLayerIds),
+            },
+            {
+              id: "merge-layers",
+              label: "Merge Layer(s)",
+              icon: Merge,
+              onClick: () => void mergeLayers(project.id, project.selectedLayerIds),
             },
             {
               id: "toggle-layer-lock",
