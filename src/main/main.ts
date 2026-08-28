@@ -114,7 +114,7 @@ function createMenu(
   snapToLayers = true,
   updateStatus = "",
 ) {
-  const isDev = !!VITE_DEV_SERVER_URL;
+  // const isDev = !!VITE_DEV_SERVER_URL;
 
   const template: Electron.MenuItemConstructorOptions[] = [
     {
@@ -290,12 +290,14 @@ function createMenu(
     {
       label: "View",
       submenu: [
-        ...(isDev
-          ? ([
-              { role: "toggleDevTools", accelerator: "CmdOrCtrl+Alt+Shift+I" },
-              { type: "separator" },
-            ] as Electron.MenuItemConstructorOptions[])
-          : []),
+        // ...(isDev
+        //   ? ([
+        //       { role: "toggleDevTools", accelerator: "CmdOrCtrl+Alt+Shift+I" },
+        //       { type: "separator" },
+        //     ] as Electron.MenuItemConstructorOptions[])
+        //   : []),
+        { role: "toggleDevTools", accelerator: "CmdOrCtrl+Alt+Shift+I" },
+        { type: "separator" },
         {
           label: "Rulers",
           accelerator: "CmdOrCtrl+R",
