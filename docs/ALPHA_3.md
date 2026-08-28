@@ -71,4 +71,15 @@ Alpha 3 introduces new creative tools, improvements to the editing workflow, and
 - Expanded test coverage for the engine, layers, tools, stores, and React components.
 - Added tests for gradients, Rich Text, the Color Picker, session recovery, selections, zoom, and drag-and-drop.
 
+### Testing renderer recovery in DevTools
+
+When running the development build, open Electron DevTools and execute:
+
+```js
+window.__forgeDebug.crashRenderer();
+```
+
+This intentionally crashes the renderer process so Session Guard and the automatic recovery flow
+can be tested. The command is not exposed in production builds.
+
 > Note: macOS builds use ad hoc signing and are not notarized by Apple. You may need to manually allow the app to run under **System Settings → Privacy & Security → Open Anyway**.

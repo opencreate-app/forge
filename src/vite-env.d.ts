@@ -3,6 +3,12 @@
  */
 /// <reference types="vite/client" />
 
+interface Window {
+  __forgeDebug?: {
+    crashRenderer: () => void;
+  };
+}
+
 declare module "*.css" {
   const content: { [className: string]: string };
   export default content;

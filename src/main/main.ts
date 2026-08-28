@@ -743,6 +743,26 @@ app
       return true;
     });
 
+    ipcMain.on("debug:crash-renderer", (event) => {
+      if (!VITE_DEV_SERVER_URL) {
+        logStartup("Ignored renderer crash request outside development.");
+        return;
+      }
+
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      if (!senderWindow || senderWindow.isDestroyed()) {
+        logStartup("Ignored renderer crash request from an unavailable window.");
+        return;
+      }
+
+      logStartup("Forcing renderer crash from DevTools.");
+      try {
+        senderWindow.webContents.forcefullyCrashRenderer();
+      } catch (error) {
+        logStartup("Failed to force renderer crash from DevTools.", error);
+      }
+    });
+
     ipcMain.handle("shell:openExternal", (_event, url: string) => {
       // Allowlist only http/https URLs to prevent arbitrary protocol execution
       if (url.startsWith("https://") || url.startsWith("http://")) {

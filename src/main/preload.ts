@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("fs:renameFile", data),
   getAppVersion: () => ipcRenderer.invoke("app:getVersion"),
   forceRefresh: () => ipcRenderer.invoke("app:force-refresh"),
+  debugCrashRenderer: () => ipcRenderer.send("debug:crash-renderer"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
   updateMenu: (data: {
     hasProject: boolean;
