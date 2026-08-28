@@ -1901,6 +1901,48 @@ export class ForgeEngine {
   /**
    * Sets the current project and invalidates caches if necessary.
    */
+  private serializeProjectForDebug(): string | null {
+    if (!this.project) return null;
+
+    return JSON.stringify(
+      this.project,
+      (key, value: unknown) => {
+        if (
+          (key === "data" || key === "dataOriginal") &&
+          typeof value === "string" &&
+          value.startsWith("data:image/")
+        ) {
+          return `${value.split(",")[0]},...`;
+        }
+
+        return value;
+      },
+      2,
+    );
+  }
+
+  /** Returns and logs the current project as readable, image-sanitized JSON for DevTools. */
+  public getProject(): string | null {
+    const json = this.serializeProjectForDebug();
+    if (json) console.log(json);
+    return json;
+  }
+
+  /** Copies the current project as image-sanitized JSON to the system clipboard. */
+  public async copyProject(): Promise<boolean> {
+    const json = this.serializeProjectForDebug();
+    if (!json) return false;
+
+    try {
+      await navigator.clipboard.writeText(json);
+      console.log("ForgeEngine project copied to clipboard.");
+      return true;
+    } catch (error) {
+      console.error("Failed to copy ForgeEngine project to clipboard:", error);
+      return false;
+    }
+  }
+
   public setProject(project: Project) {
     const prevProjectId = this.project?.id;
     const prevLayers = this.project?.layers;

@@ -82,4 +82,13 @@ window.__forgeDebug.crashRenderer();
 This intentionally crashes the renderer process so Session Guard and the automatic recovery flow
 can be tested. The command is not exposed in production builds.
 
+For project diagnostics, the current `ForgeEngine` instance is also available in the console:
+
+```js
+ForgeEngine.getProject();
+await ForgeEngine.copyProject();
+```
+
+Both commands replace large image payloads with `...` while preserving the rest of the project data.
+
 > Note: macOS builds use ad hoc signing and are not notarized by Apple. You may need to manually allow the app to run under **System Settings → Privacy & Security → Open Anyway**.

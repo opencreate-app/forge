@@ -52,6 +52,86 @@ describe("ForgeEngine", () => {
     expect(engine.sampleColorAtScreen(500, 500)).toBeNull();
   });
 
+  it("returns the current project with image payloads sanitized for DevTools", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const project = createMockProject({
+      layers: [
+        {
+          ...createMockProject().layers[0],
+          data: "data:image/png;base64,full-raster-payload",
+          dataOriginal: "data:image/jpeg;base64,full-original-payload",
+          mask: {
+            data: "data:image/png;base64,full-mask-payload",
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+            enabled: true,
+            linked: true,
+          },
+        },
+      ],
+    });
+    engine.setProject(project);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      const json = engine.getProject();
+      const serialized = JSON.parse(json!);
+
+      expect(serialized.layers[0]).toMatchObject({
+        data: "data:image/png;base64,...",
+        dataOriginal: "data:image/jpeg;base64,...",
+        mask: { data: "data:image/png;base64,..." },
+      });
+      expect(serialized.id).toBe(project.id);
+      expect(serialized.layers[0].name).toBe(project.layers[0].name);
+      expect(logSpy).toHaveBeenCalledWith(json);
+    } finally {
+      logSpy.mockRestore();
+      engine.stopRenderLoop();
+    }
+  });
+
+  it("copies the sanitized project JSON to the clipboard", async () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const project = createMockProject({
+      layers: [{ ...createMockProject().layers[0], data: "data:image/png;base64,payload" }],
+    });
+    engine.setProject(project);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    try {
+      await expect(engine.copyProject()).resolves.toBe(true);
+
+      expect(writeText).toHaveBeenCalledOnce();
+      expect(JSON.parse(writeText.mock.calls[0][0])).toMatchObject({
+        layers: [{ data: "data:image/png;base64,..." }],
+      });
+    } finally {
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+      engine.stopRenderLoop();
+    }
+  });
+
+  it("returns empty results when there is no current project", async () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+
+    expect(engine.getProject()).toBeNull();
+    await expect(engine.copyProject()).resolves.toBe(false);
+
+    engine.stopRenderLoop();
+  });
+
   it("switches from MoveTool to text editing on a text layer double click", () => {
     const textLayer = {
       id: "text-layer",
