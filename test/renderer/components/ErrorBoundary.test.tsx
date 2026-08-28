@@ -79,4 +79,43 @@ describe("ErrorBoundary", () => {
     expect(getForceRefreshMock()).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Recarregar app" })).toBeInTheDocument();
   });
+
+  it("recovers from uncaught window errors outside the React render lifecycle", () => {
+    render(
+      <ErrorBoundary>
+        <div>Healthy content</div>
+      </ErrorBoundary>,
+    );
+
+    const error = new Error("canvas render failure");
+    act(() => {
+      window.dispatchEvent(new ErrorEvent("error", { error, message: error.message }));
+    });
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("canvas render failure")).toBeInTheDocument();
+    expect(localStorage.getItem(SESSION_GUARD_STORAGE_KEY)).not.toBeNull();
+
+    act(() => vi.runOnlyPendingTimers());
+    expect(getForceRefreshMock()).toHaveBeenCalledOnce();
+  });
+
+  it("recovers from unhandled promise rejections", () => {
+    render(
+      <ErrorBoundary>
+        <div>Healthy content</div>
+      </ErrorBoundary>,
+    );
+
+    const error = new Error("async renderer failure");
+    const rejectionEvent = new Event("unhandledrejection", { cancelable: true });
+    Object.defineProperty(rejectionEvent, "reason", { value: error });
+
+    act(() => {
+      window.dispatchEvent(rejectionEvent);
+    });
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("async renderer failure")).toBeInTheDocument();
+  });
 });

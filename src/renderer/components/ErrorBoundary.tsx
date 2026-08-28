@@ -2,7 +2,7 @@
  * Purpose: Recover the renderer after an uncaught React render error without losing the current session.
  */
 import React from "react";
-import { forceRefreshRenderer, prepareRendererRecovery } from "@utils/rendererRecovery";
+import { forceRefreshRenderer, handleRendererFailure } from "@utils/rendererRecovery";
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -15,7 +15,27 @@ interface ErrorBoundaryState {
 /** Catches render errors, persists the session, and refreshes the Electron renderer once. */
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null };
-  private refreshTimer: number | null = null;
+
+  private handleGlobalError = (event: ErrorEvent): void => {
+    event.preventDefault();
+    handleRendererFailure(event.error || event.message, "window.error");
+  };
+
+  private handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
+    event.preventDefault();
+    handleRendererFailure(event.reason, "unhandledrejection");
+  };
+
+  private handleRendererFailure = (event: Event): void => {
+    const error = (event as CustomEvent<{ error?: unknown }>).detail?.error;
+    if (error instanceof Error) this.setState({ error });
+  };
+
+  componentDidMount(): void {
+    window.addEventListener("error", this.handleGlobalError);
+    window.addEventListener("unhandledrejection", this.handleUnhandledRejection);
+    window.addEventListener("forge:renderer-failure", this.handleRendererFailure);
+  }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error };
@@ -23,16 +43,13 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
     console.error("[RendererRecovery] React render error:", error, errorInfo);
-
-    if (prepareRendererRecovery(error)) {
-      this.refreshTimer = window.setTimeout(() => {
-        forceRefreshRenderer();
-      }, 0);
-    }
+    handleRendererFailure(error, "react-render");
   }
 
   componentWillUnmount(): void {
-    if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
+    window.removeEventListener("error", this.handleGlobalError);
+    window.removeEventListener("unhandledrejection", this.handleUnhandledRejection);
+    window.removeEventListener("forge:renderer-failure", this.handleRendererFailure);
   }
 
   render(): React.ReactNode {

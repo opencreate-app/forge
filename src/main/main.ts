@@ -62,6 +62,17 @@ let win: BrowserWindow | null;
 let splash: BrowserWindow | null;
 let safeQuitInProgress = false;
 let safeQuitRequestInFlight = false;
+const RENDERER_RECOVERY_STABILIZATION_MS = 5_000;
+let rendererRecoveryAttempts = 0;
+let rendererRecoveryResetTimer: NodeJS.Timeout | null = null;
+let rendererRecoveryDialogOpen = false;
+let rendererRecoveryReloading = false;
+let rendererRecoveryCrashExpected = false;
+let pendingRendererRecovery: {
+  source: "render-process-gone" | "unresponsive";
+  reason?: string;
+  exitCode?: number;
+} | null = null;
 let menuState = {
   hasProject: false,
   showRulers: true,
@@ -70,6 +81,105 @@ let menuState = {
   snapToLayers: true,
   updateStatus: "",
 };
+
+function clearRendererRecoveryResetTimer() {
+  if (rendererRecoveryResetTimer) {
+    clearTimeout(rendererRecoveryResetTimer);
+    rendererRecoveryResetTimer = null;
+  }
+}
+
+function markRendererStable() {
+  rendererRecoveryReloading = false;
+  clearRendererRecoveryResetTimer();
+  rendererRecoveryResetTimer = setTimeout(() => {
+    rendererRecoveryAttempts = 0;
+    rendererRecoveryResetTimer = null;
+  }, RENDERER_RECOVERY_STABILIZATION_MS);
+}
+
+function describeRendererFailure(
+  source: "render-process-gone" | "unresponsive",
+  details?: { reason?: string; exitCode?: number },
+) {
+  return `${source} (reason: ${details?.reason || "unknown"}, exit code: ${details?.exitCode ?? "unknown"})`;
+}
+
+function showRendererRecoveryDialog(window: BrowserWindow, failureDescription: string) {
+  if (rendererRecoveryDialogOpen || window.isDestroyed()) return;
+
+  rendererRecoveryDialogOpen = true;
+  void dialog
+    .showMessageBox(window, {
+      type: "error",
+      title: "OpenCreate Forge parou de responder",
+      message: "O renderer do aplicativo falhou novamente.",
+      detail: `${failureDescription}\n\nA sessão foi salva no último snapshot disponível. Você pode tentar recarregar o app ou sair.`,
+      buttons: ["Recarregar app", "Sair"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    })
+    .then(({ response }) => {
+      rendererRecoveryDialogOpen = false;
+      if (response !== 0 || window.isDestroyed()) return;
+
+      rendererRecoveryAttempts = 1;
+      pendingRendererRecovery = {
+        source: "render-process-gone",
+        reason: "manual-recovery",
+      };
+      rendererRecoveryReloading = true;
+      window.webContents.reloadIgnoringCache();
+    })
+    .catch((error) => {
+      rendererRecoveryDialogOpen = false;
+      logStartup("Failed to show renderer recovery dialog.", error);
+    });
+}
+
+function recoverRenderer(
+  window: BrowserWindow,
+  source: "render-process-gone" | "unresponsive",
+  details?: { reason?: string; exitCode?: number },
+) {
+  const failureDescription = describeRendererFailure(source, details);
+  logStartup(`Renderer recovery requested: ${failureDescription}.`);
+
+  if (safeQuitInProgress || window.isDestroyed()) return;
+
+  if (rendererRecoveryReloading) {
+    rendererRecoveryReloading = false;
+    logStartup("Renderer exited while a recovery reload was already in progress.");
+    return;
+  }
+
+  if (rendererRecoveryAttempts >= 1) {
+    showRendererRecoveryDialog(window, failureDescription);
+    return;
+  }
+
+  rendererRecoveryAttempts += 1;
+  pendingRendererRecovery = {
+    source,
+    reason: details?.reason,
+    exitCode: details?.exitCode,
+  };
+  rendererRecoveryReloading = true;
+
+  try {
+    if (source === "unresponsive") {
+      rendererRecoveryCrashExpected = true;
+      window.webContents.forcefullyCrashRenderer();
+    }
+    window.webContents.reloadIgnoringCache();
+  } catch (error) {
+    rendererRecoveryCrashExpected = false;
+    rendererRecoveryReloading = false;
+    logStartup("Failed to reload renderer after failure.", error);
+    showRendererRecoveryDialog(window, failureDescription);
+  }
+}
 
 app.commandLine.appendSwitch("ignore-gpu-blacklist"); // Ensures GPU usage on more machines
 app.commandLine.appendSwitch("enable-gpu-rasterization"); // Improves rendering of vector shapes and drawings
@@ -460,6 +570,11 @@ function createWindow() {
   // Test active push message to Renderer-process.
   win.webContents.on("did-finish-load", () => {
     logStartup("Renderer finished loading.");
+    if (pendingRendererRecovery) {
+      win?.webContents.send("app:renderer-recovered", pendingRendererRecovery);
+      pendingRendererRecovery = null;
+    }
+    markRendererStable();
     win?.webContents.send("main-process-message", new Date().toLocaleString());
 
     // Auto-update check (with delay to avoid competing with splash/load)
@@ -478,7 +593,27 @@ function createWindow() {
   );
 
   win.webContents.on("render-process-gone", (_event, details) => {
-    logStartup(`Renderer process exited (${details.reason}, exit code ${details.exitCode}).`);
+    const failureDescription = describeRendererFailure("render-process-gone", details);
+    logStartup(`Renderer process exited: ${failureDescription}.`);
+
+    if (rendererRecoveryCrashExpected) {
+      rendererRecoveryCrashExpected = false;
+      rendererRecoveryReloading = false;
+      return;
+    }
+
+    rendererRecoveryReloading = false;
+
+    recoverRenderer(win!, "render-process-gone", details);
+  });
+
+  win.webContents.on("unresponsive", () => {
+    recoverRenderer(win!, "unresponsive");
+  });
+
+  win.webContents.on("responsive", () => {
+    logStartup("Renderer became responsive again.");
+    markRendererStable();
   });
 
   if (VITE_DEV_SERVER_URL) {

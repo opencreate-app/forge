@@ -15,6 +15,7 @@ import {
   prepareRendererRecovery,
   restoreSessionSnapshot,
   RENDERER_RECOVERY_STORAGE_KEY,
+  SESSION_GUARD_DEBOUNCE_MS,
   saveSessionSnapshot,
   SESSION_GUARD_STORAGE_KEY,
 } from "@/renderer/utils/sessionGuard";
@@ -123,6 +124,28 @@ describe("Session Guard", () => {
       act(() => vi.advanceTimersByTime(30_000));
 
       expect(loadSessionSnapshot()?.projects[0]?.name).toBe("After interval");
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("writes a recent snapshot after project changes before the periodic interval", () => {
+    vi.useFakeTimers();
+    try {
+      const project = createProject({ name: "Before change" });
+      useProjectStore.setState({ projects: [project], activeProjectId: project.id });
+
+      const { unmount } = renderHook(() => useSessionGuard());
+
+      useProjectStore.setState({
+        projects: [{ ...project, name: "After change" }],
+        activeProjectId: project.id,
+      });
+
+      expect(loadSessionSnapshot()?.projects[0]?.name).toBe("Before change");
+      act(() => vi.advanceTimersByTime(SESSION_GUARD_DEBOUNCE_MS));
+      expect(loadSessionSnapshot()?.projects[0]?.name).toBe("After change");
       unmount();
     } finally {
       vi.useRealTimers();

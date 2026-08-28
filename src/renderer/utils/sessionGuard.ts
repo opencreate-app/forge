@@ -8,6 +8,7 @@ import { useUIStore } from "@store/uiStore";
 export const SESSION_GUARD_STORAGE_KEY = "forge-session-guard";
 export const SESSION_GUARD_VERSION = 1;
 export const SESSION_GUARD_INTERVAL_MS = 30_000;
+export const SESSION_GUARD_DEBOUNCE_MS = 1_000;
 export const RENDERER_RECOVERY_STORAGE_KEY = "forge-renderer-recovery";
 export const RENDERER_RECOVERY_VERSION = 1;
 const RENDERER_RECOVERY_STABILIZATION_MS = 5_000;

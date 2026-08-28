@@ -3,6 +3,24 @@
  */
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
+interface RendererRecoveryDetails {
+  source: "render-process-gone" | "unresponsive";
+  reason?: string;
+  exitCode?: number;
+}
+
+const rendererRecoveryListeners = new Set<(details: RendererRecoveryDetails) => void>();
+let pendingRendererRecovery: RendererRecoveryDetails | null = null;
+
+ipcRenderer.on("app:renderer-recovered", (_event, details: RendererRecoveryDetails) => {
+  if (rendererRecoveryListeners.size === 0) {
+    pendingRendererRecovery = details;
+    return;
+  }
+
+  rendererRecoveryListeners.forEach((listener) => listener(details));
+});
+
 contextBridge.exposeInMainWorld("electronAPI", {
   openFile: () => ipcRenderer.invoke("dialog:openFile"),
   saveFile: (data: any) => ipcRenderer.invoke("dialog:saveFile", data),
@@ -18,6 +36,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     const listener = () => callback();
     ipcRenderer.on("app:request-safe-quit", listener);
     return () => ipcRenderer.removeListener("app:request-safe-quit", listener);
+  },
+  onRendererRecovered: (callback: (details: RendererRecoveryDetails) => void) => {
+    rendererRecoveryListeners.add(callback);
+    if (pendingRendererRecovery) {
+      const details = pendingRendererRecovery;
+      pendingRendererRecovery = null;
+      callback(details);
+    }
+    return () => rendererRecoveryListeners.delete(callback);
   },
   openProject: () => ipcRenderer.invoke("dialog:openProject"),
   openProjectFromPath: (filePath: string) => ipcRenderer.invoke("fs:openProjectFromPath", filePath),
