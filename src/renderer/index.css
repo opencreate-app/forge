@@ -153,6 +153,26 @@ textarea {
   background: #555;
 }
 
+.project-tabs-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-behavior: smooth;
+  scroll-snap-type: x proximity;
+}
+
+.project-tabs-scrollbar.is-wheel-scrolling {
+  scroll-behavior: auto;
+  scroll-snap-type: none;
+}
+
+.project-tabs-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.project-tab {
+  scroll-snap-align: start;
+}
+
 #root {
   width: 100%;
   height: 100vh;

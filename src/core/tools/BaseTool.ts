@@ -1,10 +1,21 @@
 /**
  * Purpose: Abstract base class and context definition for all tools, defining the interface for mouse and keyboard events and rendering.
  */
-import { Project, Layer, HistoryEntry } from "@/renderer/store/projectStore";
+import { Project, Layer, HistoryEntry, HistoryState } from "@/renderer/store/projectStore";
 import { ToolSettings, ToolId } from "@/renderer/store/toolStore";
 
 export type { ToolId };
+
+/** Returns the axis closest to the direction between two points. */
+export function getAxisLock(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): "horizontal" | "vertical" {
+  const deltaX = Math.abs(end.x - start.x);
+  const deltaY = Math.abs(end.y - start.y);
+
+  return deltaX >= deltaY ? "horizontal" : "vertical";
+}
 
 /**
  * Provides the execution environment and API for tools to interact with the project and engine.
@@ -22,8 +33,20 @@ export interface ToolContext {
   canvas: HTMLCanvasElement;
   /** The 2D rendering context for the main canvas. */
   ctx: CanvasRenderingContext2D;
+  /** The logical viewport width in CSS pixels. */
+  viewportWidth: number;
+  /** The logical viewport height in CSS pixels. */
+  viewportHeight: number;
+  /** The device pixel ratio used by the main viewport canvas. */
+  devicePixelRatio: number;
+  /** Applies a project viewport transform while accounting for device pixel ratio. */
+  setViewportTransform: (zoom: number, panX: number, panY: number) => void;
+  /** Updates the viewport pan/zoom without creating a document history entry. */
+  updateViewport: (zoom: number, panX: number, panY: number) => void;
   /** Updates the project state. */
   updateProject: (updates: Partial<Project>) => void;
+  /** Duplicates selected layers and returns the IDs of the new top-level layers. */
+  duplicateLayers: (layerIds: string[], skipHistory?: boolean) => string[];
   /** Pushes a new entry to the undo history. */
   pushHistory: (description: string) => void;
   /** Adds a raw history entry. */
@@ -31,7 +54,9 @@ export interface ToolContext {
   /** Invalidates the rendered cache for a layer. */
   invalidateCache: (layerId: string) => void;
   /** Manually sets the cached canvas for a layer. */
-  setLayerCache: (layerId: string, canvas: HTMLCanvasElement) => void;
+  setLayerCache: (layerId: string, canvas: HTMLCanvasElement, dataUrl?: string) => void;
+  /** Manually sets the cached canvas for a layer mask. */
+  setMaskCache: (layerId: string, canvas: HTMLCanvasElement, dataUrl: string) => void;
   /** Retrieves the cached canvas for a layer. */
   getLayerCanvas: (layerId: string) => { canvas: HTMLCanvasElement; ready: boolean } | null;
   /** Ensures a layer has a cached canvas, creating it if necessary. */
@@ -42,6 +67,13 @@ export interface ToolContext {
   foregroundColor: string;
   /** Current background color for painting tools. */
   backgroundColor: string;
+  /** Samples a rendered canvas pixel using viewport-local CSS coordinates. */
+  sampleColorAtScreen: (
+    x: number,
+    y: number,
+  ) => { r: number; g: number; b: number; a: number } | null;
+  /** Updates the global foreground color. */
+  setForegroundColor: (color: string) => void;
   /** Returns the canvas and context used for the selection mask. */
   getSelectionCanvas: () => {
     canvas: HTMLCanvasElement;
@@ -52,11 +84,13 @@ export interface ToolContext {
   /** Sets the last used selection mask dataURL. */
   setLastSelectionMask: (mask: string | undefined) => void;
   /** Lifts the selection from a layer into a floating state. */
-  floatSelection: (layerId: string) => Promise<boolean>;
+  floatSelection: (layerId: string, historyState?: HistoryState) => Promise<boolean>;
   /** Merges a floating selection back into its target layer. */
-  commitFloatingLayer: () => Promise<void>;
+  commitFloatingLayer: () => Promise<boolean>;
   /** Clears the current selection. */
   clearSelection: () => Promise<void>;
+  /** Deletes the selected pixels/content from the active layer. */
+  deleteSelectionContents: () => Promise<boolean>;
   /** Notifies the UI that the tool is currently performing an operation. */
   setInteracting: (isInteracting: boolean) => void;
   /** Changes the active tool. */
@@ -92,6 +126,10 @@ export abstract class BaseTool {
   onMouseMove(_e: MouseEvent, _context: ToolContext): void {}
   /** Called when the mouse button is released. */
   onMouseUp(_e: MouseEvent, _context: ToolContext): void {}
+  /** Called when the context menu is requested. Returns true when consumed by the tool. */
+  onContextMenu(_e: MouseEvent, _context: ToolContext): boolean {
+    return false;
+  }
 
   /** Called when the tool becomes the active tool. */
   onActivate(_context: ToolContext): void {}
@@ -102,7 +140,7 @@ export abstract class BaseTool {
    * Called when a key is pressed.
    * @returns true if the tool consumed the event, false otherwise.
    */
-  onKeyDown(_e: KeyboardEvent, _context: ToolContext): boolean {
+  onKeyDown(_e: KeyboardEvent, _context: ToolContext): boolean | Promise<boolean> {
     return false;
   }
 

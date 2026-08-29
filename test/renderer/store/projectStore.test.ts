@@ -1,10 +1,263 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useProjectStore, Project } from "@/renderer/store/projectStore";
+import { getSerializableProject, useProjectStore, Project } from "@/renderer/store/projectStore";
+import { usePreferencesStore } from "@/renderer/store/preferencesStore";
 
 describe("projectStore", () => {
   beforeEach(() => {
     const { projects } = useProjectStore.getState();
     projects.forEach((p) => useProjectStore.getState().removeProject(p.id));
+    usePreferencesStore.setState({ saveHistory: false, historyLimit: 50 });
+  });
+
+  it("does not serialize text history when project history saving is disabled", () => {
+    const textUndoStack = [{ text: "before", textSpans: [{ text: "before" }] }];
+    const textRedoStack = [{ text: "after", textSpans: [{ text: "after" }] }];
+    const project: Project = {
+      id: "text-history-disabled",
+      name: "Text History",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "text-layer",
+          name: "Text",
+          type: "text",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 20,
+          blendMode: "source-over",
+          text: "current",
+          textUndoStack,
+          textRedoStack,
+        },
+      ],
+      guides: [],
+      activeLayerId: "text-layer",
+      selectedLayerIds: ["text-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [],
+      redoStack: [],
+    };
+
+    const serializable = getSerializableProject(project);
+
+    expect(serializable.layers[0]).not.toHaveProperty("textUndoStack");
+    expect(serializable.layers[0]).not.toHaveProperty("textRedoStack");
+    expect(project.layers[0]).toMatchObject({ textUndoStack, textRedoStack });
+  });
+
+  it("does not serialize text history inside nested Smart Objects", () => {
+    const nestedTextLayer = {
+      id: "nested-text",
+      name: "Nested Text",
+      type: "text" as const,
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 20,
+      blendMode: "source-over" as GlobalCompositeOperation,
+      text: "nested",
+      textUndoStack: [{ text: "old" }],
+      textRedoStack: [{ text: "new" }],
+    };
+    const nestedProject: Project = {
+      id: "nested-project",
+      name: "Nested",
+      width: 100,
+      height: 100,
+      layers: [nestedTextLayer],
+      guides: [],
+      activeLayerId: nestedTextLayer.id,
+      selectedLayerIds: [nestedTextLayer.id],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [
+        {
+          description: "Nested change",
+          state: {
+            width: 100,
+            height: 100,
+            layers: [],
+            guides: [],
+            activeLayerId: null,
+            selectedLayerIds: [],
+            selection: { hasSelection: false, bounds: null },
+          },
+        },
+      ],
+      redoStack: [],
+    };
+    const project = {
+      id: "smart-object-history-disabled",
+      name: "Smart Object",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "smart-layer",
+          name: "Smart Object",
+          type: "smart_object" as const,
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over" as GlobalCompositeOperation,
+          dataObject: nestedProject,
+        },
+      ],
+      guides: [],
+      activeLayerId: "smart-layer",
+      selectedLayerIds: ["smart-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [],
+      redoStack: [],
+    } satisfies Project;
+
+    const serializable = getSerializableProject(project);
+    const serializedNestedProject = serializable.layers[0].dataObject;
+
+    expect(serializedNestedProject.undoStack).toEqual([]);
+    expect(serializedNestedProject.layers[0]).not.toHaveProperty("textUndoStack");
+    expect(serializedNestedProject.layers[0]).not.toHaveProperty("textRedoStack");
+    expect(nestedProject.layers[0]).toHaveProperty("textUndoStack");
+  });
+
+  it("preserves text history when project history saving is enabled", () => {
+    usePreferencesStore.setState({ saveHistory: true });
+    const textUndoStack = [{ text: "before" }];
+    const project = {
+      id: "text-history-enabled",
+      name: "Text History",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "text-layer",
+          name: "Text",
+          type: "text" as const,
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 20,
+          blendMode: "source-over" as GlobalCompositeOperation,
+          text: "current",
+          textUndoStack,
+        },
+      ],
+      guides: [],
+      activeLayerId: "text-layer",
+      selectedLayerIds: ["text-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [],
+      redoStack: [],
+    } satisfies Project;
+
+    const serializable = getSerializableProject(project);
+
+    expect(serializable.layers[0].textUndoStack).toEqual(textUndoStack);
+  });
+
+  it("applies the history limit to nested projects when history saving is enabled", () => {
+    usePreferencesStore.setState({ saveHistory: true, historyLimit: 1 });
+    const historyState = {
+      width: 100,
+      height: 100,
+      layers: [],
+      guides: [],
+      activeLayerId: null,
+      selectedLayerIds: [],
+      selection: { hasSelection: false, bounds: null },
+    };
+    const nestedProject: Project = {
+      id: "limited-nested-project",
+      name: "Nested",
+      width: 100,
+      height: 100,
+      layers: [],
+      guides: [],
+      activeLayerId: null,
+      selectedLayerIds: [],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [
+        { description: "First", state: historyState },
+        { description: "Second", state: historyState },
+      ],
+      redoStack: [],
+    };
+    const project = {
+      id: "limited-smart-object",
+      name: "Smart Object",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "smart-layer",
+          name: "Smart Object",
+          type: "smart_object" as const,
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over" as GlobalCompositeOperation,
+          dataObject: nestedProject,
+        },
+      ],
+      guides: [],
+      activeLayerId: "smart-layer",
+      selectedLayerIds: ["smart-layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: true,
+      undoStack: [],
+      redoStack: [],
+    } satisfies Project;
+
+    const serializable = getSerializableProject(project);
+
+    expect(serializable.layers[0].dataObject.undoStack).toHaveLength(1);
+    expect(serializable.layers[0].dataObject.undoStack[0].description).toBe("Second");
   });
 
   it("should add a new project", () => {
@@ -26,8 +279,88 @@ describe("projectStore", () => {
       undoStack: [],
       redoStack: [],
     };
-    store.addProject(newProject);
+    expect(store.addProject(newProject)).toBe("p1");
+    expect(store.addProject({ ...newProject, name: "Duplicate" })).toBe("p1");
     expect(useProjectStore.getState().projects).toHaveLength(1);
+  });
+
+  it("should import cloned layers into another project while preserving group hierarchy", () => {
+    const sourceProject: Project = {
+      id: "source",
+      name: "Source",
+      width: 800,
+      height: 600,
+      layers: [
+        {
+          id: "group-1",
+          name: "Group",
+          type: "group",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over",
+        },
+        {
+          id: "layer-1",
+          name: "Artwork",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 100,
+          data: "data:image/png;base64,artwork",
+          parentId: "group-1",
+          blendMode: "source-over",
+        },
+      ],
+      guides: [],
+      activeLayerId: "layer-1",
+      selectedLayerIds: ["group-1", "layer-1"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      undoStack: [],
+      redoStack: [],
+    };
+    const targetProject: Project = {
+      ...sourceProject,
+      id: "target",
+      name: "Target",
+      layers: [],
+      activeLayerId: null,
+      selectedLayerIds: [],
+    };
+
+    const store = useProjectStore.getState();
+    store.addProject(sourceProject);
+    store.addProject(targetProject);
+    store.importLayersFromProject("source", "target", ["group-1", "layer-1"]);
+
+    const source = useProjectStore.getState().projects.find((project) => project.id === "source")!;
+    const target = useProjectStore.getState().projects.find((project) => project.id === "target")!;
+    const importedGroup = target.layers.find((layer) => layer.type === "group")!;
+    const importedLayer = target.layers.find((layer) => layer.type === "raster")!;
+
+    expect(source.layers.map((layer) => layer.id)).toEqual(["group-1", "layer-1"]);
+    expect(importedGroup.id).not.toBe("group-1");
+    expect(importedLayer.id).not.toBe("layer-1");
+    expect(importedLayer.parentId).toBe(importedGroup.id);
+    expect(importedLayer.data).toBe("data:image/png;base64,artwork");
+    expect(target.selectedLayerIds).toEqual(target.layers.map((layer) => layer.id));
+    expect(target.activeLayerId).toBe(importedLayer.id);
+    expect(target.isDirty).toBe(true);
+    expect(target.undoStack.at(-1)?.description).toBe("Import Layers");
   });
 
   it("should insert a new layer above the active layer", () => {
@@ -325,6 +658,219 @@ describe("projectStore", () => {
     expect(rasterizedLayer?.dataObject).toBeUndefined();
   });
 
+  it("should merge selected layers into one raster layer and support undo/redo", async () => {
+    const store = useProjectStore.getState();
+    const projectId = "merge-project";
+    store.addProject({
+      id: projectId,
+      name: "Merge Project",
+      width: 800,
+      height: 600,
+      layers: [
+        {
+          id: "bottom",
+          name: "Bottom",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 80,
+          blendMode: "source-over",
+        },
+        {
+          id: "top",
+          name: "Top",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 75,
+          fill: 100,
+          x: 50,
+          y: 60,
+          width: 120,
+          height: 90,
+          blendMode: "multiply",
+        },
+        {
+          id: "untouched",
+          name: "Untouched",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 600,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "top",
+      selectedLayerIds: ["bottom", "top"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    await store.mergeLayers(projectId, ["bottom", "top"]);
+
+    let project = useProjectStore.getState().projects[0];
+    expect(project.layers).toHaveLength(2);
+    expect(project.layers[0]).toMatchObject({
+      name: "Top",
+      type: "raster",
+      x: 10,
+      y: 20,
+      width: 160,
+      height: 130,
+    });
+    expect(project.layers[0].data).toBeTruthy();
+    expect(project.layers[1].id).toBe("untouched");
+    expect(project.selectedLayerIds).toEqual([project.layers[0].id]);
+    expect(project.undoStack.at(-1)?.description).toBe("Merge Layers");
+
+    store.undo(projectId);
+    project = useProjectStore.getState().projects[0];
+    expect(project.layers.map((layer) => layer.id)).toEqual(["bottom", "top", "untouched"]);
+
+    store.redo(projectId);
+    project = useProjectStore.getState().projects[0];
+    expect(project.layers).toHaveLength(2);
+    expect(project.layers[0].type).toBe("raster");
+    expect(project.layers[0].name).toBe("Top");
+  });
+
+  it("should merge a single selected layer with its sibling below", async () => {
+    const store = useProjectStore.getState();
+    const projectId = "merge-down-project";
+    store.addProject({
+      id: projectId,
+      name: "Merge Down Project",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "below",
+          name: "Below",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 50,
+          height: 50,
+          blendMode: "source-over",
+        },
+        {
+          id: "selected",
+          name: "Selected",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 25,
+          y: 25,
+          width: 50,
+          height: 50,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "selected",
+      selectedLayerIds: ["selected"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    await store.mergeLayers(projectId, ["selected"]);
+
+    const project = useProjectStore.getState().projects[0];
+    expect(project.layers).toHaveLength(1);
+    expect(project.layers[0]).toMatchObject({
+      name: "Selected",
+      x: 0,
+      y: 0,
+      width: 75,
+      height: 75,
+    });
+  });
+
+  it("should not merge when an involved layer is locked", async () => {
+    const store = useProjectStore.getState();
+    const projectId = "locked-merge-project";
+    store.addProject({
+      id: projectId,
+      name: "Locked Merge Project",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "locked",
+          name: "Locked",
+          type: "raster",
+          visible: true,
+          locked: true,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over",
+        },
+        {
+          id: "other",
+          name: "Other",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "other",
+      selectedLayerIds: ["locked", "other"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    await store.mergeLayers(projectId, ["locked", "other"]);
+
+    const project = useProjectStore.getState().projects[0];
+    expect(project.layers.map((layer) => layer.id)).toEqual(["locked", "other"]);
+    expect(project.undoStack).toHaveLength(1);
+    expect(project.undoStack[0].description).toBe("Initial State");
+  });
+
   it("should remove multiple layers and their descendants", () => {
     const store = useProjectStore.getState();
     const projectId = "p1";
@@ -497,6 +1043,54 @@ describe("projectStore", () => {
     expect(l2Copy).toBeDefined();
 
     expect(project.selectedLayerIds).toEqual([g1Copy?.id, l2Copy?.id]);
+  });
+
+  it("should duplicate layers without adding an intermediate history entry", () => {
+    const store = useProjectStore.getState();
+    const projectId = "p-no-duplicate-history";
+    store.addProject({
+      id: projectId,
+      name: "Test Project",
+      width: 100,
+      height: 100,
+      layers: [
+        {
+          id: "layer",
+          name: "Layer",
+          type: "raster",
+          visible: true,
+          locked: false,
+          opacity: 100,
+          fill: 100,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          blendMode: "source-over",
+        },
+      ],
+      activeLayerId: "layer",
+      selectedLayerIds: ["layer"],
+      selection: { hasSelection: false, bounds: null },
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      isDirty: false,
+      guides: [],
+      undoStack: [],
+      redoStack: [],
+    });
+
+    const initialHistoryLength = useProjectStore
+      .getState()
+      .projects.find((p) => p.id === projectId)!.undoStack.length;
+    const createdIds = store.duplicateLayers(projectId, ["layer"], true);
+    const project = useProjectStore.getState().projects.find((p) => p.id === projectId)!;
+
+    expect(createdIds).toHaveLength(1);
+    expect(project.layers).toHaveLength(2);
+    expect(project.undoStack).toHaveLength(initialHistoryLength);
+    expect(project.selectedLayerIds).toEqual(createdIds);
   });
 
   it("should resize project, scale layer coordinates and dimensions, scale guides, and keep history", async () => {

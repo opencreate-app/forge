@@ -19,6 +19,7 @@ interface BaseModalProps {
   resizable?: boolean;
   centered?: boolean;
   closeOnOutsideClick?: boolean;
+  // backdropClassName?: string;
 }
 
 const BaseModal: React.FC<BaseModalProps> = ({
@@ -35,12 +36,16 @@ const BaseModal: React.FC<BaseModalProps> = ({
   resizable = false,
   centered = true,
   closeOnOutsideClick = true,
+  // backdropClassName,
 }) => {
   const [isRendered, setIsRendered] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
 
   const setModalOpen = useUIStore((state) => state.setModalOpen);
+  const focusModal = useUIStore((state) => state.focusModal);
+  const modalOrder = useUIStore((state) => state.modalOrder);
+  const activeModalId = useUIStore((state) => state.activeModalId);
   const modalSettings = useUIStore((state) => state.modalSettings[id]);
   const setModalSettings = useUIStore((state) => state.setModalSettings);
 
@@ -247,6 +252,18 @@ const BaseModal: React.FC<BaseModalProps> = ({
         : `${dragOffset.y}px`
       : undefined,
     position: draggable ? "absolute" : "relative",
+    boxShadow:
+      activeModalId === id
+        ? "0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent)"
+        : "none",
+  };
+
+  const modalStackIndex = modalOrder.indexOf(id);
+  const modalZIndex = 1000 + Math.max(0, modalStackIndex);
+  const isBottomModal = modalStackIndex === 0;
+
+  const handleModalMouseDown = () => {
+    focusModal(id);
   };
 
   // If not centered, we use absolute positioning based on the offset
@@ -256,10 +273,10 @@ const BaseModal: React.FC<BaseModalProps> = ({
 
   return (
     <div
-      className={`fixed inset-0 ${closeOnOutsideClick ? "bg-black/30" : "pointer-events-none"} z-[1000] transition-opacity duration-300 ease-in-out ${containerClass} ${
+      className={`fixed inset-0 ${isBottomModal && closeOnOutsideClick ? "bg-black/30" : "bg-transparent"} pointer-events-none transition-opacity duration-300 ease-in-out ${containerClass} ${
         isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
       }`}
-      onMouseDown={(e) => closeOnOutsideClick && e.target === e.currentTarget && onClose()}
+      style={{ zIndex: modalZIndex }}
       onTransitionEnd={handleTransitionEnd}
     >
       {draggable && (
@@ -299,6 +316,8 @@ const BaseModal: React.FC<BaseModalProps> = ({
       <div
         ref={modalRef}
         style={modalStyle}
+        data-modal-id={id}
+        onMouseDown={handleModalMouseDown}
         className={`bg-[#252525] flex flex-col rounded-lg border border-border overflow-hidden shadow-2xl ${
           !draggable
             ? "transition-all duration-300"
@@ -326,7 +345,10 @@ const BaseModal: React.FC<BaseModalProps> = ({
             {Icon && <Icon size={16} className="text-accent" />} {title}
           </h2>
           <button
-            onMouseDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              focusModal(id);
+            }}
             onClick={onClose}
             className="bg-none border-none text-inherit flex p-1 rounded cursor-pointer hover:bg-white/10 focus-visible:ring-1 focus-visible:ring-accent outline-none transition-colors items-center justify-center"
           >

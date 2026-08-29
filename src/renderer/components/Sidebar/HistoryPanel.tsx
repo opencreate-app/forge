@@ -4,6 +4,7 @@
 import React, { useEffect } from "react";
 import { useProjectStore } from "@store/projectStore";
 import { RotateCcw, RotateCw } from "lucide-react";
+import { getHistoryEntryKey } from "@utils/reactKeys";
 
 interface HistoryPanelProps {
   projectId: string;
@@ -42,7 +43,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId }) => {
 
           return (
             <div
-              key={i}
+              key={getHistoryEntryKey(projectId, isRedo ? "redo" : "undo", i)}
               onClick={() => jumpToHistory(projectId, i)}
               className={`text-[0.85rem] py-1.5 px-4 cursor-pointer transition-colors border-l history-entry-${i} ${
                 isActive

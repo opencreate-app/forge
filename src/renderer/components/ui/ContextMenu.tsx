@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
+import { getContextMenuItemKey } from "@utils/reactKeys";
 
 export type ContextMenuItem =
   | {
+      id: string;
       label: string;
       icon?: React.ElementType;
       onClick: () => void;
       danger?: boolean;
     }
   | {
+      id: string;
       isSeparator: true;
     };
 
@@ -131,14 +134,19 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
           transformOrigin: origin,
         }}
       >
-        {items.map((item, index) => {
+        {items.map((item) => {
           if ("isSeparator" in item) {
-            return <div key={index} className="my-1 border-b border-bg-tertiary" />;
+            return (
+              <div
+                key={getContextMenuItemKey(item.id)}
+                className="my-1 border-b border-bg-tertiary"
+              />
+            );
           }
 
           return (
             <div
-              key={index}
+              key={getContextMenuItemKey(item.id)}
               onClick={(e) => {
                 e.stopPropagation();
                 item.onClick();

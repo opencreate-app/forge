@@ -60,6 +60,84 @@ const transformDataUrl = async (
   }
 };
 
+const getDescendantIds = (layers: Layer[], parentId: string): string[] => {
+  const descendants: string[] = [];
+  const children = layers.filter((layer) => layer.parentId === parentId);
+
+  children.forEach((child) => {
+    descendants.push(child.id);
+    if (child.type === "group") {
+      descendants.push(...getDescendantIds(layers, child.id));
+    }
+  });
+
+  return descendants;
+};
+
+const isAncestorLocked = (layers: Layer[], layer: Layer): boolean => {
+  if (!layer.parentId) return false;
+  const parent = layers.find((candidate) => candidate.id === layer.parentId);
+  if (!parent) return false;
+  return parent.locked || isAncestorLocked(layers, parent);
+};
+
+const isEffectivelyVisible = (layers: Layer[], layer: Layer): boolean => {
+  if (!layer.visible) return false;
+  if (!layer.parentId) return true;
+
+  const parent = layers.find((candidate) => candidate.id === layer.parentId);
+  return parent ? isEffectivelyVisible(layers, parent) : true;
+};
+
+const renderLayersToDataUrl = async (
+  project: Project,
+  layerIds: Set<string>,
+  bounds: { x: number; y: number; width: number; height: number },
+): Promise<string> => {
+  const selectedLayers = project.layers.filter((layer) => layerIds.has(layer.id));
+  const nestedLayers = selectedLayers.map((layer) => {
+    const clonedLayer = JSON.parse(JSON.stringify(layer)) as Layer;
+    if (clonedLayer.mask) {
+      clonedLayer.mask.x -= bounds.x;
+      clonedLayer.mask.y -= bounds.y;
+    }
+
+    return {
+      ...clonedLayer,
+      x: layer.x - bounds.x,
+      y: layer.y - bounds.y,
+      visible: isEffectivelyVisible(project.layers, layer),
+      parentId: layer.parentId && layerIds.has(layer.parentId) ? layer.parentId : null,
+    };
+  });
+
+  const width = Math.max(1, Math.ceil(bounds.width));
+  const height = Math.max(1, Math.ceil(bounds.height));
+  const previewCanvas = document.createElement("canvas");
+  previewCanvas.width = width;
+  previewCanvas.height = height;
+
+  const tempEngine = new ForgeEngine(previewCanvas, () => {}, { headless: true });
+  tempEngine.setProject({
+    ...project,
+    width,
+    height,
+    layers: nestedLayers,
+    activeLayerId: nestedLayers[0]?.id || null,
+    selectedLayerIds: nestedLayers[0] ? [nestedLayers[0].id] : [],
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+  });
+
+  try {
+    await tempEngine.preloadImages();
+    return await tempEngine.exportProject("image/png", 1);
+  } finally {
+    tempEngine.stopRenderLoop();
+  }
+};
+
 /**
  * Represents a formatted segment of text with specific styling.
  */
@@ -74,7 +152,19 @@ export interface TextSpan {
   fontFamily?: string;
   /** Font weight (e.g., 'bold', 400). */
   fontWeight?: string | number;
+  /** Whether the span uses an italic font style. */
+  italic?: boolean;
+  /** Whether the span is underlined. */
+  underline?: boolean;
+  /** Whether the span has a line through it. */
+  strikethrough?: boolean;
+  /** Vertical positioning for mathematical or footnote-like text. */
+  verticalAlign?: "baseline" | "superscript" | "subscript";
+  /** Letter spacing in pixels for the span. */
+  tracking?: number;
 }
+
+export type TextAlignment = "left" | "center" | "right" | "justify";
 
 /**
  * Represents a non-destructive mask applied to a layer.
@@ -96,6 +186,29 @@ export interface LayerMask {
   linked: boolean;
 }
 
+export type GradientType = "linear" | "radial" | "angular";
+
+export interface GradientStop {
+  color: string;
+  position: number;
+  /** Legacy stop opacity from 0 to 1. New gradients use GradientFill.opacityStops. */
+  opacity?: number;
+}
+
+export interface GradientOpacityStop {
+  opacity: number;
+  position: number;
+}
+
+export interface GradientFill {
+  type: GradientType;
+  colors: GradientStop[];
+  /** Independent opacity stops. Missing in legacy projects. */
+  opacityStops?: GradientOpacityStop[];
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+}
+
 /**
  * Represents a layer in the project. Layers can be raster images, text, or groups.
  */
@@ -105,7 +218,7 @@ export interface Layer {
   /** Display name of the layer. */
   name: string;
   /** The type of layer content. */
-  type: "raster" | "text" | "group" | "smart_object" | "color_fill";
+  type: "raster" | "text" | "group" | "smart_object" | "color_fill" | "gradient_fill";
   /** Whether the layer is currently visible. */
   visible: boolean;
   /** Whether the layer is locked for editing. */
@@ -132,6 +245,8 @@ export interface Layer {
   colorFill?: {
     color: string;
   };
+  /** Non-destructive gradient fill settings. */
+  gradientFill?: GradientFill;
   /** Original transformation for smart objects (used for reset). */
   originalTransform?: {
     x: number;
@@ -156,7 +271,11 @@ export interface Layer {
   /** Default text color. */
   color?: string;
   /** Horizontal alignment of text. */
-  textAlign?: "left" | "center" | "right" | "justify";
+  textAlign?: TextAlignment;
+  /** Alignment overrides for logical newline-delimited lines. */
+  textLineAlignments?: Record<number, TextAlignment>;
+  /** Line-height overrides for logical newline-delimited lines. */
+  textLineHeights?: Record<number, number>;
   /** Line height factor. */
   lineHeight?: number;
   /** Letter spacing in pixels. */
@@ -169,10 +288,24 @@ export interface Layer {
   blendMode: GlobalCompositeOperation;
   /** Rotation in degrees. */
   rotation?: number;
+  /** Horizontal vector scale. Defaults to 1 for legacy layers. */
+  scaleX?: number;
+  /** Vertical vector scale. Defaults to 1 for legacy layers. */
+  scaleY?: number;
   /** Internal undo stack for text editing. */
-  textUndoStack?: { text: string; textSpans?: TextSpan[] }[];
+  textUndoStack?: {
+    text: string;
+    textSpans?: TextSpan[];
+    textLineAlignments?: Record<number, TextAlignment>;
+    textLineHeights?: Record<number, number>;
+  }[];
   /** Internal redo stack for text editing. */
-  textRedoStack?: { text: string; textSpans?: TextSpan[] }[];
+  textRedoStack?: {
+    text: string;
+    textSpans?: TextSpan[];
+    textLineAlignments?: Record<number, TextAlignment>;
+    textLineHeights?: Record<number, number>;
+  }[];
   /** ID of the parent group, if any. */
   parentId?: string | null;
   /** Whether the group is expanded in the UI. */
@@ -297,13 +430,15 @@ interface ProjectState {
   /** Initializes the store, fetching the app version from Electron. */
   initialize: () => Promise<void>;
   /** Adds a new project to the store. */
-  addProject: (project: Project) => void;
+  addProject: (project: Project, allowDuplicate?: boolean) => string;
   /** Removes a project from the store. */
   removeProject: (id: string) => void;
   /** Sets the active project. */
   setActiveProject: (id: string | null) => void;
   /** Reorders the projects list. */
   reorderProjects: (projects: Project[]) => void;
+  /** Restores an entire previously persisted renderer session. */
+  restoreSession: (projects: Project[], activeProjectId: string | null) => void;
   /** Updates project-level properties. */
   updateProject: (id: string, updates: Partial<Project>) => void;
   /** Adds a new layer to a specific project. */
@@ -312,6 +447,12 @@ interface ProjectState {
     layer: Partial<Layer>,
     skipHistory?: boolean,
     insertAboveLayerId?: string,
+  ) => void;
+  /** Imports a copy of layers from one project into another project. */
+  importLayersFromProject: (
+    sourceProjectId: string,
+    targetProjectId: string,
+    layerIds: string[],
   ) => void;
   /** Removes a layer from a specific project. */
   removeLayer: (projectId: string, layerId: string, skipHistory?: boolean) => void;
@@ -335,7 +476,7 @@ interface ProjectState {
   /** Duplicates an existing layer. */
   duplicateLayer: (projectId: string, layerId: string) => void;
   /** Duplicates multiple existing layers. */
-  duplicateLayers: (projectId: string, layerIds: string[]) => void;
+  duplicateLayers: (projectId: string, layerIds: string[], skipHistory?: boolean) => string[];
   /** Updates properties of a specific layer. */
   updateLayer: (
     projectId: string,
@@ -353,6 +494,8 @@ interface ProjectState {
   toggleLayerLock: (projectId: string, layerId: string) => void;
   /** Groups specified layers. */
   groupLayers: (projectId: string, layerIds: string[]) => void;
+  /** Merges specified layers into a single raster layer. */
+  mergeLayers: (projectId: string, layerIds: string[]) => Promise<void>;
   /** Ungroups a specific group. */
   ungroupLayers: (projectId: string, groupId: string) => void;
   /** Toggles group expansion in the UI. */
@@ -411,14 +554,39 @@ const getMaxHistory = () => usePreferencesStore.getState().historyLimit;
  */
 export const normalizeHistoryState = (state: any): HistoryState => ({
   ...state,
+  layers: (state.layers || []).map((layer: any) => normalizeGradientLayer(layer)),
   guides: state.guides || [],
   selectedLayerIds: state.selectedLayerIds || (state.activeLayerId ? [state.activeLayerId] : []),
   selection: state.selection || { hasSelection: false, bounds: null },
 });
 
+const normalizeGradientLayer = (layer: any) => {
+  if (!layer?.gradientFill) return layer;
+
+  const colors = (layer.gradientFill.colors || []).map((stop: any) => ({
+    color: stop.color,
+    position: stop.position,
+    ...(typeof stop.opacity === "number" ? { opacity: stop.opacity } : {}),
+  }));
+  const opacityStops = Array.isArray(layer.gradientFill.opacityStops)
+    ? layer.gradientFill.opacityStops.map((stop: any) => ({
+        opacity: Math.min(1, Math.max(0, Number(stop.opacity) || 0)),
+        position: Math.min(1, Math.max(0, Number(stop.position) || 0)),
+      }))
+    : colors.map((stop: any) => ({
+        opacity: typeof stop.opacity === "number" ? Math.min(1, Math.max(0, stop.opacity)) : 1,
+        position: stop.position,
+      }));
+
+  return {
+    ...layer,
+    gradientFill: { ...layer.gradientFill, colors, opacityStops },
+  };
+};
+
 export const normalizeProject = (project: any): Project => {
   const normalizedLayers = (project.layers || []).map((l: any) => ({
-    ...l,
+    ...normalizeGradientLayer(l),
     opacity: l.opacity ?? 100,
     fill: l.fill ?? 100,
     blendMode: l.blendMode || "source-over",
@@ -470,35 +638,42 @@ export const createHistoryState = (project: Project): HistoryState => ({
  * Prepares a project for serialization (saving to disk).
  * Includes history stacks but may limit them to avoid excessively large files.
  */
-export const getSerializableProject = (project: Project): any => {
+const serializeProject = (project: Project, saveHistory: boolean, historyLimit: number): any => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { isDirty, filePath, undoStack, redoStack, ...rest } = project;
 
-  const saveHistory = usePreferencesStore.getState().saveHistory;
-  const historyLimit = usePreferencesStore.getState().historyLimit;
+  const processedLayers = rest.layers.map((layer) => {
+    const processedLayer = saveHistory
+      ? { ...layer }
+      : (() => {
+          const {
+            textUndoStack: _textUndoStack,
+            textRedoStack: _textRedoStack,
+            ...layerRest
+          } = layer;
+          return layerRest;
+        })();
 
-  // We keep the history but limit it to avoid massive files due to Base64 data duplication.
-  const persistedUndoStack = saveHistory ? undoStack.slice(-historyLimit) : [];
+    if (layer.dataObject) {
+      processedLayer.dataObject = serializeProject(layer.dataObject, saveHistory, historyLimit);
+    }
 
-  // Strip text history if saveHistory is off
-  const processedLayers = saveHistory
-    ? rest.layers
-    : rest.layers.map((layer) => {
-        const {
-          textUndoStack: _textUndoStack,
-          textRedoStack: _textRedoStack,
-          ...layerRest
-        } = layer;
-        return layerRest;
-      });
+    return processedLayer;
+  });
 
   return {
     ...rest,
     layers: processedLayers,
-    undoStack: persistedUndoStack,
+    // We keep the history but limit it to avoid massive files due to Base64 data duplication.
+    undoStack: saveHistory ? undoStack.slice(-historyLimit) : [],
     redoStack: [], // Redo stack is typically not persisted across sessions
     updatedAt: new Date().toISOString(),
   };
+};
+
+export const getSerializableProject = (project: Project): any => {
+  const { saveHistory, historyLimit } = usePreferencesStore.getState();
+  return serializeProject(project, saveHistory, historyLimit);
 };
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -513,18 +688,29 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  addProject: (project) =>
+  addProject: (project, allowDuplicate = false) => {
+    let resolvedProjectId = project.id;
+
     set((state) => {
       const existingProject = state.projects.find(
         (p) => p.id === project.id || (p.filePath && p.filePath === project.filePath),
       );
 
-      if (existingProject) {
+      if (existingProject && !allowDuplicate) {
+        resolvedProjectId = existingProject.id;
         return { activeProjectId: existingProject.id };
       }
 
       // Normalize project for legacy data
       const normalizedProject = normalizeProject(project);
+
+      if (allowDuplicate) {
+        let duplicateId = normalizedProject.id;
+        while (state.projects.some((candidate) => candidate.id === duplicateId)) {
+          duplicateId = `project-${Math.random().toString(36).slice(2, 11)}`;
+        }
+        normalizedProject.id = duplicateId;
+      }
 
       const initialState = createHistoryState(normalizedProject);
 
@@ -554,6 +740,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
 
       const now = new Date().toISOString();
+      resolvedProjectId = normalizedProject.id;
       return {
         projects: [
           ...state.projects,
@@ -568,7 +755,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ],
         activeProjectId: normalizedProject.id,
       };
-    }),
+    });
+
+    return resolvedProjectId;
+  },
 
   removeProject: (id) =>
     set((state) => {
@@ -582,7 +772,76 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   setActiveProject: (id) => set({ activeProjectId: id }),
 
+  importLayersFromProject: (sourceProjectId, targetProjectId, layerIds) => {
+    if (sourceProjectId === targetProjectId || layerIds.length === 0) return;
+
+    const state = get();
+    const sourceProject = state.projects.find((project) => project.id === sourceProjectId);
+    const targetProject = state.projects.find((project) => project.id === targetProjectId);
+    if (!sourceProject || !targetProject) return;
+
+    const requestedLayerIds = new Set(layerIds);
+    const sourceLayers = sourceProject.layers.filter((layer) => requestedLayerIds.has(layer.id));
+    if (sourceLayers.length === 0) return;
+
+    const idMap = new Map<string, string>();
+    const createLayerId = () => {
+      let id = `layer-${Math.random().toString(36).slice(2, 11)}`;
+      while (targetProject.layers.some((layer) => layer.id === id) || idMap.has(id)) {
+        id = `layer-${Math.random().toString(36).slice(2, 11)}`;
+      }
+      return id;
+    };
+
+    sourceLayers.forEach((layer) => {
+      idMap.set(layer.id, createLayerId());
+    });
+
+    const importedLayers = sourceLayers.map((layer) => {
+      const clonedLayer = JSON.parse(JSON.stringify(layer)) as Layer;
+      clonedLayer.id = idMap.get(layer.id)!;
+      clonedLayer.parentId =
+        layer.parentId && idMap.has(layer.parentId) ? idMap.get(layer.parentId) : null;
+      return clonedLayer;
+    });
+
+    const historyState = createHistoryState(targetProject);
+    const newUndoStack = [
+      ...targetProject.undoStack,
+      {
+        description: importedLayers.length > 1 ? "Import Layers" : "Import Layer",
+        state: historyState,
+      },
+    ];
+    if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+
+    const importedIds = importedLayers.map((layer) => layer.id);
+    const newLayers = [...targetProject.layers, ...importedLayers];
+
+    set((currentState) => ({
+      projects: currentState.projects.map((project) =>
+        project.id === targetProjectId
+          ? {
+              ...project,
+              layers: newLayers,
+              activeLayerId: importedIds[importedIds.length - 1],
+              selectedLayerIds: importedIds,
+              isDirty: true,
+              undoStack: newUndoStack,
+              redoStack: [],
+            }
+          : project,
+      ),
+    }));
+  },
+
   reorderProjects: (projects) => set({ projects }),
+
+  restoreSession: (projects, activeProjectId) =>
+    set({
+      projects: projects.map((project) => normalizeProject(project)),
+      activeProjectId,
+    }),
 
   updateProject: (id, updates) =>
     set((state) => ({
@@ -828,7 +1087,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     get().duplicateLayers(projectId, [layerId]);
   },
 
-  duplicateLayers: (projectId: string, layerIds: string[]) =>
+  duplicateLayers: (projectId: string, layerIds: string[], skipHistory = false) => {
+    const newlyCreatedIds: string[] = [];
+
     set((state) => {
       const project = state.projects.find((p) => p.id === projectId);
       if (!project) return state;
@@ -842,18 +1103,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
       if (targets.length === 0) return state;
 
-      // Push to history
-      const historyState = createHistoryState(project);
-      const newUndoStack = [
-        ...project.undoStack,
-        {
-          description: targets.length > 1 ? "Duplicate Layers" : "Duplicate Layer",
-          state: historyState,
-        },
-      ];
-      if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+      let newUndoStack = project.undoStack;
+      if (!skipHistory) {
+        const historyState = createHistoryState(project);
+        newUndoStack = [
+          ...project.undoStack,
+          {
+            description: targets.length > 1 ? "Duplicate Layers" : "Duplicate Layer",
+            state: historyState,
+          },
+        ];
+        if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+      }
 
-      const newlyCreatedIds: string[] = [];
       const allNewClones: Layer[] = [];
       let maxInsertionIndex = -1;
 
@@ -938,7 +1200,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           };
         }),
       };
-    }),
+    });
+
+    return newlyCreatedIds;
+  },
 
   reorderLayers: (projectId, layerIds, targetLayerId, position) =>
     set((state) => {
@@ -1148,6 +1413,118 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ),
       };
     }),
+
+  mergeLayers: async (projectId, layerIds) => {
+    const project = get().projects.find((candidate) => candidate.id === projectId);
+    if (!project || layerIds.length === 0) return;
+
+    const requestedLayers = project.layers.filter((layer) => layerIds.includes(layer.id));
+    if (requestedLayers.length === 0) return;
+
+    const mergeIds = new Set(requestedLayers.map((layer) => layer.id));
+
+    // With one selected layer, follow the standard merge-down behavior and use
+    // the previous sibling in the same group as the second layer.
+    if (requestedLayers.length === 1) {
+      const selectedLayer = requestedLayers[0];
+      const siblings = project.layers.filter(
+        (layer) => (layer.parentId || null) === (selectedLayer.parentId || null),
+      );
+      const siblingIndex = siblings.findIndex((layer) => layer.id === selectedLayer.id);
+      const layerBelow = siblingIndex > 0 ? siblings[siblingIndex - 1] : undefined;
+
+      if (!layerBelow) {
+        useUIStore.getState().showToast("No layer below to merge with.", "warning");
+        return;
+      }
+      mergeIds.add(layerBelow.id);
+    }
+
+    // Groups are flattened together with all of their descendants.
+    Array.from(mergeIds).forEach((layerId) => {
+      const layer = project.layers.find((candidate) => candidate.id === layerId);
+      if (layer?.type === "group") {
+        getDescendantIds(project.layers, layer.id).forEach((descendantId) => {
+          mergeIds.add(descendantId);
+        });
+      }
+    });
+
+    const layersToMerge = project.layers.filter((layer) => mergeIds.has(layer.id));
+    if (layersToMerge.length < 2) return;
+
+    if (layersToMerge.some((layer) => layer.locked || isAncestorLocked(project.layers, layer))) {
+      useUIStore.getState().showToast("Unlock all layers before merging.", "warning");
+      return;
+    }
+
+    const styledBounds = getCombinedStyledBounds(layersToMerge);
+    if (styledBounds.width <= 0 || styledBounds.height <= 0) {
+      useUIStore
+        .getState()
+        .showToast("The selected layers have no visible content to merge.", "warning");
+      return;
+    }
+
+    const data = await renderLayersToDataUrl(project, mergeIds, styledBounds);
+    const topLevelLayers = layersToMerge.filter(
+      (layer) => !layer.parentId || !mergeIds.has(layer.parentId),
+    );
+    const topmostLayer = topLevelLayers[topLevelLayers.length - 1] || layersToMerge.at(-1)!;
+    const commonParentId = topLevelLayers.every(
+      (layer) => (layer.parentId || null) === (topLevelLayers[0].parentId || null),
+    )
+      ? topLevelLayers[0].parentId || null
+      : null;
+    const mergedLayerId = Math.random().toString(36).substr(2, 9);
+    const mergedLayer: Layer = {
+      id: mergedLayerId,
+      name: topmostLayer.name,
+      type: "raster",
+      visible: layersToMerge.some((layer) => isEffectivelyVisible(project.layers, layer)),
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: styledBounds.x,
+      y: styledBounds.y,
+      width: Math.max(1, Math.ceil(styledBounds.width)),
+      height: Math.max(1, Math.ceil(styledBounds.height)),
+      data,
+      blendMode: "source-over",
+      parentId: commonParentId,
+    };
+
+    const historyState = createHistoryState(project);
+    const newUndoStack = [
+      ...project.undoStack,
+      { description: "Merge Layers", state: historyState },
+    ];
+    if (newUndoStack.length > getMaxHistory()) newUndoStack.shift();
+
+    const targetIndex = Math.max(...layersToMerge.map((layer) => project.layers.indexOf(layer)));
+    const remainingLayers = project.layers.filter((layer) => !mergeIds.has(layer.id));
+    const adjustedTargetIndex = project.layers
+      .slice(0, targetIndex + 1)
+      .filter((layer) => !mergeIds.has(layer.id)).length;
+    const newLayers = [...remainingLayers];
+    newLayers.splice(adjustedTargetIndex, 0, mergedLayer);
+
+    set((state) => ({
+      projects: state.projects.map((currentProject) =>
+        currentProject.id === projectId
+          ? {
+              ...currentProject,
+              layers: newLayers,
+              activeLayerId: mergedLayerId,
+              selectedLayerIds: [mergedLayerId],
+              isDirty: true,
+              undoStack: newUndoStack,
+              redoStack: [],
+            }
+          : currentProject,
+      ),
+    }));
+  },
 
   groupLayers: (projectId, layerIds) =>
     set((state) => {
@@ -1651,14 +2028,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const lastEntry = undoStack.pop()!;
         const redoStack = [
           ...(layer.textRedoStack || []),
-          { text: layer.text || "", textSpans: layer.textSpans },
+          {
+            text: layer.text || "",
+            textSpans: layer.textSpans,
+            textLineAlignments: layer.textLineAlignments,
+            textLineHeights: layer.textLineHeights,
+          },
         ];
 
         return {
           ...p,
           layers: p.layers.map((l) =>
             l.id === layerId
-              ? { ...l, ...lastEntry, textUndoStack: undoStack, textRedoStack: redoStack }
+              ? {
+                  ...l,
+                  ...lastEntry,
+                  textLineAlignments: lastEntry.textLineAlignments,
+                  textLineHeights: lastEntry.textLineHeights,
+                  textUndoStack: undoStack,
+                  textRedoStack: redoStack,
+                }
               : l,
           ),
           isDirty: true,
@@ -1677,14 +2066,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const nextEntry = redoStack.pop()!;
         const undoStack = [
           ...(layer.textUndoStack || []),
-          { text: layer.text || "", textSpans: layer.textSpans },
+          {
+            text: layer.text || "",
+            textSpans: layer.textSpans,
+            textLineAlignments: layer.textLineAlignments,
+            textLineHeights: layer.textLineHeights,
+          },
         ];
 
         return {
           ...p,
           layers: p.layers.map((l) =>
             l.id === layerId
-              ? { ...l, ...nextEntry, textUndoStack: undoStack, textRedoStack: redoStack }
+              ? {
+                  ...l,
+                  ...nextEntry,
+                  textLineAlignments: nextEntry.textLineAlignments,
+                  textLineHeights: nextEntry.textLineHeights,
+                  textUndoStack: undoStack,
+                  textRedoStack: redoStack,
+                }
               : l,
           ),
           isDirty: true,

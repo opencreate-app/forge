@@ -1,7 +1,7 @@
 /**
  * Purpose: Pixel-perfect drawing tool with support for different sizes and shapes, optimized with offscreen buffering and bounding box calculations.
  */
-import { BaseTool, ToolContext, ToolId } from "./BaseTool";
+import { BaseTool, getAxisLock, ToolContext, ToolId } from "./BaseTool";
 import { createHistoryState, HistoryState } from "@/renderer/store/projectStore";
 import { useUIStore } from "@store/uiStore";
 
@@ -29,6 +29,9 @@ export class PencilTool extends BaseTool {
   private maxY = -Infinity;
 
   private historySnapshot: HistoryState | null = null;
+  private lastPoint: { x: number; y: number; layerId: string } | null = null;
+  private isLineDrawing = false;
+  private axisLock: "horizontal" | "vertical" | null = null;
 
   private isLoadingBaseImage = false;
 
@@ -61,31 +64,37 @@ export class PencilTool extends BaseTool {
 
     if (isEditingMask && !layer.mask) return;
 
-    this.historySnapshot = createHistoryState(context.project);
-
-    this.isDrawing = true;
-    this.layerId = activeLayerId;
-
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
     // Snap to pixel grid
     const snapX = Math.floor(x);
     const snapY = Math.floor(y);
+    const lineStart =
+      e.shiftKey && this.lastPoint?.layerId === activeLayerId ? this.lastPoint : null;
+
+    this.historySnapshot = createHistoryState(context.project);
+
+    this.isDrawing = true;
+    this.layerId = activeLayerId;
+    this.isLineDrawing = lineStart !== null;
+    this.axisLock = null;
 
     this.mouseX = snapX;
     this.mouseY = snapY;
-    this.lastX = snapX;
-    this.lastY = snapY;
+    this.lastX = lineStart?.x ?? snapX;
+    this.lastY = lineStart?.y ?? snapY;
 
     const settings = context.settings.pencil;
     this.initOffscreen(layer, context);
 
     const pad = settings.size;
-    this.minX = snapX - pad;
-    this.minY = snapY - pad;
-    this.maxX = snapX + pad;
-    this.maxY = snapY + pad;
+    this.minX = Math.min(this.lastX, snapX) - pad;
+    this.minY = Math.min(this.lastY, snapY) - pad;
+    this.maxX = Math.max(this.lastX, snapX) + pad;
+    this.maxY = Math.max(this.lastY, snapY) + pad;
 
     this.draw(snapX, snapY, context);
+    this.lastX = snapX;
+    this.lastY = snapY;
   }
 
   onMouseMove(e: MouseEvent, context: ToolContext): void {
@@ -109,10 +118,31 @@ export class PencilTool extends BaseTool {
       context.canvas.style.cursor = "default";
     }
 
-    if (!this.isDrawing) return;
+    if (!this.isDrawing || this.isLineDrawing) return;
 
     const settings = context.settings.pencil;
     const pad = settings.size;
+
+    if (e.shiftKey) {
+      if (!this.axisLock) {
+        this.axisLock = getAxisLock({ x: this.lastX, y: this.lastY }, { x: snapX, y: snapY });
+      }
+
+      const constrainedX = this.axisLock === "horizontal" ? snapX : this.lastX;
+      const constrainedY = this.axisLock === "horizontal" ? this.lastY : snapY;
+
+      this.minX = Math.min(this.minX, constrainedX - pad);
+      this.minY = Math.min(this.minY, constrainedY - pad);
+      this.maxX = Math.max(this.maxX, constrainedX + pad);
+      this.maxY = Math.max(this.maxY, constrainedY + pad);
+
+      this.draw(constrainedX, constrainedY, context);
+      this.lastX = constrainedX;
+      this.lastY = constrainedY;
+      return;
+    }
+
+    this.axisLock = null;
 
     this.minX = Math.min(this.minX, snapX - pad);
     this.minY = Math.min(this.minY, snapY - pad);
@@ -133,6 +163,7 @@ export class PencilTool extends BaseTool {
     }
 
     this.isDrawing = false;
+    this.lastPoint = { x: this.lastX, y: this.lastY, layerId: this.layerId! };
 
     if (this.offscreenCanvas && this.layerId && this.offscreenCtx) {
       const layer = context.project.layers.find((l) => l.id === this.layerId)!;
@@ -188,9 +219,9 @@ export class PencilTool extends BaseTool {
         const dataUrl = croppedCanvas.toDataURL("image/png");
 
         if (!isEditingMask) {
-          context.setLayerCache(this.layerId, croppedCanvas);
+          context.setLayerCache(this.layerId, croppedCanvas, dataUrl);
         } else {
-          context.invalidateCache(this.layerId);
+          context.setMaskCache(this.layerId, croppedCanvas, dataUrl);
         }
 
         const layers = context.project.layers.map((l) => {
@@ -236,6 +267,8 @@ export class PencilTool extends BaseTool {
     this.scratchCanvas = null;
     this.scratchCtx = null;
     this.historySnapshot = null;
+    this.isLineDrawing = false;
+    this.axisLock = null;
   }
 
   private getOptimizedBoundingBox(
@@ -528,6 +561,9 @@ export class PencilTool extends BaseTool {
     context.canvas.style.cursor = "default";
     this.isMouseOver = false;
     this.isDrawing = false;
+    this.isLineDrawing = false;
+    this.axisLock = null;
+    this.lastPoint = null;
   }
 
   getEditingLayerId(): string | null {
@@ -551,10 +587,7 @@ export class PencilTool extends BaseTool {
     // Pencil Preview
     if (this.isMouseOver) {
       ctx.save();
-      ctx.setTransform(
-        context.project.zoom,
-        0,
-        0,
+      context.setViewportTransform(
         context.project.zoom,
         context.project.panX,
         context.project.panY,

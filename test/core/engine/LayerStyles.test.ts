@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ForgeEngine } from "@/core/engine/ForgeEngine";
 import { createMockProject } from "../../mocks";
+import { useToolStore } from "@/renderer/store/toolStore";
 
 describe("ForgeEngine - Layer Styles", () => {
   let canvas: HTMLCanvasElement;
@@ -201,5 +202,109 @@ describe("ForgeEngine - Layer Styles", () => {
     // Also verify that applyLayerMask was NOT called on the final composition context
     // In our implementation, the first call is the one we care about.
     expect(applyLayerMaskSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("should reuse the render buffer for a static layer mask without styles", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange, { headless: true });
+    const project = createMockProject();
+    const maskedLayer = {
+      ...project.layers[0],
+      mask: {
+        data: "data:image/png;base64,mask",
+        x: 0,
+        y: 0,
+        width: project.layers[0].width,
+        height: project.layers[0].height,
+        enabled: true,
+        linked: true,
+      },
+    };
+
+    project.layers = [maskedLayer];
+    engine.setProject(project);
+
+    const engineState = engine as any;
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = maskedLayer.mask.width;
+    sourceCanvas.height = maskedLayer.mask.height;
+    engineState.maskCanvasCache.set(maskedLayer.id, {
+      canvas: sourceCanvas,
+      dataUrl: maskedLayer.mask.data,
+    });
+
+    const targetContext = canvas.getContext("2d")!;
+    engineState.renderLayerWithStyles(targetContext, maskedLayer);
+    const firstBuffer = engineState.layerRenderBufferCache.get(maskedLayer.id).canvas;
+
+    engineState.renderLayerWithStyles(targetContext, maskedLayer);
+    const secondBuffer = engineState.layerRenderBufferCache.get(maskedLayer.id).canvas;
+
+    expect(secondBuffer).toBe(firstBuffer);
+  });
+
+  it("should size styled group bounds from a child's transform preview", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange);
+    const project = createMockProject();
+    const child = {
+      ...project.layers[0],
+      id: "child",
+      x: 100,
+      y: 100,
+      width: 100,
+      height: 100,
+    };
+    const group = {
+      ...project.layers[0],
+      id: "group",
+      type: "group" as const,
+      parentId: undefined,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      styles: {
+        stroke: {
+          enabled: true,
+          color: "#000000",
+          size: 5,
+          position: "outside" as const,
+          opacity: 100,
+          rounded: true,
+          antiAlias: true,
+        },
+      },
+    };
+
+    project.layers = [group, { ...child, parentId: group.id }];
+    engine.setProject(project);
+
+    useToolStore.getState().setActiveTool("transform");
+    useToolStore.getState().updateToolSettings("transform", {
+      x: 250,
+      y: 150,
+      width: child.width,
+      height: child.height,
+      scaleX: 2,
+      scaleY: 1,
+      rotation: 0,
+      anchor: { x: 0.5, y: 0.5 },
+    });
+
+    vi.spyOn(engine as any, "getActiveTool").mockReturnValue({
+      id: "transform",
+      getEditingLayerId: () => child.id,
+    });
+
+    const previewBounds = (engine as any).getCurrentRenderBoundsLayer({
+      ...child,
+      parentId: group.id,
+    });
+
+    expect(previewBounds).toMatchObject({
+      x: 150,
+      y: 100,
+      width: 200,
+      height: 100,
+    });
   });
 });

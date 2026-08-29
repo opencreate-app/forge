@@ -79,6 +79,163 @@ describe("MoveTool", () => {
     );
   });
 
+  it("should duplicate the current selection and move the copy with Alt+Drag", async () => {
+    const tool = new MoveTool();
+    const project = createMockProject({
+      layers: [
+        {
+          id: "source",
+          name: "Source",
+          x: 20,
+          y: 30,
+          width: 100,
+          height: 80,
+          type: "raster",
+          visible: true,
+          locked: false,
+          blendMode: "source-over",
+          opacity: 100,
+          fill: 100,
+        },
+      ],
+      activeLayerId: "source",
+      selectedLayerIds: ["source"],
+    });
+    context.project = project;
+    context.duplicateLayers = vi.fn((layerIds: string[]) => {
+      const source = project.layers.find((layer) => layer.id === layerIds[0])!;
+      const copy = { ...source, id: "copy", name: "Source copy" };
+      project.layers = [...project.layers, copy];
+      project.activeLayerId = copy.id;
+      project.selectedLayerIds = [copy.id];
+      return [copy.id];
+    });
+    context.screenToProject = vi
+      .fn()
+      .mockReturnValueOnce({ x: 30, y: 40 })
+      .mockReturnValue({ x: 40, y: 55 });
+
+    await tool.onMouseDown(
+      { button: 0, offsetX: 30, offsetY: 40, altKey: true } as MouseEvent,
+      context,
+    );
+    tool.onMouseMove({ offsetX: 40, offsetY: 55 } as MouseEvent, context);
+    tool.onMouseUp({ offsetX: 40, offsetY: 55 } as MouseEvent, context);
+
+    const moveUpdate = context.updateProject.mock.calls.find((call: any[]) => call[0].layers)?.[0];
+    expect(context.duplicateLayers).toHaveBeenCalledWith(["source"], true);
+    expect(moveUpdate.layers.find((layer: any) => layer.id === "source")).toMatchObject({
+      x: 20,
+      y: 30,
+    });
+    expect(moveUpdate.layers.find((layer: any) => layer.id === "copy")).toMatchObject({
+      x: 30,
+      y: 45,
+    });
+    expect(project.selectedLayerIds).toEqual(["copy"]);
+    expect(context.addHistoryEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ description: "Move Tool" }),
+    );
+  });
+
+  it("should not duplicate on an Alt click without movement", async () => {
+    const tool = new MoveTool();
+    context.screenToProject = vi.fn().mockReturnValue({ x: 10, y: 10 });
+
+    await tool.onMouseDown(
+      { button: 0, offsetX: 10, offsetY: 10, altKey: true } as MouseEvent,
+      context,
+    );
+    tool.onMouseUp({ offsetX: 10, offsetY: 10 } as MouseEvent, context);
+
+    expect(context.duplicateLayers).not.toHaveBeenCalled();
+    expect(context.addHistoryEntry).not.toHaveBeenCalled();
+  });
+
+  it("should defer history for a moved floating selection until it is committed", async () => {
+    const tool = new MoveTool();
+    const project = createMockProject({
+      selection: {
+        hasSelection: true,
+        bounds: { x: 0, y: 0, width: 20, height: 20 },
+      },
+    });
+    context.project = project;
+    context.floatSelection = vi.fn(async () => {
+      project.selection.floatingLayer = {
+        id: "floating-selection",
+        name: "Floating Selection",
+        type: "raster",
+        visible: true,
+        locked: false,
+        opacity: 100,
+        fill: 100,
+        x: 0,
+        y: 0,
+        width: 20,
+        height: 20,
+        blendMode: "source-over",
+      };
+      return true;
+    });
+    context.screenToProject = vi
+      .fn()
+      .mockReturnValueOnce({ x: 5, y: 5 })
+      .mockReturnValue({ x: 15, y: 10 });
+
+    await tool.onMouseDown({ button: 0, offsetX: 5, offsetY: 5 } as MouseEvent, context);
+    tool.onMouseMove({ offsetX: 15, offsetY: 10 } as MouseEvent, context);
+    tool.onMouseUp({ offsetX: 15, offsetY: 10 } as MouseEvent, context);
+
+    expect(context.floatSelection).toHaveBeenCalledWith("layer-1", expect.anything());
+    expect(context.addHistoryEntry).not.toHaveBeenCalled();
+  });
+
+  it("should move selected pixels with arrow keys and group the sequence", async () => {
+    const tool = new MoveTool();
+    const project = createMockProject({
+      selection: {
+        hasSelection: true,
+        bounds: { x: 10, y: 15, width: 20, height: 25 },
+      },
+    });
+    context.project = project;
+    context.updateProject = vi.fn((updates) => Object.assign(project, updates));
+    context.floatSelection = vi.fn(async () => {
+      project.selection.floatingLayer = {
+        id: "floating-selection",
+        name: "Floating Selection",
+        type: "raster",
+        visible: true,
+        locked: false,
+        opacity: 100,
+        fill: 100,
+        x: 10,
+        y: 15,
+        width: 20,
+        height: 25,
+        blendMode: "source-over",
+      };
+      return true;
+    });
+
+    const firstHandled = await tool.onKeyDown(
+      { key: "ArrowRight", shiftKey: false, preventDefault: vi.fn() } as unknown as KeyboardEvent,
+      context,
+    );
+    const secondHandled = await tool.onKeyDown(
+      { key: "ArrowDown", shiftKey: true, preventDefault: vi.fn() } as unknown as KeyboardEvent,
+      context,
+    );
+
+    expect(firstHandled).toBe(true);
+    expect(secondHandled).toBe(true);
+    expect(context.floatSelection).toHaveBeenCalledOnce();
+    expect(project.selection.floatingLayer).toMatchObject({ x: 11, y: 23 });
+    expect(project.selection.bounds).toMatchObject({ x: 11, y: 23 });
+    expect(context.addHistoryEntry).not.toHaveBeenCalled();
+  });
+
   it("should move group children when moving a group", () => {
     const tool = new MoveTool();
     const project = createMockProject();

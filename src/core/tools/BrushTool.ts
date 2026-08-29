@@ -1,7 +1,7 @@
 /**
  * Purpose: Smooth painting tool with adjustable size and hardness, utilizing radial gradients for soft edges and optimized rendering.
  */
-import { BaseTool, ToolContext, ToolId } from "./BaseTool";
+import { BaseTool, getAxisLock, ToolContext, ToolId } from "./BaseTool";
 import { createHistoryState, HistoryState } from "@/renderer/store/projectStore";
 import { useUIStore } from "@store/uiStore";
 
@@ -31,6 +31,9 @@ export class BrushTool extends BaseTool {
   private maxY = -Infinity;
 
   private historySnapshot: HistoryState | null = null;
+  private lastPoint: { x: number; y: number; layerId: string } | null = null;
+  private isLineDrawing = false;
+  private axisLock: "horizontal" | "vertical" | null = null;
 
   private hexToRgba(hex: string, alpha: number) {
     if (!hex.startsWith("#")) return `rgba(0,0,0,${alpha})`;
@@ -114,16 +117,21 @@ export class BrushTool extends BaseTool {
 
     if (isEditingMask && !layer.mask) return;
 
+    const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
+    const lineStart =
+      e.shiftKey && this.lastPoint?.layerId === activeLayerId ? this.lastPoint : null;
+
     this.historySnapshot = createHistoryState(context.project);
 
     this.isDrawing = true;
     this.layerId = activeLayerId;
+    this.isLineDrawing = lineStart !== null;
+    this.axisLock = null;
 
-    const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
     this.mouseX = x;
     this.mouseY = y;
-    this.lastX = x;
-    this.lastY = y;
+    this.lastX = lineStart?.x ?? x;
+    this.lastY = lineStart?.y ?? y;
 
     const settings = context.settings.brush;
     // this.initBrush(settings.size, settings.hardness, settings.color);
@@ -131,12 +139,14 @@ export class BrushTool extends BaseTool {
     this.initOffscreen(layer, context);
 
     const pad = settings.size;
-    this.minX = x - pad;
-    this.minY = y - pad;
-    this.maxX = x + pad;
-    this.maxY = y + pad;
+    this.minX = Math.min(this.lastX, x) - pad;
+    this.minY = Math.min(this.lastY, y) - pad;
+    this.maxX = Math.max(this.lastX, x) + pad;
+    this.maxY = Math.max(this.lastY, y) + pad;
 
     this.draw(x, y, context);
+    this.lastX = x;
+    this.lastY = y;
   }
 
   onMouseMove(e: MouseEvent, context: ToolContext): void {
@@ -158,10 +168,31 @@ export class BrushTool extends BaseTool {
       context.canvas.style.cursor = "default";
     }
 
-    if (!this.isDrawing) return;
+    if (!this.isDrawing || this.isLineDrawing) return;
 
     const settings = context.settings.brush;
     const pad = settings.size;
+
+    if (e.shiftKey) {
+      if (!this.axisLock) {
+        this.axisLock = getAxisLock({ x: this.lastX, y: this.lastY }, { x, y });
+      }
+
+      const constrainedX = this.axisLock === "horizontal" ? x : this.lastX;
+      const constrainedY = this.axisLock === "horizontal" ? this.lastY : y;
+
+      this.minX = Math.min(this.minX, constrainedX - pad);
+      this.minY = Math.min(this.minY, constrainedY - pad);
+      this.maxX = Math.max(this.maxX, constrainedX + pad);
+      this.maxY = Math.max(this.maxY, constrainedY + pad);
+
+      this.draw(constrainedX, constrainedY, context);
+      this.lastX = constrainedX;
+      this.lastY = constrainedY;
+      return;
+    }
+
+    this.axisLock = null;
     this.minX = Math.min(this.minX, x - pad);
     this.minY = Math.min(this.minY, y - pad);
     this.maxX = Math.max(this.maxX, x + pad);
@@ -185,6 +216,7 @@ export class BrushTool extends BaseTool {
     }
 
     this.isDrawing = false;
+    this.lastPoint = { x: this.lastX, y: this.lastY, layerId: this.layerId! };
 
     if (this.offscreenCanvas && this.layerId && this.offscreenCtx) {
       const layer = context.project.layers.find((l) => l.id === this.layerId)!;
@@ -242,9 +274,9 @@ export class BrushTool extends BaseTool {
         const dataUrl = croppedCanvas.toDataURL("image/png");
 
         if (!isEditingMask) {
-          context.setLayerCache(this.layerId, croppedCanvas);
+          context.setLayerCache(this.layerId, croppedCanvas, dataUrl);
         } else {
-          context.invalidateCache(this.layerId);
+          context.setMaskCache(this.layerId, croppedCanvas, dataUrl);
         }
 
         const layers = context.project.layers.map((l) => {
@@ -289,6 +321,8 @@ export class BrushTool extends BaseTool {
     this.offscreenCtx = null;
     this.brushCanvas = null;
     this.historySnapshot = null;
+    this.isLineDrawing = false;
+    this.axisLock = null;
   }
 
   private getOptimizedBoundingBox(
@@ -380,6 +414,30 @@ export class BrushTool extends BaseTool {
   private scratchCanvas: HTMLCanvasElement | null = null;
   private scratchCtx: CanvasRenderingContext2D | null = null;
 
+  private drawHardBrushLine(
+    ctx: CanvasRenderingContext2D,
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    size: number,
+    color: string,
+  ): boolean {
+    if (startX === endX && startY === endY) return false;
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.restore();
+    return true;
+  }
+
   private draw(x: number, y: number, context: ToolContext) {
     if (!this.offscreenCtx || !this.layerId || !this.brushCanvas) return;
     const settings = context.settings.brush;
@@ -418,18 +476,33 @@ export class BrushTool extends BaseTool {
       sctx.clearRect(minSegmentX, minSegmentY, segmentWidth, segmentHeight);
 
       // 4. Draw stroke segments into scratch
-      const dist = Math.hypot(localX - localLastX, localY - localLastY);
-      const angle = Math.atan2(localY - localLastY, localX - localLastX);
-      const spacing = Math.max(1, settings.size * 0.1);
+      const isHardBrush = settings.hardness >= 0.99;
+      const drewLine = isHardBrush
+        ? this.drawHardBrushLine(
+            sctx,
+            localLastX,
+            localLastY,
+            localX,
+            localY,
+            settings.size,
+            context.foregroundColor,
+          )
+        : false;
 
-      for (let i = 0; i <= dist; i += spacing) {
-        const px = localLastX + Math.cos(angle) * i;
-        const py = localLastY + Math.sin(angle) * i;
-        sctx.drawImage(
-          this.brushCanvas,
-          px - this.brushCanvas.width / 2,
-          py - this.brushCanvas.height / 2,
-        );
+      if (!drewLine) {
+        const dist = Math.hypot(localX - localLastX, localY - localLastY);
+        const angle = Math.atan2(localY - localLastY, localX - localLastX);
+        const spacing = Math.max(1, settings.size * 0.1);
+
+        for (let i = 0; i <= dist; i += spacing) {
+          const px = localLastX + Math.cos(angle) * i;
+          const py = localLastY + Math.sin(angle) * i;
+          sctx.drawImage(
+            this.brushCanvas,
+            px - this.brushCanvas.width / 2,
+            py - this.brushCanvas.height / 2,
+          );
+        }
       }
 
       // 5. Clip scratch with selection mask (only in the segment area)
@@ -456,18 +529,32 @@ export class BrushTool extends BaseTool {
       );
     } else {
       // Normal draw without selection
-      const dist = Math.hypot(localX - localLastX, localY - localLastY);
-      const angle = Math.atan2(localY - localLastY, localX - localLastX);
-      const spacing = Math.max(1, settings.size * 0.1);
-
-      for (let i = 0; i <= dist; i += spacing) {
-        const px = localLastX + Math.cos(angle) * i;
-        const py = localLastY + Math.sin(angle) * i;
-        this.offscreenCtx.drawImage(
-          this.brushCanvas,
-          px - this.brushCanvas.width / 2,
-          py - this.brushCanvas.height / 2,
+      const drewLine =
+        settings.hardness >= 0.99 &&
+        this.drawHardBrushLine(
+          this.offscreenCtx,
+          localLastX,
+          localLastY,
+          localX,
+          localY,
+          settings.size,
+          context.foregroundColor,
         );
+
+      if (!drewLine) {
+        const dist = Math.hypot(localX - localLastX, localY - localLastY);
+        const angle = Math.atan2(localY - localLastY, localX - localLastX);
+        const spacing = Math.max(1, settings.size * 0.1);
+
+        for (let i = 0; i <= dist; i += spacing) {
+          const px = localLastX + Math.cos(angle) * i;
+          const py = localLastY + Math.sin(angle) * i;
+          this.offscreenCtx.drawImage(
+            this.brushCanvas,
+            px - this.brushCanvas.width / 2,
+            py - this.brushCanvas.height / 2,
+          );
+        }
       }
     }
   }
@@ -476,6 +563,9 @@ export class BrushTool extends BaseTool {
     context.canvas.style.cursor = "default";
     this.isMouseOver = false;
     this.isDrawing = false;
+    this.isLineDrawing = false;
+    this.axisLock = null;
+    this.lastPoint = null;
   }
 
   getEditingLayerId(): string | null {
@@ -499,10 +589,7 @@ export class BrushTool extends BaseTool {
     // Brush Preview - Only draws if the mouse is over the canvas
     if (this.isMouseOver) {
       ctx.save();
-      ctx.setTransform(
-        context.project.zoom,
-        0,
-        0,
+      context.setViewportTransform(
         context.project.zoom,
         context.project.panX,
         context.project.panY,

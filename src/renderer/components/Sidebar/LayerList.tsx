@@ -15,12 +15,19 @@ import {
   Image as ImageIcon,
   Lock,
   Unlock,
+  Merge,
   RotateCcw,
   // Blend,
   // CircleDashed,
 } from "lucide-react";
 import ContextMenu from "../ui/ContextMenu";
 import ToolSettingInput from "../ui/ToolSettingInput";
+import {
+  createLayerDragPayload,
+  isLayerDragEvent,
+  LAYER_DRAG_MIME,
+  parseLayerDragPayload,
+} from "@utils/dragAndDrop";
 
 const BLEND_MODES: { label: string; value: GlobalCompositeOperation }[] = [
   { label: "Normal", value: "source-over" },
@@ -75,6 +82,7 @@ const LayerList: React.FC = () => {
   const removeLayers = useProjectStore((state) => state.removeLayers);
   const duplicateLayers = useProjectStore((state) => state.duplicateLayers);
   const reorderLayers = useProjectStore((state) => state.reorderLayers);
+  const importLayersFromProject = useProjectStore((state) => state.importLayersFromProject);
   const setSelectedLayers = useProjectStore((state) => state.setSelectedLayers);
   const setActiveLayer = useProjectStore((state) => state.setActiveLayer);
   const updateProject = useProjectStore((state) => state.updateProject);
@@ -82,6 +90,7 @@ const LayerList: React.FC = () => {
   const updateLayer = useProjectStore((state) => state.updateLayer);
   const pushHistory = useProjectStore((state) => state.pushHistory);
   const groupLayers = useProjectStore((state) => state.groupLayers);
+  const mergeLayers = useProjectStore((state) => state.mergeLayers);
   const ungroupLayers = useProjectStore((state) => state.ungroupLayers);
   const toggleGroupExpansion = useProjectStore((state) => state.toggleGroupExpansion);
   const convertToSmartObject = useProjectStore((state) => state.convertToSmartObject);
@@ -127,6 +136,19 @@ const LayerList: React.FC = () => {
             groupLayers(activeProjectId, project.selectedLayerIds);
           }
         }
+      } else if (isCtrl && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") {
+        if (
+          document.activeElement?.tagName === "INPUT" ||
+          document.activeElement?.tagName === "TEXTAREA" ||
+          (document.activeElement as HTMLElement)?.isContentEditable
+        ) {
+          return;
+        }
+
+        e.preventDefault();
+        if (activeProjectId && project?.selectedLayerIds.length) {
+          void mergeLayers(activeProjectId, project.selectedLayerIds);
+        }
       }
     };
 
@@ -138,6 +160,7 @@ const LayerList: React.FC = () => {
     project?.activeLayerId,
     project?.layers,
     groupLayers,
+    mergeLayers,
     ungroupLayers,
   ]);
 
@@ -155,6 +178,12 @@ const LayerList: React.FC = () => {
     window.addEventListener("mouseup", handleGlobalMouseUp);
     return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
   }, [visibilityDrag, activeProjectId, pushHistory]);
+
+  React.useEffect(() => {
+    // A cross-project drop changes the active project without dispatching a drop
+    // event to the source layer list. Clear the source-only visual state here.
+    setDraggedIndex(null);
+  }, [activeProjectId]);
 
   if (!project) return <div className="p-4 text-[#666]">No active project</div>;
 
@@ -219,12 +248,15 @@ const LayerList: React.FC = () => {
     const finalLayerIds = Array.from(expandedLayersToMove);
     setSelectedLayers(project.id, finalLayerIds);
 
+    const payload = createLayerDragPayload(project.id, finalLayerIds);
+    e.dataTransfer.setData(LAYER_DRAG_MIME, JSON.stringify(payload));
     e.dataTransfer.setData("text/plain", JSON.stringify(finalLayerIds));
-    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.effectAllowed = "copyMove";
     setDraggedIndex(index);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (!isLayerDragEvent(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   };
@@ -239,14 +271,20 @@ const LayerList: React.FC = () => {
     //   position = "below";
     // }
 
+    const layerPayload = parseLayerDragPayload(e.dataTransfer.getData(LAYER_DRAG_MIME));
     const data = e.dataTransfer.getData("text/plain");
     setDraggedIndex(null);
 
-    if (!data) return;
+    if (layerPayload && layerPayload.sourceProjectId !== project.id) {
+      importLayersFromProject(layerPayload.sourceProjectId, project.id, layerPayload.layerIds);
+      return;
+    }
 
-    let layerIds: string[] = [];
+    if (!data && !layerPayload) return;
+
+    let layerIds: string[] = layerPayload?.layerIds || [];
     try {
-      layerIds = JSON.parse(data);
+      if (!layerPayload) layerIds = JSON.parse(data);
     } catch {
       // Fallback for single index (compatibility with old data)
       const fromIndex = parseInt(data, 10);
@@ -580,6 +618,7 @@ const LayerList: React.FC = () => {
           onClose={() => setContextMenu(null)}
           items={[
             {
+              id: "layer-styles",
               label: "Layer Styles...",
               icon: EffectsIcon,
               onClick: () => {
@@ -587,13 +626,21 @@ const LayerList: React.FC = () => {
                 window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
               },
             },
-            { isSeparator: true },
+            { id: "layer-actions-start", isSeparator: true },
             {
+              id: "duplicate-layers",
               label: "Duplicate Layer(s)",
               icon: Copy,
               onClick: () => duplicateLayers(project.id, project.selectedLayerIds),
             },
             {
+              id: "merge-layers",
+              label: "Merge Layer(s)",
+              icon: Merge,
+              onClick: () => void mergeLayers(project.id, project.selectedLayerIds),
+            },
+            {
+              id: "toggle-layer-lock",
               label: contextMenu.layer.locked ? "Unlock Layer(s)" : "Lock Layer(s)",
               icon: contextMenu.layer.locked ? Unlock : Lock,
               onClick: () =>
@@ -606,13 +653,15 @@ const LayerList: React.FC = () => {
                 }),
             },
             {
+              id: "delete-layers",
               label: "Delete Layer(s)",
               icon: Trash2,
               danger: true,
               onClick: () => removeLayers(project.id, project.selectedLayerIds),
             },
-            { isSeparator: true },
+            { id: "group-actions-start", isSeparator: true },
             {
+              id: "group-layers",
               label: "Group Layer(s)",
               icon: Folder,
               onClick: () => groupLayers(project.id, project.selectedLayerIds),
@@ -620,6 +669,7 @@ const LayerList: React.FC = () => {
             ...(contextMenu.layer.type === "group"
               ? [
                   {
+                    id: "ungroup-layers",
                     label: "Ungroup Layer(s)",
                     icon: FolderOpen,
                     danger: true,
@@ -627,16 +677,18 @@ const LayerList: React.FC = () => {
                   },
                 ]
               : []),
-            { isSeparator: true },
+            { id: "smart-object-actions-start", isSeparator: true },
 
             ...(contextMenu.layer.type === "smart_object"
               ? [
                   {
+                    id: "reset-smart-object-transform",
                     label: "Reset Transform",
                     icon: RotateCcw,
                     onClick: () => resetSmartObjectTransform(project.id, contextMenu.layer.id),
                   },
                   {
+                    id: "rasterize-smart-object",
                     label: "Rasterize Layer",
                     icon: ImageIcon,
                     onClick: () => rasterizeSmartObject(project.id, contextMenu.layer.id),
@@ -644,15 +696,17 @@ const LayerList: React.FC = () => {
                 ]
               : [
                   {
+                    id: "convert-to-smart-object",
                     label: "Convert to Smart Object",
                     icon: Box,
                     onClick: () => convertToSmartObject(project.id, project.selectedLayerIds),
                   },
                 ]),
-            { isSeparator: true },
+            { id: "mask-actions-start", isSeparator: true },
             ...(contextMenu.layer.mask
               ? [
                   {
+                    id: "toggle-layer-mask",
                     label: contextMenu.layer.mask.enabled
                       ? "Disable Layer Mask"
                       : "Enable Layer Mask",
@@ -670,6 +724,7 @@ const LayerList: React.FC = () => {
                     },
                   },
                   {
+                    id: "delete-layer-mask",
                     label: "Delete Layer Mask",
                     icon: Trash2,
                     danger: true,
@@ -678,6 +733,7 @@ const LayerList: React.FC = () => {
                 ]
               : [
                   {
+                    id: "add-layer-mask",
                     label: "Add Layer Mask",
                     icon: CircleHalfDashed,
                     onClick: () => addLayerMask(project.id, contextMenu.layer.id),

@@ -2,9 +2,30 @@
  * Purpose: Comprehensive tool for creating and editing text layers, featuring rich text input, caret management, selection, and transformations.
  */
 import { BaseTool, ToolContext, ToolId } from "./BaseTool";
-import { Layer, useProjectStore, HistoryState } from "@/renderer/store/projectStore";
+import {
+  Layer,
+  useProjectStore,
+  HistoryState,
+  type TextAlignment,
+} from "@/renderer/store/projectStore";
 import { TextLayer } from "../layers/TextLayer";
 import { useUIStore } from "@/renderer/store/uiStore";
+import {
+  applyTextSpanStyle,
+  getTextSpanStyleAtCaret,
+  getTextSpanStyleAt,
+  getTextLineIndex,
+  getTextWordRangeAt,
+  replaceTextWithSpans,
+  scaleTextSpanFontSizes,
+  updateTextLineAlignments,
+  updateTextLineHeights,
+  normalizeTextFontWeight,
+  isBoldTextFontWeight,
+  promoteTextStyleToLayer,
+  type TextSpanStyle,
+} from "../utils/textSpans";
+import { useTextEditorStore, type TextFormatCommand } from "@/renderer/store/textEditorStore";
 
 export class TextTool extends BaseTool {
   id: ToolId = "text";
@@ -34,11 +55,32 @@ export class TextTool extends BaseTool {
   private isComposing = false;
   private lastContext: ToolContext | null = null;
   private dragStartRotation: number = 0;
+  private pendingEditRequest: {
+    layerId: string;
+    hitX?: number;
+    hitY?: number;
+    selectWord: boolean;
+  } | null = null;
+  private pendingTextStyle: TextSpanStyle = {};
+  private fontSizeScaleSession: {
+    gestureId: number;
+    layerId: string;
+    text: string;
+    start: number;
+    end: number;
+    textSpans?: Layer["textSpans"];
+  } | null = null;
 
   private onApply = () => this.commit(this.lastContext!);
   private onCancel = () => this.cancel(this.lastContext!);
+  private onFormat = (event: Event) => {
+    if (!this.lastContext) return;
+    const command = (event as CustomEvent<TextFormatCommand>).detail;
+    if (command) this.applyFormat(command, this.lastContext);
+  };
   private handleKeyChange = (e: KeyboardEvent) => {
     this.isCtrlPressed = e.ctrlKey || e.metaKey;
+    useTextEditorStore.getState().setState({ isCtrlPressed: this.isCtrlPressed });
     if (this.lastContext) this.lastContext.invalidateCache("render-only");
   };
 
@@ -46,9 +88,22 @@ export class TextTool extends BaseTool {
     this.lastContext = context;
     window.addEventListener("forge:text-apply", this.onApply);
     window.addEventListener("forge:text-cancel", this.onCancel);
+    window.addEventListener("forge:text-format", this.onFormat);
     window.addEventListener("keydown", this.handleKeyChange);
     window.addEventListener("keyup", this.handleKeyChange);
     this.createHiddenInput(context);
+
+    const pendingEditRequest = this.pendingEditRequest;
+    this.pendingEditRequest = null;
+    if (pendingEditRequest) {
+      this.beginEditingLayer(
+        pendingEditRequest.layerId,
+        context,
+        pendingEditRequest.hitX,
+        pendingEditRequest.hitY,
+        pendingEditRequest.selectWord,
+      );
+    }
   }
 
   onDeactivate(context: ToolContext): void {
@@ -56,8 +111,12 @@ export class TextTool extends BaseTool {
       this.commit(context);
     }
     this.activeSnapLines = [];
+    this.isCtrlPressed = false;
+    useTextEditorStore.getState().setState({ isCtrlPressed: false });
+    this.fontSizeScaleSession = null;
     window.removeEventListener("forge:text-apply", this.onApply);
     window.removeEventListener("forge:text-cancel", this.onCancel);
+    window.removeEventListener("forge:text-format", this.onFormat);
     window.removeEventListener("keydown", this.handleKeyChange);
     window.removeEventListener("keyup", this.handleKeyChange);
     this.removeHiddenInput();
@@ -132,21 +191,87 @@ export class TextTool extends BaseTool {
     return this.isEditing ? this.editingLayerId : null;
   }
 
+  requestEditLayer(layerId: string, hitX?: number, hitY?: number, selectWord = false): void {
+    this.pendingEditRequest = { layerId, hitX, hitY, selectWord };
+  }
+
+  beginEditingLayer(
+    layerId: string,
+    context: ToolContext,
+    hitX?: number,
+    hitY?: number,
+    selectWord = false,
+  ): boolean {
+    const layer = context.project.layers.find((item) => item.id === layerId);
+    if (
+      !layer ||
+      layer.type !== "text" ||
+      !context.isLayerVisible(layer.id) ||
+      context.isLayerLocked(layer.id)
+    ) {
+      return false;
+    }
+
+    if (this.isEditing && this.editingLayerId !== layer.id) {
+      this.commit(context);
+    }
+    if (!this.isEditing || this.editingLayerId !== layer.id) {
+      this.startEditing(layer, context, hitX, hitY);
+    }
+
+    if (selectWord && hitX !== undefined && hitY !== undefined) {
+      this.selectWordAtPoint(layer, context, hitX, hitY);
+    }
+    return true;
+  }
+
+  getTextLayerAtPoint(x: number, y: number, context: ToolContext): Layer | null {
+    return this.findTextLayerAt(x, y, context);
+  }
+
+  private getTransformedLayerCorners(layer: Layer) {
+    const scaleX = Math.abs(layer.scaleX ?? 1);
+    const scaleY = Math.abs(layer.scaleY ?? 1);
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    const rotation = ((layer.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const halfWidth = (layer.width * scaleX) / 2;
+    const halfHeight = (layer.height * scaleY) / 2;
+
+    return [
+      { x: -halfWidth, y: -halfHeight },
+      { x: halfWidth, y: -halfHeight },
+      { x: halfWidth, y: halfHeight },
+      { x: -halfWidth, y: halfHeight },
+    ].map((point) => ({
+      x: centerX + point.x * cos - point.y * sin,
+      y: centerY + point.x * sin + point.y * cos,
+    }));
+  }
+
   private getTransformHandles(layer: Layer, zoom: number) {
     const { x, y, width, height, rotation = 0 } = layer;
+    const scaledWidth = width * Math.abs(layer.scaleX ?? 1);
+    const scaledHeight = height * Math.abs(layer.scaleY ?? 1);
     const midX = x + width / 2;
     const midY = y + height / 2;
+    const left = midX - scaledWidth / 2;
+    const top = midY - scaledHeight / 2;
+    const right = midX + scaledWidth / 2;
+    const bottom = midY + scaledHeight / 2;
 
     const rawHandles = [
-      { name: "top-left", x, y, cursor: "nwse-resize" },
-      { name: "top-middle", x: midX, y, cursor: "ns-resize" },
-      { name: "top-right", x: x + width, y, cursor: "nesw-resize" },
-      { name: "center-left", x, y: midY, cursor: "ew-resize" },
-      { name: "center-right", x: x + width, y: midY, cursor: "ew-resize" },
-      { name: "bottom-left", x, y: y + height, cursor: "nesw-resize" },
-      { name: "bottom-middle", x: midX, y: y + height, cursor: "ns-resize" },
-      { name: "bottom-right", x: x + width, y: y + height, cursor: "nwse-resize" },
-      { name: "rotate", x: midX, y: y - 20 / zoom, cursor: "crosshair" },
+      { name: "top-left", x: left, y: top, cursor: "nwse-resize" },
+      { name: "top-middle", x: midX, y: top, cursor: "ns-resize" },
+      { name: "top-right", x: right, y: top, cursor: "nesw-resize" },
+      { name: "center-left", x: left, y: midY, cursor: "ew-resize" },
+      { name: "center-right", x: right, y: midY, cursor: "ew-resize" },
+      { name: "bottom-left", x: left, y: bottom, cursor: "nesw-resize" },
+      { name: "bottom-middle", x: midX, y: bottom, cursor: "ns-resize" },
+      { name: "bottom-right", x: right, y: bottom, cursor: "nwse-resize" },
+      { name: "rotate", x: midX, y: top - 20 / zoom, cursor: "crosshair" },
     ];
 
     if (rotation === 0) return rawHandles;
@@ -191,7 +316,8 @@ export class TextTool extends BaseTool {
 
   private worldToLocal(px: number, py: number, layer: Layer): { x: number; y: number } {
     const rotation = layer.rotation || 0;
-    if (rotation === 0) return { x: px, y: py };
+    const scaleX = layer.scaleX ?? 1;
+    const scaleY = layer.scaleY ?? 1;
 
     const midX = layer.x + layer.width / 2;
     const midY = layer.y + layer.height / 2;
@@ -202,10 +328,12 @@ export class TextTool extends BaseTool {
     const rad = (-rotation * Math.PI) / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
+    const scaledX = dx / (scaleX || 1);
+    const scaledY = dy / (scaleY || 1);
 
     return {
-      x: midX + (dx * cos - dy * sin),
-      y: midY + (dx * sin + dy * cos),
+      x: midX + scaledX * cos - scaledY * sin,
+      y: midY + scaledX * sin + scaledY * cos,
     };
   }
 
@@ -233,6 +361,266 @@ export class TextTool extends BaseTool {
       selectionStart: this.selectionStart,
       isFocused: this.isEditing,
     };
+  }
+
+  private getFormattingRange(text: string): { start: number; end: number } {
+    const selectionStart = Math.min(this.caretIndex, this.selectionStart);
+    const selectionEnd = Math.max(this.caretIndex, this.selectionStart);
+    if (selectionStart !== selectionEnd) {
+      return { start: selectionStart, end: selectionEnd };
+    }
+
+    return (
+      getTextWordRangeAt(text, this.caretIndex) || {
+        start: this.caretIndex,
+        end: this.caretIndex,
+      }
+    );
+  }
+
+  private getLineHeightState(
+    layer: Layer,
+    text: string,
+    start: number,
+    end: number,
+  ): { lineHeight: number; mixed: boolean } {
+    const baseLineHeight = layer.lineHeight || 1.2;
+    const startLine = getTextLineIndex(text, start);
+    const endLine = getTextLineIndex(text, end);
+    const values: number[] = [];
+    for (let line = startLine; line <= endLine; line++) {
+      values.push(layer.textLineHeights?.[line] ?? baseLineHeight);
+    }
+    const lineHeight =
+      layer.textLineHeights?.[getTextLineIndex(text, this.caretIndex)] ?? baseLineHeight;
+    return { lineHeight, mixed: values.some((value) => value !== values[0]) };
+  }
+
+  private getTextEditorAnchor(layer: Layer, start: number, end: number) {
+    const fallback = {
+      x: layer.x,
+      y: layer.y,
+    };
+    const ctx = this.lastContext?.ctx;
+    if (!ctx) return fallback;
+
+    const bounds = TextLayer.getTextRangeBounds(ctx, layer, start, end);
+    const anchor = {
+      x: bounds.x,
+      y: bounds.y,
+    };
+    const rotation = layer.rotation || 0;
+    const scaleX = layer.scaleX ?? 1;
+    const scaleY = layer.scaleY ?? 1;
+    if (rotation === 0 && scaleX === 1 && scaleY === 1) return anchor;
+
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    const radians = (rotation * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const offsetX = (anchor.x - centerX) * scaleX;
+    const offsetY = (anchor.y - centerY) * scaleY;
+
+    return {
+      x: centerX + offsetX * cos - offsetY * sin,
+      y: centerY + offsetX * sin + offsetY * cos,
+    };
+  }
+
+  private syncEditorStore(layer?: Layer) {
+    if (!this.isEditing || !this.editingLayerId || !layer) {
+      useTextEditorStore.getState().reset();
+      return;
+    }
+
+    const text = layer.text || "";
+    const { start, end } = this.getFormattingRange(text);
+    const selectionStyle =
+      start === end
+        ? {
+            style: {
+              ...this.getBaseTextStyle(layer),
+              ...getTextSpanStyleAtCaret(text, layer.textSpans, this.caretIndex),
+              ...this.pendingTextStyle,
+            },
+            mixedStyles: {},
+          }
+        : this.getSelectionStyle(layer, start, end);
+    const lineIndex = getTextLineIndex(text, this.caretIndex);
+    const lineHeightState = this.getLineHeightState(layer, text, start, end);
+
+    useTextEditorStore.getState().setState({
+      isEditing: true,
+      layerId: layer.id,
+      caretIndex: this.caretIndex,
+      selectionStart: this.selectionStart,
+      formatStart: start,
+      formatEnd: end,
+      isCtrlPressed: this.isCtrlPressed,
+      anchor: this.getTextEditorAnchor(layer, start, end),
+      style: selectionStyle.style,
+      mixedStyles: selectionStyle.mixedStyles,
+      lineAlignment: layer.textLineAlignments?.[lineIndex] || layer.textAlign || "left",
+      lineHeight: lineHeightState.lineHeight,
+      mixedLineHeight: lineHeightState.mixed,
+    });
+  }
+
+  private getSelectionStyle(
+    layer: Layer,
+    start: number,
+    end: number,
+  ): { style: TextSpanStyle; mixedStyles: Partial<Record<keyof TextSpanStyle, boolean>> } {
+    const first = {
+      ...this.getBaseTextStyle(layer),
+      ...getTextSpanStyleAt(layer.textSpans, start),
+    };
+    const style: TextSpanStyle = {};
+    const keys: (keyof TextSpanStyle)[] = [
+      "color",
+      "fontSize",
+      "fontFamily",
+      "fontWeight",
+      "italic",
+      "underline",
+      "strikethrough",
+      "verticalAlign",
+      "tracking",
+    ];
+    const mixedStyles: Partial<Record<keyof TextSpanStyle, boolean>> = {};
+    for (const key of keys) {
+      let matches = true;
+      for (let index = start + 1; index < end; index++) {
+        const current = {
+          ...this.getBaseTextStyle(layer),
+          ...getTextSpanStyleAt(layer.textSpans, index),
+        };
+        if (current[key] !== first[key]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) style[key] = first[key] as never;
+      else mixedStyles[key] = true;
+    }
+    return { style, mixedStyles };
+  }
+
+  private getBaseTextStyle(layer: Layer): TextSpanStyle {
+    return {
+      fontFamily: layer.fontFamily,
+      fontSize: layer.fontSize,
+      fontWeight: layer.fontWeight,
+      color: layer.color,
+      tracking: layer.tracking,
+    };
+  }
+
+  private applyFormat(command: TextFormatCommand, context: ToolContext) {
+    if (!this.isEditing || !this.editingLayerId) return;
+    const layer = context.project.layers.find((item) => item.id === this.editingLayerId);
+    if (!layer) return;
+
+    const text = layer.text || "";
+    const formattingRange = this.getFormattingRange(text);
+    const start = command.scope === "all" ? 0 : formattingRange.start;
+    const end = command.scope === "all" ? text.length : formattingRange.end;
+    const style = command.style || {};
+
+    if (command.type !== "scaleFontSize" || command.gestureId === undefined) {
+      this.fontSizeScaleSession = null;
+    }
+
+    if (command.type === "setLineAlignment") {
+      const lineIndex = getTextLineIndex(text, this.caretIndex);
+      const textLineAlignments = { ...(layer.textLineAlignments || {}) };
+      if (command.alignment && command.alignment !== (layer.textAlign || "left")) {
+        textLineAlignments[lineIndex] = command.alignment;
+      } else {
+        delete textLineAlignments[lineIndex];
+      }
+      this.updateText(text, context, layer.textSpans, textLineAlignments);
+      this.syncEditorStore({ ...layer, textLineAlignments });
+      return;
+    }
+
+    if (command.type === "setLineHeight") {
+      const lineHeight = command.lineHeight;
+      if (lineHeight === undefined || !Number.isFinite(lineHeight) || lineHeight <= 0) return;
+      const textLineHeights = { ...(layer.textLineHeights || {}) };
+      const startLine = getTextLineIndex(text, start);
+      const endLine = getTextLineIndex(text, end);
+      for (let line = startLine; line <= endLine; line++) {
+        if (lineHeight === (layer.lineHeight || 1.2)) delete textLineHeights[line];
+        else textLineHeights[line] = lineHeight;
+      }
+      this.updateText(text, context, layer.textSpans, layer.textLineAlignments, textLineHeights);
+      this.syncEditorStore({ ...layer, textLineHeights });
+      return;
+    }
+
+    if (start === end) {
+      this.pendingTextStyle = { ...this.pendingTextStyle, ...style };
+      this.syncEditorStore(layer);
+      return;
+    }
+
+    let sourceSpans = layer.textSpans;
+    if (command.type === "scaleFontSize" && command.gestureId !== undefined) {
+      const session = this.fontSizeScaleSession;
+      const matchesSession =
+        session &&
+        session.gestureId === command.gestureId &&
+        session.layerId === layer.id &&
+        session.text === text &&
+        session.start === start &&
+        session.end === end;
+      if (matchesSession) {
+        sourceSpans = session.textSpans;
+      } else {
+        this.fontSizeScaleSession = {
+          gestureId: command.gestureId,
+          layerId: layer.id,
+          text,
+          start,
+          end,
+          textSpans: layer.textSpans?.map((span) => ({ ...span })),
+        };
+        sourceSpans = this.fontSizeScaleSession.textSpans;
+      }
+    }
+
+    const isWholeTextSelection = text.length > 0 && start === 0 && end === text.length;
+    if (isWholeTextSelection && command.type === "setStyle") {
+      const promoted = promoteTextStyleToLayer(text, layer.textSpans, style);
+      this.updateText(text, context, promoted.textSpans, undefined, undefined, promoted.layerStyle);
+      this.syncEditorStore({ ...layer, ...promoted.layerStyle, textSpans: promoted.textSpans });
+      return;
+    }
+
+    const textSpans =
+      command.type === "scaleFontSize"
+        ? scaleTextSpanFontSizes(
+            text,
+            sourceSpans,
+            start,
+            end,
+            Number(command.to) / Number(command.from),
+            layer.fontSize || Number(command.from) || 24,
+          )
+        : applyTextSpanStyle(text, layer.textSpans, start, end, {
+            ...style,
+            ...(style.fontWeight !== undefined
+              ? { fontWeight: normalizeTextFontWeight(style.fontWeight) }
+              : {}),
+          });
+    const layerUpdates =
+      isWholeTextSelection && command.type === "scaleFontSize" && command.to !== undefined
+        ? { fontSize: Number(command.to) }
+        : undefined;
+    this.updateText(text, context, textSpans, undefined, undefined, layerUpdates);
+    this.syncEditorStore({ ...layer, ...layerUpdates, textSpans });
   }
 
   onMouseDown(e: MouseEvent, context: ToolContext): void {
@@ -291,6 +679,7 @@ export class TextTool extends BaseTool {
         }
         this.isSelecting = true;
         context.setInteracting(true);
+        this.syncEditorStore(hitLayer);
         return;
       }
 
@@ -384,6 +773,7 @@ export class TextTool extends BaseTool {
           localPos.x,
           localPos.y,
         );
+        this.syncEditorStore(editingLayer);
       }
       return;
     }
@@ -727,28 +1117,18 @@ export class TextTool extends BaseTool {
     const hitLayer = this.findTextLayerAt(x, y, context);
 
     if (hitLayer) {
-      if (!this.isEditing || this.editingLayerId !== hitLayer.id) {
-        this.startEditing(hitLayer, context, x, y);
-      }
-
-      const localPos = this.worldToLocal(x, y, hitLayer);
-      const index = TextLayer.getCaretIndexAt(context.ctx, hitLayer, localPos.x, localPos.y);
-      const text = hitLayer.text || "";
-
-      // Find word boundaries
-      let start = index;
-      while (start > 0 && /\w/.test(text[start - 1])) {
-        start--;
-      }
-
-      let end = index;
-      while (end < text.length && /\w/.test(text[end])) {
-        end++;
-      }
-
-      this.selectionStart = start;
-      this.caretIndex = end;
+      this.beginEditingLayer(hitLayer.id, context, x, y, true);
     }
+  }
+
+  private selectWordAtPoint(layer: Layer, context: ToolContext, x: number, y: number): void {
+    const localPos = this.worldToLocal(x, y, layer);
+    const index = TextLayer.getCaretIndexAt(context.ctx, layer, localPos.x, localPos.y);
+    const text = layer.text || "";
+    const wordRange = getTextWordRangeAt(text, index);
+    this.selectionStart = wordRange?.start ?? index;
+    this.caretIndex = wordRange?.end ?? index;
+    this.syncEditorStore(layer);
   }
 
   private findTextLayerAt(x: number, y: number, context: ToolContext): Layer | null {
@@ -775,9 +1155,11 @@ export class TextTool extends BaseTool {
   }
 
   private startEditing(layer: Layer, context: ToolContext, hitX?: number, hitY?: number) {
+    this.fontSizeScaleSession = null;
     this.editingLayerId = layer.id;
     this.isEditing = true;
     this.originalText = layer.text || "";
+    this.pendingTextStyle = {};
     this.activeSnapLines = [];
     context.updateProject({ activeLayerId: layer.id });
 
@@ -809,7 +1191,12 @@ export class TextTool extends BaseTool {
     // Save initial state to history for this layer
     const newUndoStack = [
       ...(layer.textUndoStack || []),
-      { text: layer.text || "", textSpans: layer.textSpans },
+      {
+        text: layer.text || "",
+        textSpans: layer.textSpans,
+        textLineAlignments: layer.textLineAlignments,
+        textLineHeights: layer.textLineHeights,
+      },
     ];
     useProjectStore
       .getState()
@@ -822,6 +1209,7 @@ export class TextTool extends BaseTool {
       this.caretIndex = layer.text?.length || 0;
     }
     this.selectionStart = this.caretIndex;
+    this.syncEditorStore(layer);
 
     context.updateToolSettings("text", { isEditing: true });
     setTimeout(() => this.hiddenInput?.focus(), 50);
@@ -888,6 +1276,8 @@ export class TextTool extends BaseTool {
     this.caretIndex = 0;
     this.selectionStart = 0;
     this.originalText = "";
+    this.pendingTextStyle = {};
+    this.syncEditorStore(newLayer as Layer);
     context.updateToolSettings("text", { isEditing: true });
     setTimeout(() => this.hiddenInput?.focus(), 50);
   }
@@ -895,6 +1285,15 @@ export class TextTool extends BaseTool {
   onKeyDown(e: KeyboardEvent, context: ToolContext): boolean {
     this.lastContext = context;
     if (!this.isEditing || !this.editingLayerId) return false;
+
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      target.id !== "forge-text-input" &&
+      (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+    ) {
+      return false;
+    }
 
     const layer = context.project.layers.find((l) => l.id === this.editingLayerId);
     if (!layer) return false;
@@ -909,21 +1308,62 @@ export class TextTool extends BaseTool {
       return true;
     };
 
+    const isModifierPressed = e.ctrlKey || e.metaKey;
+    if (isModifierPressed && !e.altKey && hasSelection) {
+      const editorState = useTextEditorStore.getState();
+      const key = e.key.toLowerCase();
+      let style: TextSpanStyle | null = null;
+
+      if (key === "b") {
+        const isBold =
+          !editorState.mixedStyles.fontWeight && isBoldTextFontWeight(editorState.style.fontWeight);
+        style = { fontWeight: normalizeTextFontWeight(isBold ? "400" : "700") };
+      } else if (key === "i") {
+        style = {
+          italic: editorState.mixedStyles.italic ? true : editorState.style.italic !== true,
+        };
+      } else if (key === "u") {
+        const styleKey = e.shiftKey ? "strikethrough" : "underline";
+        const isMixed = editorState.mixedStyles[styleKey];
+        style = { [styleKey]: isMixed ? true : editorState.style[styleKey] !== true };
+      }
+
+      if (style) {
+        this.applyFormat({ type: "setStyle", style, scope: "formatRange" }, context);
+        return consume();
+      }
+    }
+
     if (e.key === "Enter") {
       if (e.ctrlKey || e.metaKey) {
         this.commit(context);
         return consume();
       }
       this.insertText("\n", context);
+      this.syncEditorStore(layer);
       return consume();
     } else if (e.key === "Backspace") {
       if (hasSelection) {
         this.deleteSelection(context);
       } else if (this.caretIndex > 0) {
         const newText = text.substring(0, this.caretIndex - 1) + text.substring(this.caretIndex);
+        const oldCaret = this.caretIndex;
         this.caretIndex--;
         this.selectionStart = this.caretIndex;
-        this.updateText(newText, context);
+        this.updateText(
+          newText,
+          context,
+          replaceTextWithSpans(text, layer.textSpans, newText, oldCaret - 1, oldCaret),
+          updateTextLineAlignments(
+            text,
+            newText,
+            layer.textLineAlignments,
+            oldCaret - 1,
+            oldCaret,
+          ) || null,
+          updateTextLineHeights(text, newText, layer.textLineHeights, oldCaret - 1, oldCaret) ||
+            null,
+        );
       }
       return consume();
     } else if (e.key === "Delete") {
@@ -931,7 +1371,31 @@ export class TextTool extends BaseTool {
         this.deleteSelection(context);
       } else if (this.caretIndex < text.length) {
         const newText = text.substring(0, this.caretIndex) + text.substring(this.caretIndex + 1);
-        this.updateText(newText, context);
+        this.updateText(
+          newText,
+          context,
+          replaceTextWithSpans(
+            text,
+            layer.textSpans,
+            newText,
+            this.caretIndex,
+            this.caretIndex + 1,
+          ),
+          updateTextLineAlignments(
+            text,
+            newText,
+            layer.textLineAlignments,
+            this.caretIndex,
+            this.caretIndex + 1,
+          ) || null,
+          updateTextLineHeights(
+            text,
+            newText,
+            layer.textLineHeights,
+            this.caretIndex,
+            this.caretIndex + 1,
+          ) || null,
+        );
       }
       return consume();
     } else if (e.key === "ArrowLeft") {
@@ -948,6 +1412,7 @@ export class TextTool extends BaseTool {
       if (!e.shiftKey) {
         this.selectionStart = this.caretIndex;
       }
+      this.syncEditorStore(layer);
       return consume();
     } else if (e.key === "ArrowRight") {
       if (e.ctrlKey || e.altKey) {
@@ -963,6 +1428,7 @@ export class TextTool extends BaseTool {
       if (!e.shiftKey) {
         this.selectionStart = this.caretIndex;
       }
+      this.syncEditorStore(layer);
       return consume();
     } else if (e.key === "Escape") {
       this.cancel(context);
@@ -973,10 +1439,13 @@ export class TextTool extends BaseTool {
       } else {
         useProjectStore.getState().undoText(context.project.id, this.editingLayerId);
       }
+      const updatedLayer = context.project.layers.find((item) => item.id === this.editingLayerId);
+      this.syncEditorStore(updatedLayer);
       return consume();
     } else if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
       this.selectionStart = 0;
       this.caretIndex = text.length;
+      this.syncEditorStore(layer);
       return consume();
     } else if (e.key === "c" && (e.ctrlKey || e.metaKey)) {
       this.copySelectedText(layer);
@@ -1035,7 +1504,15 @@ export class TextTool extends BaseTool {
     const newText = text.substring(0, start) + text.substring(end);
     this.caretIndex = start;
     this.selectionStart = start;
-    this.updateText(newText, context);
+    const textSpans = replaceTextWithSpans(text, layer.textSpans, newText, start, end);
+    this.updateText(
+      newText,
+      context,
+      textSpans,
+      updateTextLineAlignments(text, newText, layer.textLineAlignments, start, end) || null,
+      updateTextLineHeights(text, newText, layer.textLineHeights, start, end) || null,
+    );
+    this.syncEditorStore({ ...layer, text: newText, textSpans });
   }
 
   private insertText(char: string, context: ToolContext) {
@@ -1052,10 +1529,28 @@ export class TextTool extends BaseTool {
     const newText = text.substring(0, start) + normalizedChar + text.substring(end);
     this.caretIndex = start + normalizedChar.length;
     this.selectionStart = this.caretIndex;
-    this.updateText(newText, context);
+    const textSpans = replaceTextWithSpans(text, layer.textSpans, newText, start, end, {
+      ...getTextSpanStyleAtCaret(text, layer.textSpans, start),
+      ...this.pendingTextStyle,
+    });
+    this.updateText(
+      newText,
+      context,
+      textSpans,
+      updateTextLineAlignments(text, newText, layer.textLineAlignments, start, end) || null,
+      updateTextLineHeights(text, newText, layer.textLineHeights, start, end) || null,
+    );
+    this.syncEditorStore({ ...layer, text: newText, textSpans });
   }
 
-  private updateText(text: string, context: ToolContext) {
+  private updateText(
+    text: string,
+    context: ToolContext,
+    textSpans?: Layer["textSpans"],
+    textLineAlignments?: Record<number, TextAlignment> | null,
+    textLineHeights?: Record<number, number> | null,
+    layerUpdates: Partial<Layer> = {},
+  ) {
     if (!this.editingLayerId) return;
     const layer = context.project.layers.find((l) => l.id === this.editingLayerId);
     if (!layer) return;
@@ -1063,10 +1558,27 @@ export class TextTool extends BaseTool {
     // Push previous text to undo stack before updating
     const newUndoStack = [
       ...(layer.textUndoStack || []),
-      { text: layer.text || "", textSpans: layer.textSpans },
+      {
+        text: layer.text || "",
+        textSpans: layer.textSpans,
+        textLineAlignments: layer.textLineAlignments,
+        textLineHeights: layer.textLineHeights,
+      },
     ];
 
-    const baseUpdates: Partial<Layer> = { text, textUndoStack: newUndoStack, textRedoStack: [] };
+    const baseUpdates: Partial<Layer> = {
+      text,
+      textSpans: textSpans?.length ? textSpans : undefined,
+      textLineAlignments:
+        textLineAlignments === undefined
+          ? layer.textLineAlignments
+          : textLineAlignments || undefined,
+      textLineHeights:
+        textLineHeights === undefined ? layer.textLineHeights : textLineHeights || undefined,
+      textUndoStack: newUndoStack,
+      textRedoStack: [],
+      ...layerUpdates,
+    };
     let dimensionUpdates = {};
 
     if (layer.textType === "point") {
@@ -1075,6 +1587,7 @@ export class TextTool extends BaseTool {
         width: metrics.width,
         height: metrics.height,
         x: metrics.x ?? layer.x,
+        y: metrics.y ?? layer.y,
       };
     }
 
@@ -1085,6 +1598,7 @@ export class TextTool extends BaseTool {
       height: (updates as any).height ?? layer.height,
     });
     context.invalidateCache(this.editingLayerId);
+    this.syncEditorStore({ ...layer, ...updates });
   }
 
   private commit(context: ToolContext) {
@@ -1137,6 +1651,8 @@ export class TextTool extends BaseTool {
     this.isEditing = false;
     this.previousState = null; // Clear state after commit
     this.editingLayerId = null;
+    this.pendingTextStyle = {};
+    useTextEditorStore.getState().reset();
     if (this.hiddenInput) {
       this.hiddenInput.value = "";
       this.hiddenInput.blur();
@@ -1163,6 +1679,8 @@ export class TextTool extends BaseTool {
     this.isEditing = false;
     this.previousState = null; // Clear state after cancellation
     this.editingLayerId = null;
+    this.pendingTextStyle = {};
+    useTextEditorStore.getState().reset();
     if (this.hiddenInput) {
       this.hiddenInput.value = "";
       this.hiddenInput.blur();
@@ -1200,6 +1718,8 @@ export class TextTool extends BaseTool {
     if (this.isEditing && this.editingLayerId) {
       const layer = context.project.layers.find((l) => l.id === this.editingLayerId);
       if (!layer) return;
+
+      this.syncEditorStore(layer);
 
       const scale = context.project.zoom;
 
@@ -1262,25 +1782,19 @@ export class TextTool extends BaseTool {
         ctx.lineWidth = 1 / scale;
         ctx.setLineDash([4 / scale, 2 / scale]);
 
-        if (layer.rotation) {
-          const midX = layer.x + layer.width / 2;
-          const midY = layer.y + layer.height / 2;
-          ctx.translate(midX, midY);
-          ctx.rotate((layer.rotation * Math.PI) / 180);
-          ctx.strokeRect(-layer.width / 2, -layer.height / 2, layer.width, layer.height);
-        } else {
-          ctx.strokeRect(layer.x, layer.y, layer.width, layer.height);
-        }
+        const corners = this.getTransformedLayerCorners(layer);
+        ctx.beginPath();
+        ctx.moveTo(corners[0].x, corners[0].y);
+        corners.slice(1).forEach((corner) => ctx.lineTo(corner.x, corner.y));
+        ctx.closePath();
+        ctx.stroke();
         ctx.restore();
       }
     }
 
     if (this.activeSnapLines.length > 0) {
       ctx.save();
-      ctx.setTransform(
-        context.project.zoom,
-        0,
-        0,
+      context.setViewportTransform(
         context.project.zoom,
         context.project.panX,
         context.project.panY,
@@ -1288,8 +1802,8 @@ export class TextTool extends BaseTool {
       ctx.strokeStyle = "red";
       ctx.lineWidth = 1 / context.project.zoom;
 
-      const viewportWidth = context.canvas.width / context.project.zoom;
-      const viewportHeight = context.canvas.height / context.project.zoom;
+      const viewportWidth = context.viewportWidth / context.project.zoom;
+      const viewportHeight = context.viewportHeight / context.project.zoom;
       const startX = -context.project.panX / context.project.zoom;
       const startY = -context.project.panY / context.project.zoom;
 

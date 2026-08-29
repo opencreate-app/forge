@@ -12,9 +12,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - platform: macos
+            runner: macos-15
+            arch: arm64
+            app_path: dist/mac-arm64/OpenCreate Forge.app
+            binary_arch: arm64
+          - platform: macos
+            runner: macos-15-intel
+            arch: x64
+            app_path: dist/mac/OpenCreate Forge.app
+            binary_arch: x86_64
+          - platform: ubuntu
+            runner: ubuntu-latest
+            arch: x64
+          - platform: windows
+            runner: windows-latest
+            arch: x64
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -25,18 +41,51 @@ jobs:
           node-version: lts/*
           cache: "npm"
 
+      - name: Cache Electron downloads (Linux)
+        if: matrix.platform == 'ubuntu'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ matrix.runner }}-${{ matrix.arch }}-
+
+      - name: Cache Electron downloads (macOS)
+        if: matrix.platform == 'macos'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ matrix.runner }}-${{ matrix.arch }}-
+
+      - name: Cache Electron downloads (Windows)
+        if: matrix.platform == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ matrix.runner }}-${{ matrix.arch }}-
+
       - name: Install dependencies
         run: npm ci
 
       - name: Cache APT Packages
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'ubuntu'
         uses: actions/cache@v4
         with:
           path: ~/apt-cache
           key: ${{ runner.os }}-apt-flatpak-v1
 
       - name: Install Flatpak dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'ubuntu'
         run: |
           # 1. Cria o diretório de cache se não existir
           mkdir -p ~/apt-cache
@@ -67,20 +116,58 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            npm run build -- --publish never --mac --x64 --arm64
-          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            npm run build -- --publish never --win --x64
-          else
-            npm run build -- --publish never --linux --x64
-          fi
+          run_build() {
+            if [ "${{ matrix.platform }}" == "macos" ]; then
+              npm run build -- --publish never --mac --${{ matrix.arch }}
+            elif [ "${{ matrix.platform }}" == "windows" ]; then
+              npm run build -- --publish never --win --x64
+            else
+              npm run build -- --publish never --linux --x64
+            fi
+          }
+
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Build attempt $attempt/$max_attempts"
+            if run_build; then
+              exit 0
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              exit "$status"
+            fi
+
+            delay=$((attempt * 10))
+            echo "Build failed with exit code $status; retrying in ${delay}s."
+            sleep "$delay"
+          done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke test macOS bundle
+        if: matrix.platform == 'macos'
+        run: |
+          npm run smoke:macos -- "${{ matrix.app_path }}" "${{ matrix.binary_arch }}"
+        env:
+          SMOKE_MACOS_LAUNCH: "false"
+
+      - name: Upload macOS smoke diagnostics
+        if: failure() && matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-smoke-diagnostics
+          path: |
+            dist/macos-smoke.log
+            ~/Library/Logs/OpenCreate Forge/startup.log
+            ~/Library/Logs/DiagnosticReports/OpenCreate Forge*.ips
+          if-no-files-found: ignore
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts-${{ matrix.os }}
+          name: build-artifacts-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             dist/*.dmg
             dist/*.zip
@@ -114,6 +201,47 @@ jobs:
           TAG_NAME=${GITHUB_REF#refs/tags/}
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
+      - name: Remove duplicate draft releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.get_version.outputs.tag_name }}
+        run: |
+          DUPLICATE_RELEASE_IDS=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq '.[] | select(.draft == true and .tag_name == env.TAG_NAME) | .id')
+
+          while IFS= read -r RELEASE_ID; do
+            if [ -n "$RELEASE_ID" ]; then
+              echo "Deleting duplicate draft release $RELEASE_ID for tag $TAG_NAME"
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID"
+            fi
+          done <<< "$DUPLICATE_RELEASE_IDS"
+
+      - name: Validate release artifacts
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: |
+          expected_assets=(
+            "OpenCreate Forge Setup ${VERSION}.exe"
+            "OpenCreate Forge ${VERSION}.exe"
+            "OpenCreate Forge-${VERSION}.dmg"
+            "OpenCreate Forge-${VERSION}-mac.zip"
+            "OpenCreate Forge-${VERSION}-arm64.dmg"
+            "OpenCreate Forge-${VERSION}-arm64-mac.zip"
+            "OpenCreate Forge-${VERSION}.AppImage"
+            "OpenCreate Forge-${VERSION}-x86_64.flatpak"
+            "opencreate-forge_${VERSION}_amd64.deb"
+            "opencreate-forge-${VERSION}.x86_64.rpm"
+          )
+
+          for asset in "${expected_assets[@]}"; do
+            if [ ! -f "artifacts/$asset" ]; then
+              echo "::error::Expected release asset is missing: $asset"
+              echo "Available artifacts:"
+              find artifacts -maxdepth 1 -type f -print | sort
+              exit 1
+            fi
+          done
+
       - name: Prepare Release Body
         id: release_body
         run: |
@@ -122,16 +250,22 @@ jobs:
           REPO="${{ github.repository }}"
           BASE_URL="https://github.com/$REPO/releases/download/$TAG"
 
-          # electron-builder naming conventions:
-          # Windows/AppImage: ProductName.Version.ext (spaces to dots)
-          # macOS: ProductName-Version-arch.ext (spaces to dots)
-          # Linux (deb/rpm): name_version_arch.ext or name-version.arch.ext
-
-          PRODUCT_NAME_DOTS="OpenCreate.Forge"
+          # GitHub stores the uploaded asset name with dots, while its UI label
+          # may display spaces. Release download URLs must use the stored name.
+          WINDOWS_INSTALLER="OpenCreate.Forge.Setup.${VERSION}.exe"
+          WINDOWS_PORTABLE="OpenCreate.Forge.${VERSION}.exe"
+          MAC_X64_DMG="OpenCreate.Forge-${VERSION}.dmg"
+          MAC_X64_ZIP="OpenCreate.Forge-${VERSION}-mac.zip"
+          MAC_ARM64_DMG="OpenCreate.Forge-${VERSION}-arm64.dmg"
+          MAC_ARM64_ZIP="OpenCreate.Forge-${VERSION}-arm64-mac.zip"
+          LINUX_APPIMAGE="OpenCreate.Forge-${VERSION}.AppImage"
+          LINUX_FLATPAK="OpenCreate.Forge-${VERSION}-x86_64.flatpak"
           INTERNAL_NAME="opencreate-forge"
 
           cat <<EOF > body.md
           ## Downloads
+
+          ⚠️ macOS builds use an ad-hoc signature and are not notarized. On first launch, use Finder and approve the app in **System Settings → Privacy & Security → Open Anyway** if macOS asks for confirmation.
 
           <table>
           <thead>
@@ -145,33 +279,33 @@ jobs:
           <tr>
           <td rowspan="2"><strong>Windows</strong></td>
           <td rowspan="2">x64</td>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS.Setup.$VERSION.exe">Installer (EXE)</a></td>
+          <td><a href="$BASE_URL/$WINDOWS_INSTALLER">Installer (EXE)</a></td>
           </tr>
           <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS.$VERSION.exe">Portable (EXE)</a></td>
+          <td><a href="$BASE_URL/$WINDOWS_PORTABLE">Portable (EXE)</a></td>
           </tr>
           <tr>
           <td rowspan="4"><strong>macOS</strong></td>
-          <td rowspan="2">Intel (x64)</td>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION.dmg">Universal/Intel (DMG)</a></td>
-          </tr>
-          <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-mac.zip">Portable (ZIP/APP)</a></td>
-          </tr>
-          <tr>
           <td rowspan="2">Apple Silicon (arm64)</td>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-arm64.dmg">Download (DMG)</a></td>
+          <td><a href="$BASE_URL/$MAC_ARM64_DMG">Installer (DMG)</a></td>
           </tr>
           <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-arm64-mac.zip">Portable (ZIP/APP)</a></td>
+          <td><a href="$BASE_URL/$MAC_ARM64_ZIP">Portable (ZIP/APP)</a></td>
+          </tr>
+          <tr>
+          <td rowspan="2">Intel (x64)</td>
+          <td><a href="$BASE_URL/$MAC_X64_DMG">Installer (DMG)</a></td>
+          </tr>
+          <tr>
+          <td><a href="$BASE_URL/$MAC_X64_ZIP">Portable (ZIP/APP)</a></td>
           </tr>
           <tr>
           <td rowspan="4"><strong>Linux</strong></td>
           <td rowspan="4">x64</td>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION.AppImage">AppImage</a></td>
+          <td><a href="$BASE_URL/$LINUX_APPIMAGE">AppImage</a></td>
           </tr>
           <tr>
-          <td><a href="$BASE_URL/$PRODUCT_NAME_DOTS-$VERSION-x86_64.flatpak">Flatpak</a></td>
+          <td><a href="$BASE_URL/$LINUX_FLATPAK">Flatpak</a></td>
           </tr>
           <tr>
           <td><a href="$BASE_URL/${INTERNAL_NAME}_${VERSION}_amd64.deb">Debian (DEB)</a></td>
@@ -189,6 +323,7 @@ jobs:
         with:
           body_path: body.md
           files: artifacts/*
+          overwrite_files: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:

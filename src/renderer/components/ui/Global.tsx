@@ -27,7 +27,7 @@ export const ShortcutSpan: React.FC<{ shortcut: string; macos?: boolean }> = ({
               .replace("Enter", "⏎")
           : part;
         return (
-          <React.Fragment key={index}>
+          <React.Fragment key={`shortcut-part:${shortcut}:${index}`}>
             <KeySpan>{displayPart}</KeySpan>
             {index < parts.length - 1 && <span className="text-[#777]">+</span>}
           </React.Fragment>

@@ -1,0 +1,273 @@
+import { fireEvent, render } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import LayerItem from "@/renderer/components/Sidebar/LayerItem";
+import { useProjectStore, type Layer, type Project } from "@/renderer/store/projectStore";
+import { useUIStore } from "@/renderer/store/uiStore";
+
+const selectionUtilsMock = vi.hoisted(() => ({
+  createLayerPixelSelection: vi.fn(),
+  combineSelections: vi.fn(),
+}));
+
+vi.mock("@utils/selectionUtils", () => selectionUtilsMock);
+
+const createProject = (layer: Layer): Project => ({
+  id: "project-1",
+  name: "Project",
+  width: 100,
+  height: 100,
+  layers: [layer],
+  guides: [],
+  activeLayerId: layer.id,
+  activeMaskId: null,
+  selectedLayerIds: [layer.id],
+  selection: { hasSelection: false, bounds: null },
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+  isDirty: false,
+  undoStack: [],
+  redoStack: [],
+});
+
+const colorFillLayer: Layer = {
+  id: "fill-1",
+  name: "Fill",
+  type: "color_fill",
+  visible: true,
+  locked: false,
+  opacity: 100,
+  fill: 100,
+  x: 0,
+  y: 0,
+  width: 100,
+  height: 100,
+  blendMode: "source-over",
+  colorFill: { color: "#12ab34" },
+  mask: {
+    data: "data:image/png;base64,mask",
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+    enabled: true,
+    linked: true,
+  },
+};
+
+const gradientLayer: Layer = {
+  ...colorFillLayer,
+  id: "gradient-1",
+  name: "Gradient",
+  type: "gradient_fill",
+  colorFill: undefined,
+  gradientFill: {
+    type: "linear",
+    colors: [
+      { color: "#ff0000", position: 0 },
+      { color: "#0000ff", position: 1 },
+    ],
+    start: { x: 0, y: 0 },
+    end: { x: 100, y: 100 },
+  },
+};
+
+describe("LayerItem", () => {
+  beforeEach(() => {
+    selectionUtilsMock.createLayerPixelSelection.mockReset();
+    selectionUtilsMock.combineSelections.mockReset();
+    useProjectStore.setState({
+      projects: [createProject(colorFillLayer)],
+      activeProjectId: "project-1",
+    });
+    useUIStore.setState({ stylingLayerId: null });
+  });
+
+  it("opens the color fill modal when its visual thumbnail is double-clicked", () => {
+    const onOpenColorPicker = vi.fn();
+    window.addEventListener("forge:open-color-picker-for-layer", onOpenColorPicker);
+
+    const view = render(
+      <LayerItem
+        layer={colorFillLayer}
+        projectId="project-1"
+        isActive
+        isSelected
+        index={0}
+        depth={0}
+        isInheritedHidden={false}
+        draggedIndex={null}
+        onDragStart={vi.fn()}
+        onDragOver={vi.fn()}
+        onDrop={vi.fn()}
+        onClick={vi.fn()}
+        onVisibilityMouseDown={vi.fn()}
+        onVisibilityMouseEnter={vi.fn()}
+        onToggleExpansion={vi.fn()}
+        onContextMenu={vi.fn()}
+      />,
+    );
+
+    const thumbnails = view.container.querySelectorAll("div.w-8.h-8");
+    fireEvent.doubleClick(thumbnails[0]);
+
+    expect(useUIStore.getState().stylingLayerId).toBeNull();
+    expect(onOpenColorPicker).toHaveBeenCalledOnce();
+    expect(onOpenColorPicker.mock.calls[0][0].detail).toEqual({
+      projectId: "project-1",
+      layerId: "fill-1",
+    });
+
+    fireEvent.doubleClick(thumbnails[1]);
+    expect(onOpenColorPicker).toHaveBeenCalledOnce();
+
+    window.removeEventListener("forge:open-color-picker-for-layer", onOpenColorPicker);
+  });
+
+  it("opens the gradient editor when a gradient thumbnail is double-clicked", () => {
+    const onOpenGradientEditor = vi.fn();
+    window.addEventListener("forge:open-gradient-editor-for-layer", onOpenGradientEditor);
+
+    const view = render(
+      <LayerItem
+        layer={gradientLayer}
+        projectId="project-1"
+        isActive
+        isSelected
+        index={0}
+        depth={0}
+        isInheritedHidden={false}
+        draggedIndex={null}
+        onDragStart={vi.fn()}
+        onDragOver={vi.fn()}
+        onDrop={vi.fn()}
+        onClick={vi.fn()}
+        onVisibilityMouseDown={vi.fn()}
+        onVisibilityMouseEnter={vi.fn()}
+        onToggleExpansion={vi.fn()}
+        onContextMenu={vi.fn()}
+      />,
+    );
+
+    const thumbnail = view.container.querySelector("div.w-8.h-8");
+    expect(thumbnail).not.toBeNull();
+    fireEvent.doubleClick(thumbnail!);
+
+    expect(onOpenGradientEditor).toHaveBeenCalledOnce();
+    expect(onOpenGradientEditor.mock.calls[0][0].detail).toEqual({
+      projectId: "project-1",
+      layerId: "gradient-1",
+    });
+
+    window.removeEventListener("forge:open-gradient-editor-for-layer", onOpenGradientEditor);
+  });
+
+  it("requests text editing when a text thumbnail is double-clicked", () => {
+    const textLayer: Layer = {
+      ...colorFillLayer,
+      id: "text-1",
+      name: "Text",
+      type: "text",
+      colorFill: undefined,
+      text: "Editable text",
+      textType: "point",
+      fontSize: 24,
+      fontFamily: "Arial",
+      fontWeight: "400",
+    };
+    const onEditText = vi.fn();
+    window.addEventListener("forge:edit-text-layer", onEditText);
+
+    const view = render(
+      <LayerItem
+        layer={textLayer}
+        projectId="project-1"
+        isActive
+        isSelected
+        index={0}
+        depth={0}
+        isInheritedHidden={false}
+        draggedIndex={null}
+        onDragStart={vi.fn()}
+        onDragOver={vi.fn()}
+        onDrop={vi.fn()}
+        onClick={vi.fn()}
+        onVisibilityMouseDown={vi.fn()}
+        onVisibilityMouseEnter={vi.fn()}
+        onToggleExpansion={vi.fn()}
+        onContextMenu={vi.fn()}
+      />,
+    );
+
+    const thumbnail = view.container.querySelector("div.w-8.h-8");
+    expect(thumbnail).not.toBeNull();
+    fireEvent.doubleClick(thumbnail!);
+
+    expect(onEditText).toHaveBeenCalledOnce();
+    expect(onEditText.mock.calls[0][0].detail).toEqual({
+      projectId: "project-1",
+      layerId: "text-1",
+    });
+    expect(useUIStore.getState().stylingLayerId).toBeNull();
+
+    window.removeEventListener("forge:edit-text-layer", onEditText);
+  });
+
+  it.each([
+    ["replace", { ctrlKey: true }],
+    ["unite", { ctrlKey: true, shiftKey: true }],
+    ["subtract", { ctrlKey: true, altKey: true }],
+  ])(
+    "uses the %s operation for modifier-clicking a layer thumbnail",
+    async (operation, modifiers) => {
+      const layer = { ...colorFillLayer, data: "data:image/png;base64,layer" };
+      const incoming = {
+        bounds: { x: 10, y: 10, width: 20, height: 20 },
+        mask: "data:image/png;base64,incoming",
+      };
+      const result = {
+        bounds: { x: 10, y: 10, width: 20, height: 20 },
+        mask: "data:image/png;base64,result",
+      };
+      selectionUtilsMock.createLayerPixelSelection.mockResolvedValue(incoming);
+      selectionUtilsMock.combineSelections.mockResolvedValue(result);
+
+      const view = render(
+        <LayerItem
+          layer={layer}
+          projectId="project-1"
+          isActive
+          isSelected
+          index={0}
+          depth={0}
+          isInheritedHidden={false}
+          draggedIndex={null}
+          onDragStart={vi.fn()}
+          onDragOver={vi.fn()}
+          onDrop={vi.fn()}
+          onClick={vi.fn()}
+          onVisibilityMouseDown={vi.fn()}
+          onVisibilityMouseEnter={vi.fn()}
+          onToggleExpansion={vi.fn()}
+          onContextMenu={vi.fn()}
+        />,
+      );
+
+      const thumbnail = view.container.querySelector("div.w-8.h-8");
+      expect(thumbnail).not.toBeNull();
+      fireEvent.click(thumbnail!, modifiers);
+
+      await vi.waitFor(() => expect(selectionUtilsMock.combineSelections).toHaveBeenCalledOnce());
+      expect(selectionUtilsMock.combineSelections).toHaveBeenCalledWith(
+        expect.objectContaining({ hasSelection: false }),
+        incoming,
+        operation,
+      );
+      expect(useProjectStore.getState().projects[0].selection).toEqual({
+        hasSelection: true,
+        bounds: result.bounds,
+        mask: result.mask,
+      });
+    },
+  );
+});

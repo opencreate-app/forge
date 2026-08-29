@@ -4,19 +4,97 @@ TODO: OpenCreate Forge
 [-] Marcar como pendente
 [/] Marcar como parcialmente feito
 
+## Alpha 4
+
+- [ ]
+
 ## Alpha 3
 
-- [ ] Migração completa de `2d` para `webgl2` ([docs](docs/WEBGL2_MIGRATE.md))
-- [ ] Adicionar suporte para mostrar a miniatura do projeto na aba, usando o thumbnail gerado ao salvar o projeto
+<!-- - [ ] Migração completa de `2d` para `webgl2` ([docs](docs/WEBGL2_MIGRATE.md)) -->
 
-## Alpha 2.1 (Patch 1)
+- [x] Bug: Ao agrupar a camada, colocar estilos apenas no grupo, transformar camada filho, o render corta nos limites atuais do grupo
+- [x] Bug: Não é possivel transformar o grupo de camadas, apenas as camadas filhas. Transformar o grupo deve transformar todas as camadas filhas, e manter a posição relativa entre elas
+- [x] TransformTool: Suporte para historico temporário de transformações, para poder desfazer e refazer as transformações aplicadas na camada
+- [x] ColorPickerModal (igual Photoshop/Photopea):
+  - [x] Janela com comportamento de: poder mover, não poder redimensionar, e pegar cor ao clicar fora (mostrar um crosshair).
+  - [x] Mesmo Design System de outros modais
+  - [x] Aplicar a cor ao clicar no "OK"
+  - [x] Abrir ao clicar no foreground/background no sidebar
+  - [x] Abrir ao clicar na opção de cor em todos os campos de cor
+- [x] PaintBucket: Ao usar em RasterLayer vazia, preencher todo e mudar o tipo da camada pra `color_fill`
+  - [x] Se for tipo `color_fill`, ao clicar duas vezes na thumbnail da camada, abrir um modal para escolher a cor do preenchimento
+  - [x] Ser possivel preencher apenas na area selecionada pelo SelectTool, e não toda a camada
+- [x] Ferramenta de Degradê (GradientTool)
+  - [x] Ao clicar e arrastar no canvas, criar um degradê na direção do arraste, com as cores do degradê selecionado
+  - [x] Mostrar uma linha com dois losangulos no início e fim do arraste, para poder reposicionar o degradê
+  - [x] Mostrar pontos de controle do degradê, para poder adicionar (ao clicar duas vezes na linha com a cor mista corretas das duas cores), remover (ao clicar com botão direito no ponto de cor) e reposicionar as cores do degradê
+  - [x] Novo tipo de camada `gradient_fill` que tem as propriedades do degradê (type [linear, radial, angular], colors [array de {color, position}])
+  - [x] Tipos de degradê: Linear, Radial, Angular
+  - [x] Editor de degradê (GradientEditorModal, mesmo comportamento do LayerStyleModal) para criar e editar os degradês personalizados
+- [x] SelectTool: Ao teclar Delete ou Backspace, apagar a seleção (deletar a camada ou preencher com transparente) e previnir que delete a camada selecionada (se não tiver seleção, o Delete pode excluir a camada selecionada)
+- [x] TextTool: Suporte para RichText (negrito, itálico, sublinhado, tachado, sobrescrito, subscrito, etc.)
+- [x] Modals: Melhorar o gerenciamento de janelas dos modais
+  - [x] Ao clicar em um, dar foco e mover para frente (mostrar um box-shadow suave da cor accent no Modal)
+- [x] Adicionar "Session Guard", tecnologia propria para restaurar a ultima sessão do app (guardar em LocalStorage), mesmo que o app feche inesperadamente (crash, desligamento, etc.)
+  - [x] Garantir que o "backup" é limpo ao fechar o app normalmente (com SafeQuit), e que o backup é restaurado apenas em caso de crash
+  - [x] Ao abrir o app verificar o backup no LocalStorage, se houver restaure a sessão completa e limpa o backup
+  - [x] Ao fechar o app verificar se há projetos não salvos e perguntar se o usuário que realmente fechar o app
+- [x] Bug Critico: Alguns momentos, o React simplesmente crasha, sem nenhum erro no console, e o app fica todo cinza escuro
+- [x] Melhorar o zoom na barra de status do editor:
+  - [x] Agora ao clicar uma vez ele faz ZoomToFit, mas seria melhor se fosse DoubleClick
+  - [x] Ao clicar deve abrir um slider em cima (mesmo estilo dos sliders dos inputs do ToolOptions) para mudar o zoom (5% - 5000%)
+- [x] Corrigir o HDPI (Retina) no macOS, pois ele está renderizando o canvas com 2x de tamanho
+- [x] Ao pintar com Brush (e semelhantes) no Canvas (tanto em camada, mascara, etc.) da muitas piscadas (uso o Brush, solto o botão do mouse, some a camada num frame e volta atualizado no proximo frame)
+- [x] QoL ColorPickerModal:
+  - [x] Bug: Ao clicar fora do modal para pegar a cor, previnir que da gatilho de clique da ferramenta selecionada
+  - [x] Ao arrastar o ponto de cor do quadrado para fora é previnido, mas recomendo seguir até o limite até soltar o mouse
+- [x] Miniatura do projeto é gerada no editor para RecentProjects, mas em artes pixelart fica muito borrado (multiplicar por 10x para projetos menos que 32x32)
+- [x] Adicionar suporte para mostrar a miniatura do projeto na aba quando botar o mouse em cima (delay de 700ms)
+- [x] DragAndDrop de imagens, projetos, etc.:
+  - [x] Bug: Feedback visual está bugado do dragover
+  - [x] Feat: Ao arrastar um arquivo na area das abas de projetos, importar em um novo projeto, e não no projeto atual
+  - [x] Feat: Ao arrastar uma camada em uma aba de projeto diferente, importar a camada no projeto da aba
+  - [x] Feat: Poder importar multiplos arquivos (agora é possivel importar multiplos arquivos apenas dentro do projeto ativo)
+- [x] Brush, Pencil, Eraser: Poder clicar em um ponto do canvas, segurar Shift e clicar em outro ponto para criar uma linha reta entre os dois pontos, e pintar a linha reta
+- [x] Bug Crítico: LayerMask está com perfomance muito ruim e acaba dando baixo framerate em PCs fracos, mesmo com apenas uma camada com LayerMask.
+- [ ] TextTool:
+  - [x] Bug: Ao ativar o negrito, ele muda para o weight no ToolOptions para `Thin` ao invés de `Bold`
+  - [x] Bug: Ao selecionar todo o texto e mudar algo da fonte (tamanho, negrito, etc.), deveria mudar o estilo da camada de texto ao todo
+  - [x] Bug: Se eu aumentar e diminuir o tamanho da fonte varias vezes, ele se desloca um pouco para direita
+  - [x] Bug: Ao mudar o tamanho da fonte pelo slider do Toolbar, desloca o Toolbar e acaba atrapalhando o usuário e zerando o valor do slider por acidente
+  - [x] Feat: Ao clicar duas vezes com o MoveTool em uma camada de texto, ativar o TextTool e entrar no modo edição
+  - [x] Feat: Ao clicar duas vezes na thumbnail na camada de texto, ativar o TextTool e entrar no modo edição
+  - [x] Feat: No `ToolSettingInput` de tamanho da fonte, mudar o valor por multiplos de 4 ao segurar Shift
+  - [x] Feat: Atalhos de formatação da seleção Ctrl+B (negrito), Ctrl+I (itálico), Ctrl+U (sublinhado), Ctrl+Shift+U (tachado)
+  - [x] Bug: Transformar com a TransformTool a camada de texto está bugada, deverá poder transformar (mover, rotacionar, esticar, inverter, etc.) sem perder a qualidade, como vetor
+- [x] SelectTool:
+  - [x] Feat: Poder mover a seleção com as setas do teclado (1px por vez, ou 10px segurando Shift)
+  - [x] Feat: Ao clicar na thumbnail da camada com Ctrl+Click ele já seleciona os pixeis da camada, agora ao segurar Ctrl+Shift+Click para adicionar a seleção, e Ctrl+Alt+Click para remover da seleção
+  - [x] Feat: Enquanto selecionar uma área e se o mouse estiver perto das margens do canvas, ele deve scrollar o canvas automaticamente para fora da área visível, quanto mais na margem, mais rápido o scroll
+- [x] GradientTool:
+  - [x] Feat: Ativar ferramenta com o atalho Shift+G
+  - [x] QoL: Melhorar o layout do editor de gradiente
+  - [x] Feat: Nas cores do gradiente ter a opção de opacidade no editor de gradiente
+  - [x] Feat: Mais uma opção de template de gradiente "Foreground to Transparent" (com a cor do foreground atual)
+  - [x] Feat: Mais uma opção de template de gradiente "Rainbow" (com as cores do arco-íris)
+- [x] CropTool Bug: O FixedRatio não é aplicado automaticamente, apenas ao arrastar um dos handles.
+- [x] ColorPicker:
+  - [x] Ativar ferramenta com o atalho I
+  - [x] Ao clicar e segurar no canvas, pegar a cor do pixel clicado e mudar o foreground para essa cor
+  - [x] Mostrar o feedback visual de pegar a cor (crosshair) e mostrar a cor do pixel no cursor
+- [x] ProjectTabs:
+  - [x] No Windows e Linux, o scroll horizontal das abas de projetos não funciona com o scroll do mouse (apenas com a barra de rolagem)
+  - [x] No Windows e Linux, o scrollbar aparece atrapalhando a visualização das abas
+  - [x] Ele é escrolável horizontalmente completo, mas não tem feedback visual de que é escrolável, fixar a home e colocar uma sombra nas laterais automaticamente quando tiver mais abas do que o espaço disponível
+  - [x] Se houver mais abas do que o espaço disponível, mostrar dois botões de scroll (esquerda e direita, depois das abas de projeto) para scrollar as abas
+  - [x] Feat: Indicador na esquerda ou direita na área das abas de projetos, mostrando onde está a aba ativa, caso ela esteja fora da área visível
+- [x] Duplicar uma camada com MoveTool + Alt+Drag (igual Photoshop/Photopea)
+- [x] Mover conteúdo da seleção com MoveTool e aplicar na camada se mudar de ferramenta ou mudar a seleção
+- [x] Mover conteúdo selecionado com MoveTool + setas do teclado
+- [x] Se nas preferencias de usuário não habilitar o salvamento do histórico, garantir que o histórico da camada de texto não é salvo
+- [x] Mesclar camadas selecionadas com atalho Ctrl+E e no context menu
 
-- [ ] Bug: Ao agrupar a camada, colocar estilos apenas no grupo, transformar camada filho, o render corta nos limites atuais do grupo.
-- [ ] Ferramenta de Degradê (GradientTool)
-  - [ ] Novo tipo de camada `gradient_fill` que tem as propriedades do degradê (type [linear, radial, angular], colors [array de {color, position}])
-  - [ ] Tipos de degradê: Linear, Radial, Angular
-  - [ ] Editor de degradê (Gradient Editor Modal) para criar e editar os degradês personalizados
-  - [ ] Aplicar o degradê na camada selecionada, respeitando a opacidade e os estilos da camada
+<!-- ## Alpha 2.1 (Patch 1) -->
 
 ## Alpha 2
 

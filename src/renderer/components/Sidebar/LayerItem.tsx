@@ -5,7 +5,11 @@ import React, { useState, useRef, useEffect } from "react";
 import { useProjectStore, Layer, BaseStyle } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
 import { useToolStore } from "@store/toolStore";
-import { getOptimizedBoundingBox } from "@/core/utils/imageUtils";
+import {
+  combineSelections,
+  createLayerPixelSelection,
+  type SelectionOperation,
+} from "@utils/selectionUtils";
 import {
   Eye,
   EyeOff,
@@ -16,11 +20,18 @@ import {
   Box,
   X,
   PaintBucket,
+  Blend,
   // ChevronRight,
   // ChevronDown,
   // Trash2,
   // Copy
 } from "lucide-react";
+import { isLayerDragEvent } from "@utils/dragAndDrop";
+import {
+  getGradientPreviewStyle,
+  gradientStopToCssColor,
+  resolveGradientStops,
+} from "@utils/gradientUtils";
 
 interface LayerItemProps {
   layer: Layer;
@@ -135,6 +146,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
   }, [isEditing]);
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (!isLayerDragEvent(e)) return;
     e.preventDefault();
 
     // Prevent feedback on the item being dragged
@@ -173,63 +185,34 @@ const LayerItem: React.FC<LayerItemProps> = ({
         return;
       }
 
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = layer.width;
-        canvas.height = layer.height;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-        ctx.drawImage(img, 0, 0);
+      const operation: SelectionOperation = e.shiftKey
+        ? "unite"
+        : e.altKey
+          ? "subtract"
+          : "replace";
 
-        const bounds = getOptimizedBoundingBox(canvas, {
-          x: 0,
-          y: 0,
-          width: canvas.width,
-          height: canvas.height,
-        });
-
-        if (!bounds) {
+      void (async () => {
+        const incoming = await createLayerPixelSelection(layer);
+        if (!incoming) {
           showToast("Layer is empty", "warning");
           return;
         }
 
-        // Create mask (white on black)
-        const maskCanvas = document.createElement("canvas");
-        maskCanvas.width = bounds.width;
-        maskCanvas.height = bounds.height;
-        const mctx = maskCanvas.getContext("2d")!;
+        const project = useProjectStore
+          .getState()
+          .projects.find((candidate) => candidate.id === projectId);
+        if (!project) return;
 
-        mctx.drawImage(
-          canvas,
-          bounds.x,
-          bounds.y,
-          bounds.width,
-          bounds.height,
-          0,
-          0,
-          bounds.width,
-          bounds.height,
-        );
-        mctx.globalCompositeOperation = "source-in";
-        mctx.fillStyle = "white";
-        mctx.fillRect(0, 0, bounds.width, bounds.height);
+        const result = await combineSelections(project.selection, incoming, operation);
 
         useProjectStore.getState().pushHistory(projectId, "Select");
 
         updateProject(projectId, {
-          selection: {
-            hasSelection: true,
-            bounds: {
-              x: layer.x + bounds.x,
-              y: layer.y + bounds.y,
-              width: bounds.width,
-              height: bounds.height,
-            },
-            mask: maskCanvas.toDataURL(),
-          },
+          selection: result
+            ? { hasSelection: true, bounds: result.bounds, mask: result.mask }
+            : { hasSelection: false, bounds: null, mask: undefined },
         });
-      };
-      img.src = layer.data;
+      })();
     }
   };
 
@@ -251,13 +234,35 @@ const LayerItem: React.FC<LayerItemProps> = ({
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    // if (layer.type === "color_fill") {
-    //   setStylingLayerId(layer.id);
-    //   window.dispatchEvent(new CustomEvent("forge:open-color-fill-modal"));
-    //   return;
-    // }
     setStylingLayerId(layer.id);
     window.dispatchEvent(new CustomEvent("forge:open-layer-styles"));
+  };
+
+  const handleTextDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("forge:edit-text-layer", {
+        detail: { projectId, layerId: layer.id },
+      }),
+    );
+  };
+
+  const handleColorFillDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("forge:open-color-picker-for-layer", {
+        detail: { projectId, layerId: layer.id },
+      }),
+    );
+  };
+
+  const handleGradientDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("forge:open-gradient-editor-for-layer", {
+        detail: { projectId, layerId: layer.id },
+      }),
+    );
   };
 
   const hasStylesEnabled = Object.values(layer.styles ?? {}).some(
@@ -333,16 +338,7 @@ const LayerItem: React.FC<LayerItemProps> = ({
       )} */}
 
       {/* Thumbnail or Icon */}
-      <div
-        className="flex items-center gap-1 mr-2 shrink-0"
-        onDoubleClick={(e) => {
-          if (layer.type === "color_fill") {
-            e.stopPropagation();
-            setStylingLayerId(layer.id);
-            window.dispatchEvent(new CustomEvent("forge:open-color-fill-modal"));
-          }
-        }}
-      >
+      <div className="flex items-center gap-1 mr-2 shrink-0">
         {layer.type === "group" ? (
           <button
             className="pl-2 py-1 text-text"
@@ -371,8 +367,11 @@ const LayerItem: React.FC<LayerItemProps> = ({
               }
             }}
             onDoubleClick={(e) => {
-              e.stopPropagation(); // Prevent opening LayerStylesModal on double click
-              if (layer.type === "smart_object") {
+              if (layer.type === "text") handleTextDoubleClick(e);
+              else if (layer.type === "color_fill") handleColorFillDoubleClick(e);
+              else if (layer.type === "gradient_fill") handleGradientDoubleClick(e);
+              else if (layer.type === "smart_object") {
+                e.stopPropagation();
                 openSmartObject(projectId, layer.id);
               }
             }}
@@ -404,9 +403,24 @@ const LayerItem: React.FC<LayerItemProps> = ({
                 handleThumbnailClick(e);
               }
             }}
+            onDoubleClick={(e) => {
+              if (layer.type === "text") handleTextDoubleClick(e);
+              else if (layer.type === "color_fill") handleColorFillDoubleClick(e);
+              else if (layer.type === "gradient_fill") handleGradientDoubleClick(e);
+            }}
             style={
               {
                 "--thumbnail-color-fill": layer.colorFill?.color || "#ffffff",
+                ...(layer.type === "gradient_fill" && layer.gradientFill
+                  ? getGradientPreviewStyle(
+                      `linear-gradient(90deg, ${resolveGradientStops(
+                        layer.gradientFill.colors,
+                        layer.gradientFill.opacityStops,
+                      )
+                        .map((stop) => `${gradientStopToCssColor(stop)} ${stop.position * 100}%`)
+                        .join(", ")})`,
+                    )
+                  : {}),
               } as React.CSSProperties
             }
           >
@@ -416,11 +430,16 @@ const LayerItem: React.FC<LayerItemProps> = ({
               >
                 <PaintBucket size={12} />
               </div>
-            )) || (
-              <div className="text-[0.6rem] text-[#555] pointer-events-none">
-                {layer.type[0].toUpperCase()}
-              </div>
-            )}
+            )) ||
+              (layer.type === "gradient_fill" && (
+                <div className="absolute right-0 bottom-0 w-4 h-4 bg-bg-secondary text-text rounded-tl flex items-center justify-center">
+                  <Blend size={12} />
+                </div>
+              )) || (
+                <div className="text-[0.6rem] text-[#555] pointer-events-none">
+                  {layer.type[0].toUpperCase()}
+                </div>
+              )}
           </div>
         )}
 

@@ -1,18 +1,25 @@
 /**
  * Purpose: Modal for editing the color of a color_fill layer.
  */
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useProjectStore } from "@store/projectStore";
 import { useUIStore } from "@store/uiStore";
 import BaseModal from "./BaseModal";
 import { PaintBucket } from "lucide-react";
+import ColorPickerTrigger from "../ui/ColorPickerTrigger";
+import type { ColorPickerOpenRequest } from "@utils/colorPicker";
 
 interface ColorFillModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenColorPicker: (request: ColorPickerOpenRequest) => void;
 }
 
-export const ColorFillModal: React.FC<ColorFillModalProps> = ({ isOpen, onClose }) => {
+export const ColorFillModal: React.FC<ColorFillModalProps> = ({
+  isOpen,
+  onClose,
+  onOpenColorPicker,
+}) => {
   const activeTab = useUIStore((state) => state.activeTab);
   const stylingLayerId = useUIStore((state) => state.stylingLayerId);
   const project = useProjectStore((state) => state.projects.find((p) => p.id === activeTab));
@@ -30,13 +37,20 @@ export const ColorFillModal: React.FC<ColorFillModalProps> = ({ isOpen, onClose 
 
   const [localColor, setLocalColor] = useState(layer?.colorFill?.color || "#000000");
   const [prevLayerId, setPrevLayerId] = useState(layer?.id);
-  const [hasPushedHistory, setHasPushedHistory] = useState(false);
+  const currentColorRef = useRef(localColor);
+  const hasPushedHistoryRef = useRef(false);
 
   if (layer && layer.id !== prevLayerId) {
     setPrevLayerId(layer.id);
     setLocalColor(layer.colorFill?.color || "#000000");
-    setHasPushedHistory(false);
   }
+
+  useEffect(() => {
+    if (layer && layer.id !== prevLayerId) {
+      currentColorRef.current = layer.colorFill?.color || "#000000";
+      hasPushedHistoryRef.current = false;
+    }
+  }, [layer, prevLayerId]);
 
   const updateLayer = useProjectStore((state) => state.updateLayer);
   const pushHistory = useProjectStore((state) => state.pushHistory);
@@ -49,7 +63,7 @@ export const ColorFillModal: React.FC<ColorFillModalProps> = ({ isOpen, onClose 
   };
 
   const handleCancel = () => {
-    if (hasPushedHistory && project) {
+    if (hasPushedHistoryRef.current && project) {
       undo(project.id);
     }
     setStylingLayerId(null);
@@ -69,11 +83,14 @@ export const ColorFillModal: React.FC<ColorFillModalProps> = ({ isOpen, onClose 
       renderedLayer &&
       /^#[0-9A-F]{3,6}$/i.test(newColor.startsWith("#") ? newColor : "#" + newColor)
     ) {
-      if (!hasPushedHistory) {
-        pushHistory(project.id, "Color Fill Change");
-        setHasPushedHistory(true);
-      }
       const finalColor = newColor.startsWith("#") ? newColor : "#" + newColor;
+      if (currentColorRef.current === finalColor) return;
+
+      currentColorRef.current = finalColor;
+      if (!hasPushedHistoryRef.current) {
+        pushHistory(project.id, "Color Fill Change");
+        hasPushedHistoryRef.current = true;
+      }
       updateLayer(project.id, renderedLayer.id, { colorFill: { color: finalColor } });
     }
   };
@@ -98,17 +115,23 @@ export const ColorFillModal: React.FC<ColorFillModalProps> = ({ isOpen, onClose 
           <div className="flex flex-col gap-1.5 w-full">
             <label className="text-[0.75rem] text-[#999]">Fill Color</label>
             <div className="flex gap-4 items-center">
-              <div
-                className="w-10 h-10 rounded-full border-2 border-white/20 hover:border-white/30 has-[input:focus]:border-accent overflow-hidden relative shrink-0 transition-[border-color] duration-200"
-                style={{ backgroundColor: localColor }}
-              >
-                <input
-                  type="color"
-                  value={localColor.length === 7 ? localColor : "#000000"}
-                  onChange={(e) => handleColorChange(e.target.value)}
-                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full border-0"
-                />
-              </div>
+              <ColorPickerTrigger
+                color={localColor}
+                label="Fill Color"
+                onClick={() =>
+                  onOpenColorPicker({
+                    initialColor: localColor,
+                    onPreview: handleColorChange,
+                    onApply: (color) => {
+                      if (currentColorRef.current !== color) handleColorChange(color);
+                    },
+                    onCancel: () => {
+                      if (currentColorRef.current !== localColor) handleColorChange(localColor);
+                    },
+                  })
+                }
+                className="h-10 w-10 shrink-0 rounded-full border-2 border-white/20"
+              />
               <div className="flex-1 relative">
                 <input
                   type="text"

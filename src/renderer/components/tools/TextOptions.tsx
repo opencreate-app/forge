@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useMemo } from "react";
 import { useToolStore } from "@/renderer/store/toolStore";
 import { useProjectStore } from "@/renderer/store/projectStore";
 import { useFontStore } from "@/renderer/store/fontStore";
+import { useTextEditorStore } from "@/renderer/store/textEditorStore";
 import ToolSettingInput from "@/renderer/components/ui/ToolSettingInput";
 import {
   AlignLeft,
@@ -21,6 +22,9 @@ import {
   TypeOutline,
 } from "lucide-react";
 import { TextLayer } from "@/core/layers/TextLayer";
+import { normalizeTextFontWeight, scaleTextSpanFontSizes } from "@/core/utils/textSpans";
+import type { ToolOptionProps } from "../ToolOptions";
+import ColorPickerTrigger from "../ui/ColorPickerTrigger";
 
 const WEIGHT_LABELS: Record<string, string> = {
   "100": "Thin",
@@ -52,7 +56,7 @@ const TextOverflowIcon = ({ size = 16 }: { size?: number }) => (
   </svg>
 );
 
-export const TextOptions: React.FC = () => {
+export const TextOptions: React.FC<ToolOptionProps> = ({ onOpenColorPicker }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const toolSettings = useToolStore((state) => state.toolSettings);
@@ -72,8 +76,45 @@ export const TextOptions: React.FC = () => {
   } = useFontStore();
 
   const textSettings = toolSettings.text;
-  const textAlign = textSettings.textAlign;
+  const textEditor = useTextEditorStore();
+  const hasFormattingRange =
+    textEditor.isEditing && textEditor.formatStart !== textEditor.formatEnd;
+  const textAlign = textEditor.isEditing ? textEditor.lineAlignment : textSettings.textAlign;
+  const fontFamilyValue =
+    hasFormattingRange && !textEditor.mixedStyles.fontFamily
+      ? textEditor.style.fontFamily || textSettings.fontFamily
+      : textSettings.fontFamily;
+  const fontWeightValue =
+    hasFormattingRange && !textEditor.mixedStyles.fontWeight
+      ? textEditor.style.fontWeight || textSettings.fontWeight
+      : textSettings.fontWeight;
+  const normalizedFontWeightValue = normalizeTextFontWeight(fontWeightValue) || "400";
+  const fontSizeValue =
+    hasFormattingRange && !textEditor.mixedStyles.fontSize
+      ? textEditor.style.fontSize || textSettings.fontSize
+      : textSettings.fontSize;
+  const colorValue =
+    hasFormattingRange && !textEditor.mixedStyles.color
+      ? textEditor.style.color || textSettings.color
+      : textSettings.color;
+  const trackingValue =
+    hasFormattingRange && !textEditor.mixedStyles.tracking
+      ? (textEditor.style.tracking ?? textSettings.tracking)
+      : textSettings.tracking;
+  const lineHeightValue = textEditor.isEditing ? textEditor.lineHeight : textSettings.lineHeight;
   const activeToolId = useToolStore((state) => state.activeToolId);
+
+  const dispatchFormat = (detail: Record<string, unknown>) => {
+    window.dispatchEvent(new CustomEvent("forge:text-format", { detail }));
+  };
+
+  const updateTextStyle = (style: Record<string, unknown>, updateSettings: () => void) => {
+    if (hasFormattingRange) {
+      dispatchFormat({ type: "setStyle", style });
+    } else {
+      updateSettings();
+    }
+  };
 
   // Initialize fonts
   useEffect(() => {
@@ -87,17 +128,18 @@ export const TextOptions: React.FC = () => {
   }, [textSettings.fontFamily, ensureFontLoaded]);
 
   const availableWeights = useMemo(
-    () => getFontWeights(textSettings.fontFamily),
-    [getFontWeights, textSettings.fontFamily],
+    () => getFontWeights(fontFamilyValue),
+    [getFontWeights, fontFamilyValue],
   );
 
   // Fallback if current weight is missing in new font
   useEffect(() => {
     if (
+      !hasFormattingRange &&
       availableWeights.length > 0 &&
       !availableWeights.includes(String(textSettings.fontWeight))
     ) {
-      const current = parseInt(String(textSettings.fontWeight)) || 400;
+      const current = parseInt(String(fontWeightValue)) || 400;
       const closest = availableWeights.reduce((prev, curr) => {
         return Math.abs(parseInt(curr) - current) < Math.abs(parseInt(prev) - current)
           ? curr
@@ -106,7 +148,7 @@ export const TextOptions: React.FC = () => {
       updateToolSettings("text", { fontWeight: closest });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availableWeights, updateToolSettings]);
+  }, [availableWeights, fontWeightValue, hasFormattingRange, updateToolSettings]);
 
   // Sync ToolOptions UI with selected layer properties
   useEffect(() => {
@@ -143,21 +185,35 @@ export const TextOptions: React.FC = () => {
       const layer = activeProject.layers.find((l) => l.id === activeProject.activeLayerId);
       if (layer && layer.type === "text" && (textSettings.isEditing || activeToolId === "text")) {
         const baseUpdates: any = {
-          fontSize: textSettings.fontSize,
-          fontFamily: textSettings.fontFamily,
-          fontWeight: textSettings.fontWeight,
-          color: textSettings.color,
-          textAlign: textSettings.textAlign,
-          tracking: textSettings.tracking,
-          lineHeight: textSettings.lineHeight,
+          fontSize: hasFormattingRange ? layer.fontSize : textSettings.fontSize,
+          fontFamily: hasFormattingRange ? layer.fontFamily : textSettings.fontFamily,
+          fontWeight: hasFormattingRange ? layer.fontWeight : textSettings.fontWeight,
+          color: hasFormattingRange ? layer.color : textSettings.color,
+          textAlign: textSettings.isEditing ? layer.textAlign : textSettings.textAlign,
+          tracking: hasFormattingRange ? layer.tracking : textSettings.tracking,
+          lineHeight: hasFormattingRange ? layer.lineHeight : textSettings.lineHeight,
           textOverflow: textSettings.textOverflow,
           textRendering: textSettings.textRendering,
         };
 
+        if (!textSettings.isEditing && layer.textAlign !== textSettings.textAlign) {
+          baseUpdates.textLineAlignments = undefined;
+        }
+
         let dimensionUpdates: any = {};
 
-        if (layer.fontSize !== textSettings.fontSize) {
-          dimensionUpdates.y = Math.round(layer.y + (layer.fontSize || 24) - textSettings.fontSize);
+        if (!hasFormattingRange && layer.fontSize !== textSettings.fontSize) {
+          const ratio = textSettings.fontSize / (layer.fontSize || 24);
+          if (layer.textSpans?.length && Number.isFinite(ratio) && ratio > 0) {
+            baseUpdates.textSpans = scaleTextSpanFontSizes(
+              layer.text || "",
+              layer.textSpans,
+              0,
+              (layer.text || "").length,
+              ratio,
+              layer.fontSize || 24,
+            );
+          }
         }
 
         if (layer.textType === "point") {
@@ -175,6 +231,7 @@ export const TextOptions: React.FC = () => {
             width: metrics.width,
             height: metrics.height,
             x: metrics.x ?? layer.x,
+            y: metrics.y ?? layer.y,
           };
         }
 
@@ -190,7 +247,7 @@ export const TextOptions: React.FC = () => {
         }
       }
     }
-  }, [textSettings, activeProject, activeToolId]);
+  }, [textSettings, activeProject, activeToolId, hasFormattingRange]);
 
   const handleApply = () => {
     window.dispatchEvent(new CustomEvent("forge:text-apply"));
@@ -201,7 +258,44 @@ export const TextOptions: React.FC = () => {
   };
 
   const setAlign = (align: "left" | "center" | "right" | "justify") => {
+    if (textEditor.isEditing) {
+      dispatchFormat({ type: "setLineAlignment", alignment: align });
+    }
     updateToolSettings("text", { textAlign: align });
+  };
+
+  const handleFontSizeChange = (
+    fontSize: number,
+    gestureStartValue?: number,
+    gestureId?: number,
+  ) => {
+    const previousSize =
+      gestureStartValue ||
+      fontSizeValue ||
+      activeProject?.layers.find((layer) => layer.id === activeProject.activeLayerId)?.fontSize ||
+      24;
+    if (hasFormattingRange && previousSize > 0 && fontSize > 0) {
+      dispatchFormat({
+        type: "scaleFontSize",
+        from: previousSize,
+        to: fontSize,
+        gestureId,
+      });
+    } else {
+      updateToolSettings("text", { fontSize });
+    }
+  };
+
+  const handleTrackingChange = (tracking: number) => {
+    updateTextStyle({ tracking }, () => updateToolSettings("text", { tracking }));
+  };
+
+  const handleLineHeightChange = (lineHeight: number) => {
+    if (hasFormattingRange) {
+      dispatchFormat({ type: "setLineHeight", lineHeight });
+    } else {
+      updateToolSettings("text", { lineHeight });
+    }
   };
 
   const sortedSystemFonts = useMemo(
@@ -219,8 +313,12 @@ export const TextOptions: React.FC = () => {
       <div className="flex items-center gap-2">
         <TypeOutline size={16} className="text-zinc-500" />
         <select
-          value={textSettings.fontFamily}
-          onChange={(e) => updateToolSettings("text", { fontFamily: e.target.value })}
+          value={fontFamilyValue}
+          onChange={(e) =>
+            updateTextStyle({ fontFamily: e.target.value }, () =>
+              updateToolSettings("text", { fontFamily: e.target.value }),
+            )
+          }
           className="bg-zinc-800 border-none text-[0.75rem] text-white px-2 py-1 rounded outline-none focus:ring-1 focus:ring-accent min-w-[100px] max-w-[150px]"
         >
           <optgroup label="System Fonts">
@@ -240,12 +338,16 @@ export const TextOptions: React.FC = () => {
         </select>
 
         <select
-          value={textSettings.fontWeight}
-          onChange={(e) => updateToolSettings("text", { fontWeight: e.target.value })}
+          value={normalizedFontWeightValue}
+          onChange={(e) =>
+            updateTextStyle({ fontWeight: e.target.value }, () =>
+              updateToolSettings("text", { fontWeight: e.target.value }),
+            )
+          }
           className="bg-zinc-800 border-none text-[0.75rem] text-white px-2 py-1 rounded outline-none focus:ring-1 focus:ring-accent w-28"
         >
-          {availableWeights.map((w) => (
-            <option key={w} value={w}>
+          {availableWeights.map((w, index) => (
+            <option key={`font-weight:${w}:${index}`} value={w}>
               {WEIGHT_LABELS[w] || w}
             </option>
           ))}
@@ -257,8 +359,9 @@ export const TextOptions: React.FC = () => {
         unit="pt"
         min={1}
         max={1000}
-        value={textSettings.fontSize}
-        onChange={(val) => updateToolSettings("text", { fontSize: val })}
+        shiftStep={4}
+        value={fontSizeValue}
+        onChange={handleFontSizeChange}
       />
 
       {/* Alignment */}
@@ -296,11 +399,17 @@ export const TextOptions: React.FC = () => {
       {/* Color */}
       <div className="flex items-center gap-2">
         <Palette size={16} className="text-zinc-500" />
-        <input
-          type="color"
-          value={textSettings.color}
-          onChange={(e) => updateToolSettings("text", { color: e.target.value })}
-          className="border-none bg-none w-5 h-5 cursor-pointer rounded overflow-hidden"
+        <ColorPickerTrigger
+          color={colorValue}
+          label="Text Color"
+          onClick={() =>
+            onOpenColorPicker?.({
+              initialColor: colorValue,
+              onApply: (color) =>
+                updateTextStyle({ color }, () => updateToolSettings("text", { color })),
+            })
+          }
+          className="h-5 w-5 rounded-full"
         />
       </div>
 
@@ -311,8 +420,8 @@ export const TextOptions: React.FC = () => {
           unit="px"
           min={-50}
           max={200}
-          value={textSettings.tracking}
-          onChange={(val) => updateToolSettings("text", { tracking: val })}
+          value={trackingValue}
+          onChange={handleTrackingChange}
         />
 
         <ToolSettingInput
@@ -322,8 +431,8 @@ export const TextOptions: React.FC = () => {
           max={10}
           step={5}
           displayMultiplier={100}
-          value={textSettings.lineHeight}
-          onChange={(val) => updateToolSettings("text", { lineHeight: val })}
+          value={lineHeightValue}
+          onChange={handleLineHeightChange}
         />
 
         <button

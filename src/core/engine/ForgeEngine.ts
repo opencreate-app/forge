@@ -1,7 +1,13 @@
 /**
  * Purpose: Core engine class responsible for project rendering, viewport management (zoom/pan), tool orchestration, and selection handling.
  */
-import { Layer, Project, useProjectStore, Guide } from "@/renderer/store/projectStore";
+import {
+  HistoryState,
+  Layer,
+  Project,
+  useProjectStore,
+  Guide,
+} from "@/renderer/store/projectStore";
 import { StrokeStyle, DropShadowStyle, InnerShadowStyle } from "@/renderer/store/layerStylesStore";
 import { BaseTool, ToolContext } from "../tools/BaseTool";
 import { MoveTool } from "../tools/MoveTool";
@@ -13,6 +19,8 @@ import { SelectTool } from "../tools/SelectTool";
 import { CropTool } from "../tools/CropTool";
 import { TextTool } from "../tools/TextTool";
 import { PaintBucketTool } from "../tools/PaintBucketTool";
+import { GradientTool } from "../tools/GradientTool";
+import { ColorPickerTool } from "../tools/ColorPickerTool";
 import { useToolStore } from "@/renderer/store/toolStore";
 import { useUIStore } from "@/renderer/store/uiStore";
 import UPNG from "upng-js";
@@ -22,12 +30,13 @@ import {
   safeBase64FromBuffer,
 } from "../utils/imageUtils";
 import { FORGE_CLIPBOARD_METADATA_KEY, ClipboardMetadata } from "@/renderer/utils/clipboardUtils";
-import { getCombinedStyledBounds } from "@/renderer/utils/projectUtils";
+import { getCombinedStyledBounds, getLayerGeometryBounds } from "@/renderer/utils/projectUtils";
 import { RasterLayer } from "../layers/RasterLayer";
 import { TextLayer } from "../layers/TextLayer";
-import { GroupLayer } from "../layers/GroupLayer";
+import { GroupLayer, GroupRenderTransform } from "../layers/GroupLayer";
 import { SmartObjectLayer } from "../layers/SmartObjectLayer";
 import { ColorFillLayer } from "../layers/ColorFillLayer";
+import { GradientFillLayer } from "../layers/GradientFillLayer";
 
 /**
  * Represents the current state of the canvas viewport.
@@ -45,6 +54,18 @@ export interface EngineOptions {
   headless?: boolean;
 }
 
+interface MaskCanvasCacheEntry {
+  canvas: HTMLCanvasElement;
+  dataUrl: string;
+  alphaCanvas?: HTMLCanvasElement;
+}
+
+interface LayerRenderBufferCacheEntry {
+  canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+}
+
 /**
  * Core engine class responsible for project rendering, viewport management (zoom/pan),
  * tool orchestration, and selection handling. It manages the main rendering loop
@@ -59,9 +80,13 @@ export class ForgeEngine {
 
   private ZOOM_SENSITIVITY = 0.05;
   private ZOOM_SMOOTHING = 0.15;
+  private readonly KEYBOARD_ZOOM_FACTOR = 1.1;
   private animationFrameId: number | null = null;
   private viewportAnimationId: number | null = null;
   private targetViewport: { zoom: number; panX: number; panY: number } | null = null;
+  private viewportWidth = 0;
+  private viewportHeight = 0;
+  private devicePixelRatio = 1;
 
   private isPanning = false;
   private startX = 0;
@@ -69,6 +94,8 @@ export class ForgeEngine {
 
   private layerCanvasCache: Map<string, HTMLCanvasElement> = new Map();
   private layerReadyCache: Map<string, boolean> = new Map();
+  private maskCanvasCache: Map<string, MaskCanvasCacheEntry> = new Map();
+  private layerRenderBufferCache: Map<string, LayerRenderBufferCacheEntry> = new Map();
   private imageCache: Map<string, HTMLImageElement> = new Map();
 
   private selectionCanvas: HTMLCanvasElement;
@@ -82,9 +109,17 @@ export class ForgeEngine {
 
   private projectBuffer: HTMLCanvasElement;
   private projectCtx: CanvasRenderingContext2D;
+  private sceneCanvas: HTMLCanvasElement;
+  private sceneCtx: CanvasRenderingContext2D;
+  private sceneSnapshotReady = false;
 
   private currentToolId: string | null = null;
+  private floatingSelectionHistory: HistoryState | null = null;
+  private toolTransitionPromise: Promise<void> | null = null;
+  private isToolTransitioning = false;
   private onViewportChange?: (zoom: number, x: number, y: number) => void;
+  private temporaryColorPickerActive = false;
+  private lastPointerPosition: { x: number; y: number } | null = null;
 
   private draggingGuide: {
     id?: string;
@@ -116,6 +151,10 @@ export class ForgeEngine {
     this.onViewportChange = onViewportChange;
     this.options = options;
 
+    this.sceneCanvas = document.createElement("canvas");
+    this.sceneCtx = this.sceneCanvas.getContext("2d", { willReadFrequently: true })!;
+    this.resizeViewport(canvas.clientWidth || canvas.width, canvas.clientHeight || canvas.height);
+
     this.selectionCanvas = document.createElement("canvas");
     this.selectionCtx = this.selectionCanvas.getContext("2d", {
       willReadFrequently: true,
@@ -131,14 +170,17 @@ export class ForgeEngine {
       pencil: new PencilTool(),
       eraser: new EraserTool(),
       paintBucket: new PaintBucketTool(),
+      gradient: new GradientTool(),
       transform: new TransformTool(),
       crop: new CropTool(),
       text: new TextTool(),
+      colorPicker: new ColorPickerTool(),
     };
 
     this.handleWheel = this.handleWheel.bind(this);
     this.handleMouseDown = this.handleMouseDown.bind(this);
     this.handleDoubleClick = this.handleDoubleClick.bind(this);
+    this.handleContextMenu = this.handleContextMenu.bind(this);
     this.handleMouseMove = this.handleMouseMove.bind(this);
     this.handleMouseUp = this.handleMouseUp.bind(this);
     this.handleKeyDown = this.handleKeyDown.bind(this);
@@ -161,6 +203,22 @@ export class ForgeEngine {
   private handleClearSelection = () => {
     if (this.project) {
       this.clearSelection();
+    }
+  };
+
+  private handleEditTextLayer = (event: Event) => {
+    const detail = (event as CustomEvent<{ projectId?: string; layerId?: string }>).detail;
+    if (!detail?.layerId || (detail.projectId && detail.projectId !== this.project?.id)) return;
+
+    const context = this.getToolContext();
+    const textTool = this.tools.text as TextTool;
+    if (!context || !this.project) return;
+
+    if (this.currentToolId === "text") {
+      textTool.beginEditingLayer(detail.layerId, context);
+    } else {
+      textTool.requestEditLayer(detail.layerId);
+      useToolStore.getState().setActiveTool("text");
     }
   };
 
@@ -190,8 +248,8 @@ export class ForgeEngine {
   /**
    * Selects the entire canvas area.
    */
-  private handleSelectAll = () => {
-    this.selectAll();
+  private handleSelectAll = async () => {
+    await this.selectAll();
   };
 
   /**
@@ -228,27 +286,13 @@ export class ForgeEngine {
    * @param e Custom event containing zoom details.
    */
   private handleZoomTo = (e: any) => {
-    const { zoom, panX, panY, step } = e.detail;
+    const { zoom, panX, panY, step, immediate } = e.detail;
     if (!this.project) return;
 
     if (step !== undefined) {
       const baseZoom = this.targetViewport ? this.targetViewport.zoom : this.project.zoom;
-      let nextZoom: number;
-
-      // Define increment based on magnitude (1-9% -> 0.1, 10-99% -> 1.0, etc)
-      // This keeps the perceived speed constant at high zoom levels
-      const magnitude = Math.pow(10, Math.floor(Math.log10(baseZoom)));
-      const factor = Math.max(0.1, magnitude * 0.1);
-
-      if (step > 0) {
-        // Zoom In: Snap to next multiple of factor
-        nextZoom = (Math.floor(baseZoom / factor + 0.001) + 1) * factor;
-        nextZoom = Math.min(nextZoom, 50);
-      } else {
-        // Zoom Out: Snap to previous multiple of factor
-        nextZoom = (Math.ceil(baseZoom / factor - 0.001) - 1) * factor;
-        nextZoom = Math.max(nextZoom, 0.01);
-      }
+      const zoomMultiplier = step > 0 ? this.KEYBOARD_ZOOM_FACTOR : 1 / this.KEYBOARD_ZOOM_FACTOR;
+      const nextZoom = Math.min(Math.max(baseZoom * zoomMultiplier, 0.05), 50);
 
       this.animateZoom(nextZoom);
       return;
@@ -259,6 +303,8 @@ export class ForgeEngine {
         this.animateFitToScreen();
       } else if (panX !== undefined && panY !== undefined) {
         this.animateToViewport(zoom, panX, panY);
+      } else if (immediate) {
+        this.setZoom(zoom);
       } else {
         this.animateZoom(zoom);
       }
@@ -278,8 +324,8 @@ export class ForgeEngine {
     const basePanY = this.targetViewport ? this.targetViewport.panY : this.project.panY;
 
     // Viewport-centered zoom
-    const viewportWidth = this.canvas.width;
-    const viewportHeight = this.canvas.height;
+    const viewportWidth = this.viewportWidth;
+    const viewportHeight = this.viewportHeight;
     const centerX = viewportWidth / 2;
     const centerY = viewportHeight / 2;
 
@@ -287,6 +333,28 @@ export class ForgeEngine {
     const targetPanY = centerY - (centerY - basePanY) * (targetZoom / baseZoom);
 
     this.animateToViewport(targetZoom, targetPanX, targetPanY);
+  }
+
+  /**
+   * Updates the viewport zoom immediately, preserving the project point at the viewport center.
+   * @param targetZoom The target zoom level.
+   */
+  public setZoom(targetZoom: number) {
+    if (!this.project) return;
+
+    this.stopViewportAnimation();
+    this.targetViewport = null;
+
+    const baseZoom = this.project.zoom;
+    const centerX = this.viewportWidth / 2;
+    const centerY = this.viewportHeight / 2;
+    const targetPanX = centerX - (centerX - this.project.panX) * (targetZoom / baseZoom);
+    const targetPanY = centerY - (centerY - this.project.panY) * (targetZoom / baseZoom);
+
+    this.project.zoom = targetZoom;
+    this.project.panX = targetPanX;
+    this.project.panY = targetPanY;
+    this.onViewportChange?.(targetZoom, targetPanX, targetPanY);
   }
 
   /**
@@ -303,11 +371,13 @@ export class ForgeEngine {
       );
     });
     this.canvas.addEventListener("dblclick", this.handleDoubleClick);
+    this.canvas.addEventListener("contextmenu", this.handleContextMenu);
     window.addEventListener("mousemove", this.handleMouseMove);
     window.addEventListener("mouseup", this.handleMouseUp);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
     window.addEventListener("forge:select-clear", this.handleClearSelection);
+    window.addEventListener("forge:edit-text-layer", this.handleEditTextLayer);
     window.addEventListener("forge:select-all", this.handleSelectAll);
     window.addEventListener("forge:duplicate-layer", this.handleDuplicate);
     window.addEventListener("forge:export-project", this.handleExport as any);
@@ -539,37 +609,62 @@ export class ForgeEngine {
    * Handles direct image saving (Ctrl+S) for image-based projects.
    */
   private handleSaveImage = async (e: any) => {
-    const { filePath } = e.detail || {};
+    const { filePath, projectId } = e.detail || {};
 
     if (this.project && filePath) {
-      const ext = filePath.split(".").pop().toLowerCase() || "";
-      const formatMap: Record<string, string> = {
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        webp: "image/webp",
-        bmp: "image/bmp",
-      };
-      const format = formatMap[ext] || "image/png";
+      const saveProjectId = projectId || this.project.id;
 
-      const dataURL = await this.exportProject(
-        format,
-        1.0,
-        this.project.width,
-        this.project.height,
-      );
+      try {
+        const ext = filePath.split(".").pop().toLowerCase() || "";
+        const formatMap: Record<string, string> = {
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+          webp: "image/webp",
+          bmp: "image/bmp",
+        };
+        const format = formatMap[ext] || "image/png";
 
-      if ((window as any).electronAPI) {
+        const dataURL = await this.exportProject(
+          format,
+          1.0,
+          this.project.width,
+          this.project.height,
+        );
+
+        if (!(window as any).electronAPI) {
+          window.dispatchEvent(
+            new CustomEvent("forge:save-project-finished", {
+              detail: { projectId: saveProjectId, success: false },
+            }),
+          );
+          return;
+        }
+
         const result = await (window as any).electronAPI.saveImage({
           dataURL,
           filePath,
         });
 
         if (result.success) {
-          useProjectStore.getState().updateProject(this.project.id, { isDirty: false });
+          useProjectStore.getState().updateProject(saveProjectId, { isDirty: false });
           useUIStore.getState().showToast("Image saved successfully", "info");
         } else {
           useUIStore.getState().showToast(`Failed to save image: ${result.error}`, "error");
         }
+
+        window.dispatchEvent(
+          new CustomEvent("forge:save-project-finished", {
+            detail: { projectId: saveProjectId, success: result.success },
+          }),
+        );
+      } catch (error) {
+        console.error("Image save error:", error);
+        useUIStore.getState().showToast("Failed to save image", "error");
+        window.dispatchEvent(
+          new CustomEvent("forge:save-project-finished", {
+            detail: { projectId: saveProjectId, success: false },
+          }),
+        );
       }
     }
   };
@@ -609,7 +704,33 @@ export class ForgeEngine {
     thumbCanvas.width = size;
     thumbCanvas.height = size;
     const thumbCtx = thumbCanvas.getContext("2d")!;
-    thumbCtx.imageSmoothingEnabled = true;
+    const isPixelArt = this.project.width < 32 && this.project.height < 32;
+    let thumbnailSource: HTMLCanvasElement = this.projectBuffer;
+    let thumbnailFormat = "image/jpeg";
+
+    if (isPixelArt) {
+      const pixelScale = 10;
+      const pixelCanvas = document.createElement("canvas");
+      pixelCanvas.width = this.project.width * pixelScale;
+      pixelCanvas.height = this.project.height * pixelScale;
+      const pixelCtx = pixelCanvas.getContext("2d")!;
+      pixelCtx.imageSmoothingEnabled = false;
+      pixelCtx.drawImage(
+        this.projectBuffer,
+        0,
+        0,
+        this.project.width,
+        this.project.height,
+        0,
+        0,
+        pixelCanvas.width,
+        pixelCanvas.height,
+      );
+      thumbnailSource = pixelCanvas;
+      thumbnailFormat = "image/png";
+    }
+
+    thumbCtx.imageSmoothingEnabled = !isPixelArt;
 
     // Dark background for the square
     thumbCtx.fillStyle = "#1a1a1a";
@@ -632,9 +753,9 @@ export class ForgeEngine {
       drawY = (size - drawH) / 2;
     }
 
-    thumbCtx.drawImage(this.projectBuffer, drawX, drawY, drawW, drawH);
+    thumbCtx.drawImage(thumbnailSource, drawX, drawY, drawW, drawH);
 
-    return thumbCanvas.toDataURL("image/jpeg", 0.9);
+    return thumbCanvas.toDataURL(thumbnailFormat, isPixelArt ? undefined : 0.9);
   }
 
   /**
@@ -642,6 +763,12 @@ export class ForgeEngine {
    */
   private handleKeyUp = (e: KeyboardEvent) => {
     this.isCtrlPressed = e.ctrlKey || e.metaKey;
+
+    if (e.key === "Alt" && this.temporaryColorPickerActive) {
+      const context = this.getToolContext();
+      if (context) this.getColorPickerTool().commitTemporaryPreview(context);
+      this.temporaryColorPickerActive = false;
+    }
   };
 
   /**
@@ -649,11 +776,12 @@ export class ForgeEngine {
    */
   private async clearSelection() {
     if (!this.project) return;
+    if (this.project.selection.floatingLayer) {
+      const committed = await this.commitFloatingLayer();
+      if (!committed) return;
+    }
     if (this.project.selection.hasSelection) {
       useProjectStore.getState().pushHistory(this.project.id, "Deselect");
-    }
-    if (this.project.selection.floatingLayer) {
-      await this.commitFloatingLayer();
     }
     useProjectStore.getState().updateProject(this.project.id, {
       selection: { hasSelection: false, bounds: null, mask: undefined, floatingLayer: null },
@@ -662,6 +790,104 @@ export class ForgeEngine {
     this.selectionCanvas.height = 1;
     this.selectionCtx.clearRect(0, 0, 1, 1);
     this.updateSelectionEdges();
+  }
+
+  /**
+   * Deletes the current selection from the active layer without deleting the layer itself.
+   * Raster layers are cleared destructively; procedural layers receive a non-destructive mask.
+   */
+  public async deleteSelectionContents(): Promise<boolean> {
+    if (!this.project || !this.project.selection.hasSelection || !this.project.selection.bounds) {
+      return false;
+    }
+
+    const { activeLayerId, selection } = this.project;
+    const bounds = selection.bounds;
+    if (!bounds) return false;
+    if (!activeLayerId) return false;
+
+    const layer = this.project.layers.find((candidate) => candidate.id === activeLayerId);
+    if (!layer) return false;
+
+    if (layer.locked || this.isAncestorLocked(layer)) {
+      useUIStore.getState().showToast("Unlock the layer to delete the selection.", "warning");
+      return false;
+    }
+
+    useProjectStore.getState().pushHistory(this.project.id, "Delete Selection");
+
+    if (this.project.activeMaskId === layer.id && layer.mask) {
+      const mask = await this.createSelectionDeletionMask(layer.mask);
+      useProjectStore.getState().updateLayer(this.project.id, layer.id, { mask });
+      return true;
+    }
+
+    if (layer.type === "raster" && layer.data) {
+      const layerCanvas = await this.ensureLayerCanvas(layer);
+      const layerCtx = layerCanvas.getContext("2d")!;
+      layerCtx.save();
+      layerCtx.globalCompositeOperation = "destination-out";
+      layerCtx.drawImage(this.selectionCanvas, bounds.x - layer.x, bounds.y - layer.y);
+      layerCtx.restore();
+
+      const data = layerCanvas.toDataURL("image/png");
+      this.layerCanvasCache.set(layer.id, layerCanvas);
+      this.layerReadyCache.set(layer.id, true);
+      useProjectStore.getState().updateLayer(this.project.id, layer.id, { data });
+      return true;
+    }
+
+    const mask = await this.createSelectionDeletionMask(layer.mask);
+    useProjectStore.getState().updateLayer(this.project.id, layer.id, { mask });
+    return true;
+  }
+
+  private async createSelectionDeletionMask(
+    existingMask?: Layer["mask"],
+  ): Promise<NonNullable<Layer["mask"]>> {
+    if (!this.project || !this.project.selection.bounds) {
+      throw new Error("Cannot create a deletion mask without an active project selection.");
+    }
+
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = this.project.width;
+    maskCanvas.height = this.project.height;
+    const maskCtx = maskCanvas.getContext("2d")!;
+    maskCtx.fillStyle = "white";
+    maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+
+    if (existingMask?.data) {
+      const existingImage = await this.loadImage(existingMask.data);
+      // Clear the existing mask bounds first so transparent pixels in the mask
+      // remain transparent instead of revealing the white fallback underneath.
+      maskCtx.globalCompositeOperation = "destination-out";
+      maskCtx.fillRect(existingMask.x, existingMask.y, existingMask.width, existingMask.height);
+      maskCtx.globalCompositeOperation = "source-over";
+      maskCtx.drawImage(
+        existingImage,
+        existingMask.x,
+        existingMask.y,
+        existingMask.width,
+        existingMask.height,
+      );
+    }
+
+    maskCtx.globalCompositeOperation = "destination-out";
+    maskCtx.drawImage(
+      this.selectionCanvas,
+      this.project.selection.bounds.x,
+      this.project.selection.bounds.y,
+    );
+
+    return {
+      data: maskCanvas.toDataURL("image/png"),
+      x: 0,
+      y: 0,
+      width: this.project.width,
+      height: this.project.height,
+      enabled: true,
+      linked: existingMask?.linked ?? true,
+    };
   }
 
   /**
@@ -678,13 +904,34 @@ export class ForgeEngine {
 
     this.isCtrlPressed = e.ctrlKey || e.metaKey;
 
-    const tool = this.getActiveTool();
+    if (e.key === "Alt") {
+      const context = this.getToolContext();
+      if (context) this.beginTemporaryColorPicker(context);
+      return;
+    }
+
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) {
-      const consumed = tool.onKeyDown(e, context);
-      if (consumed) {
+      if (this.temporaryColorPickerActive && e.key === "Escape") {
+        this.getColorPickerTool().cancelTemporaryPreview(context);
         e.stopImmediatePropagation();
         e.preventDefault();
+        return;
+      }
+
+      const consumed = tool.onKeyDown(e, context);
+      if (typeof consumed === "boolean") {
+        if (consumed) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return;
+        }
+      } else {
+        e.preventDefault();
+        void consumed.then((wasConsumed) => {
+          if (wasConsumed) e.stopImmediatePropagation();
+        });
         return;
       }
     }
@@ -919,8 +1166,8 @@ export class ForgeEngine {
 
             if (pasteX === null || pasteY === null) {
               // Center in viewport
-              const viewportWidth = this.canvas.width;
-              const viewportHeight = this.canvas.height;
+              const viewportWidth = this.viewportWidth;
+              const viewportHeight = this.viewportHeight;
               const projCenterX = (viewportWidth / 2 - this.project!.panX) / this.project!.zoom;
               const projCenterY = (viewportHeight / 2 - this.project!.panY) / this.project!.zoom;
               pasteX = Math.round(projCenterX - img.naturalWidth / 2);
@@ -951,6 +1198,8 @@ export class ForgeEngine {
    * Handles mouse release events.
    */
   private handleMouseUp(e: MouseEvent) {
+    if (this.isToolTransitioning) return;
+
     if (this.isPanning) {
       this.isPanning = false;
       this.canvas.style.cursor = "default";
@@ -988,10 +1237,14 @@ export class ForgeEngine {
       return;
     }
 
-    const tool = this.getActiveTool();
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) {
-      tool.onMouseUp(e, context);
+      if (this.temporaryColorPickerActive) {
+        this.getColorPickerTool().finishTemporarySampling(context);
+      } else {
+        tool.onMouseUp(e, context);
+      }
     }
   }
 
@@ -1001,6 +1254,59 @@ export class ForgeEngine {
   private getActiveTool(): BaseTool | null {
     const activeToolId = useToolStore.getState().activeToolId;
     return this.tools[activeToolId] || null;
+  }
+
+  /** Returns the tool that should receive pointer events and render previews. */
+  private getInteractionTool(): BaseTool | null {
+    return this.temporaryColorPickerActive ? this.getColorPickerTool() : this.getActiveTool();
+  }
+
+  /**
+   * Commits floating selection content before activating a different tool.
+   * The render loop retries the transition after the asynchronous canvas composition completes.
+   */
+  private waitForFloatingSelectionCommit(): void {
+    if (this.toolTransitionPromise || !this.project?.selection.floatingLayer) return;
+
+    this.isToolTransitioning = true;
+    this.toolTransitionPromise = this.commitFloatingLayer()
+      .then((committed) => {
+        if (!committed && this.currentToolId) {
+          useToolStore.getState().setActiveTool(this.currentToolId as any);
+        }
+      })
+      .finally(() => {
+        this.toolTransitionPromise = null;
+        this.isToolTransitioning = false;
+        this.render();
+      });
+  }
+
+  private getColorPickerTool(): ColorPickerTool {
+    return this.tools.colorPicker as ColorPickerTool;
+  }
+
+  private beginTemporaryColorPicker(context: ToolContext): void {
+    if (this.temporaryColorPickerActive) return;
+
+    const activeTool = this.getActiveTool();
+    if (!activeTool || !this.canUseTemporaryColorPicker(activeTool)) return;
+    if (activeTool.getEditingLayerId()) return;
+
+    this.temporaryColorPickerActive = true;
+    const colorPicker = this.getColorPickerTool();
+    colorPicker.beginTemporaryPreview(context);
+    if (this.lastPointerPosition) {
+      colorPicker.setPointerPosition(
+        this.lastPointerPosition.x,
+        this.lastPointerPosition.y,
+        context,
+      );
+    }
+  }
+
+  private canUseTemporaryColorPicker(tool: BaseTool): boolean {
+    return tool.id === "brush" || tool.id === "pencil" || tool.id === "paintBucket";
   }
 
   /**
@@ -1018,10 +1324,40 @@ export class ForgeEngine {
       },
       canvas: this.canvas,
       ctx: this.ctx,
+      viewportWidth: this.viewportWidth,
+      viewportHeight: this.viewportHeight,
+      devicePixelRatio: this.devicePixelRatio,
+      setViewportTransform: (zoom: number, panX: number, panY: number) =>
+        this.setViewportTransform(zoom, panX, panY),
+      updateViewport: (zoom: number, panX: number, panY: number) => {
+        if (!this.project) return;
+        this.project.zoom = zoom;
+        this.project.panX = panX;
+        this.project.panY = panY;
+        this.onViewportChange?.(zoom, panX, panY);
+      },
       updateProject: (updates: Partial<Project>) => {
         if (this.project) {
-          useProjectStore.getState().updateProject(this.project.id, updates);
+          const projectId = this.project.id;
+          useProjectStore.getState().updateProject(projectId, updates);
+          const updatedProject = useProjectStore
+            .getState()
+            .projects.find((project) => project.id === projectId);
+          if (updatedProject) this.applyProjectUpdate(updatedProject);
         }
+      },
+      duplicateLayers: (layerIds: string[], skipHistory = false) => {
+        if (!this.project) return [];
+
+        const projectId = this.project.id;
+        const createdIds = useProjectStore
+          .getState()
+          .duplicateLayers(projectId, layerIds, skipHistory);
+        const updatedProject = useProjectStore
+          .getState()
+          .projects.find((project) => project.id === projectId);
+        if (updatedProject) this.applyProjectUpdate(updatedProject);
+        return createdIds;
       },
       pushHistory: (description: string) => {
         if (this.project) {
@@ -1041,6 +1377,11 @@ export class ForgeEngine {
       get backgroundColor() {
         return useToolStore.getState().backgroundColor;
       },
+      sampleColorAtScreen: (x: number, y: number) => {
+        const rect = this.canvas.getBoundingClientRect();
+        return this.sampleColorAtScreen(rect.left + x, rect.top + y);
+      },
+      setForegroundColor: (color: string) => useToolStore.getState().setForegroundColor(color),
       getSelectionCanvas: () => ({
         canvas: this.selectionCanvas,
         ctx: this.selectionCtx,
@@ -1049,18 +1390,26 @@ export class ForgeEngine {
       setLastSelectionMask: (mask: string | undefined) => {
         this.lastSelectionMask = mask;
       },
-      floatSelection: (layerId: string) => this.floatSelection(layerId),
+      floatSelection: (layerId: string, historyState?: HistoryState) =>
+        this.floatSelection(layerId, historyState),
       commitFloatingLayer: () => this.commitFloatingLayer(),
       clearSelection: () => this.clearSelection(),
+      deleteSelectionContents: () => this.deleteSelectionContents(),
       setInteracting: (isInteracting: boolean) =>
         useToolStore.getState().setInteracting(isInteracting),
       setActiveTool: (id: any) => useToolStore.getState().setActiveTool(id),
       updateToolSettings: (id: any, settings: any) =>
         useToolStore.getState().updateToolSettings(id, settings),
       subscribe: (listener: any) => useToolStore.subscribe((state) => listener(state.toolSettings)),
-      setLayerCache: (layerId: string, canvas: HTMLCanvasElement) => {
+      setLayerCache: (layerId: string, canvas: HTMLCanvasElement, dataUrl?: string) => {
+        if (dataUrl !== undefined) {
+          (canvas as HTMLCanvasElement & { _dataUrl?: string })._dataUrl = dataUrl;
+        }
         this.layerCanvasCache.set(layerId, canvas);
         this.layerReadyCache.set(layerId, true);
+      },
+      setMaskCache: (layerId: string, canvas: HTMLCanvasElement, dataUrl: string) => {
+        this.maskCanvasCache.set(layerId, { canvas, dataUrl });
       },
       getLayerCanvas: (layerId: string) => {
         const canvas = this.layerCanvasCache.get(layerId);
@@ -1144,6 +1493,67 @@ export class ForgeEngine {
   }
 
   /**
+   * Samples the most recently rendered scene at viewport coordinates.
+   *
+   * The scene snapshot is captured before tool overlays are rendered, preventing tools such as
+   * the ColorPicker from sampling their own visual feedback.
+   * @param clientX The pointer X coordinate in window space.
+   * @param clientY The pointer Y coordinate in window space.
+   */
+  public sampleColorAtScreen(
+    clientX: number,
+    clientY: number,
+  ): { r: number; g: number; b: number; a: number } | null {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+
+    const x = Math.floor(((clientX - rect.left) / rect.width) * this.canvas.width);
+    const y = Math.floor(((clientY - rect.top) / rect.height) * this.canvas.height);
+
+    if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height) return null;
+
+    const sampleContext = this.sceneSnapshotReady ? this.sceneCtx : this.ctx;
+    const pixel = sampleContext.getImageData(x, y, 1, 1).data;
+    return { r: pixel[0], g: pixel[1], b: pixel[2], a: pixel[3] };
+  }
+
+  /**
+   * Resizes the main viewport canvas for CSS pixels and device pixels separately.
+   * @param width The logical viewport width in CSS pixels.
+   * @param height The logical viewport height in CSS pixels.
+   * @param dpr The device pixel ratio, defaulting to the current browser value.
+   */
+  public resizeViewport(width: number, height: number, dpr = window.devicePixelRatio || 1) {
+    this.viewportWidth = Math.max(0, Math.round(width));
+    this.viewportHeight = Math.max(0, Math.round(height));
+    this.devicePixelRatio = Math.max(1, dpr);
+
+    const pixelWidth = Math.round(this.viewportWidth * this.devicePixelRatio);
+    const pixelHeight = Math.round(this.viewportHeight * this.devicePixelRatio);
+
+    if (this.canvas.width !== pixelWidth) this.canvas.width = pixelWidth;
+    if (this.canvas.height !== pixelHeight) this.canvas.height = pixelHeight;
+    if (this.sceneCanvas.width !== pixelWidth) this.sceneCanvas.width = pixelWidth;
+    if (this.sceneCanvas.height !== pixelHeight) this.sceneCanvas.height = pixelHeight;
+
+    this.sceneSnapshotReady = false;
+
+    this.ctx.setTransform(this.devicePixelRatio, 0, 0, this.devicePixelRatio, 0, 0);
+  }
+
+  /** Applies a project-space transform to the HiDPI viewport canvas. */
+  private setViewportTransform(zoom: number, panX: number, panY: number) {
+    this.ctx.setTransform(
+      this.devicePixelRatio * zoom,
+      0,
+      0,
+      this.devicePixelRatio * zoom,
+      this.devicePixelRatio * panX,
+      this.devicePixelRatio * panY,
+    );
+  }
+
+  /**
    * Handles mouse wheel events for zooming and panning.
    */
   private handleWheel(e: WheelEvent) {
@@ -1187,7 +1597,16 @@ export class ForgeEngine {
    */
   private handleMouseDown(e: MouseEvent) {
     if (!this.project) return;
+    if (this.isToolTransitioning) return;
     this.stopViewportAnimation();
+
+    if (e.button === 0) {
+      this.lastPointerPosition = { x: e.offsetX, y: e.offsetY };
+      if (e.altKey) {
+        const context = this.getToolContext();
+        if (context) this.beginTemporaryColorPicker(context);
+      }
+    }
 
     if (e.button === 1) {
       this.isPanning = true;
@@ -1209,7 +1628,14 @@ export class ForgeEngine {
       }
     }
 
-    const tool = this.getActiveTool();
+    if (this.temporaryColorPickerActive && e.button === 2) {
+      const context = this.getToolContext();
+      if (context) this.getColorPickerTool().cancelTemporaryPreview(context);
+      e.preventDefault();
+      return;
+    }
+
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) {
       tool.onMouseDown(e, context);
@@ -1221,10 +1647,39 @@ export class ForgeEngine {
    */
   private handleDoubleClick(e: MouseEvent) {
     if (!this.project) return;
-    const tool = this.getActiveTool();
+    if (this.isToolTransitioning) return;
     const context = this.getToolContext();
-    if (tool && context) {
-      tool.onDoubleClick(e, context);
+    const tool = this.getActiveTool();
+    if (!context || !tool) return;
+
+    if (tool.id === "move") {
+      const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
+      const textTool = this.tools.text as TextTool;
+      const hitLayer = textTool.getTextLayerAtPoint(x, y, context);
+      if (hitLayer) {
+        textTool.requestEditLayer(hitLayer.id, x, y, true);
+        useToolStore.getState().setActiveTool("text");
+        return;
+      }
+    }
+
+    tool.onDoubleClick(e, context);
+  }
+
+  private handleContextMenu(e: MouseEvent) {
+    if (!this.project) return;
+    if (this.isToolTransitioning) return;
+    if (this.temporaryColorPickerActive) {
+      const context = this.getToolContext();
+      if (context) this.getColorPickerTool().cancelTemporaryPreview(context);
+      e.preventDefault();
+      return;
+    }
+
+    const tool = this.getInteractionTool();
+    const context = this.getToolContext();
+    if (tool && context && tool.onContextMenu(e, context)) {
+      e.preventDefault();
     }
   }
 
@@ -1243,10 +1698,12 @@ export class ForgeEngine {
    */
   private handleMouseMove(e: MouseEvent) {
     if (!this.project) return;
+    if (this.isToolTransitioning) return;
 
     const rect = this.canvas.getBoundingClientRect();
     const offsetX = e.clientX - rect.left;
     const offsetY = e.clientY - rect.top;
+    this.lastPointerPosition = { x: offsetX, y: offsetY };
 
     window.dispatchEvent(
       new CustomEvent("forge:mouse-move", {
@@ -1344,7 +1801,12 @@ export class ForgeEngine {
       this.canvas.style.cursor = "default";
     }
 
-    const tool = this.getActiveTool();
+    if (e.altKey && !this.temporaryColorPickerActive) {
+      const context = this.getToolContext();
+      if (context) this.beginTemporaryColorPicker(context);
+    }
+
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) {
       const rect = this.canvas.getBoundingClientRect();
@@ -1391,11 +1853,13 @@ export class ForgeEngine {
     }
     this.canvas.removeEventListener("wheel", this.handleWheel);
     this.canvas.removeEventListener("mousedown", this.handleMouseDown);
+    this.canvas.removeEventListener("contextmenu", this.handleContextMenu);
     window.removeEventListener("mousemove", this.handleMouseMove);
     window.removeEventListener("mouseup", this.handleMouseUp);
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("forge:select-clear", this.handleClearSelection);
+    window.removeEventListener("forge:edit-text-layer", this.handleEditTextLayer);
     window.removeEventListener("forge:select-all", this.handleSelectAll);
     window.removeEventListener("forge:duplicate-layer", this.handleDuplicate);
     window.removeEventListener("forge:export-project", this.handleExport as any);
@@ -1437,6 +1901,54 @@ export class ForgeEngine {
   /**
    * Sets the current project and invalidates caches if necessary.
    */
+  private serializeProjectForDebug(): string | null {
+    if (!this.project) return null;
+
+    return JSON.stringify(
+      this.project,
+      (key, value: unknown) => {
+        if (
+          (key === "data" || key === "dataOriginal") &&
+          typeof value === "string" &&
+          value.startsWith("data:image/")
+        ) {
+          return `${value.split(",")[0]},...`;
+        }
+
+        return value;
+      },
+      2,
+    );
+  }
+
+  /** Returns and logs the current project as readable, image-sanitized JSON for DevTools. */
+  public getProject(): string | null {
+    const json = this.serializeProjectForDebug();
+    if (json) console.log(json);
+    return json;
+  }
+
+  /** Copies the current project as image-sanitized JSON to the system clipboard. */
+  public async copyProject(): Promise<boolean> {
+    const json = this.serializeProjectForDebug();
+    if (!json) return false;
+
+    try {
+      const writeClipboardText = window.electronAPI?.writeClipboardText;
+      if (writeClipboardText) {
+        const copied = await writeClipboardText(json);
+        if (!copied) return false;
+      } else {
+        await navigator.clipboard.writeText(json);
+      }
+      console.log("ForgeEngine project copied to clipboard.");
+      return true;
+    } catch (error) {
+      console.error("Failed to copy ForgeEngine project to clipboard:", error);
+      return false;
+    }
+  }
+
   public setProject(project: Project) {
     const prevProjectId = this.project?.id;
     const prevLayers = this.project?.layers;
@@ -1447,6 +1959,8 @@ export class ForgeEngine {
       // Clear caches for new project
       this.layerCanvasCache.clear();
       this.layerReadyCache.clear();
+      this.maskCanvasCache.clear();
+      this.layerRenderBufferCache.clear();
       this.imageCache.clear();
       this.draggingGuide = null;
       this.snappedLayerGuide = null;
@@ -1459,7 +1973,12 @@ export class ForgeEngine {
           !prevLayer ||
           prevLayer.data !== layer.data ||
           prevLayer.width !== layer.width ||
-          prevLayer.height !== layer.height
+          prevLayer.height !== layer.height ||
+          prevLayer.mask?.data !== layer.mask?.data ||
+          prevLayer.mask?.x !== layer.mask?.x ||
+          prevLayer.mask?.y !== layer.mask?.y ||
+          prevLayer.mask?.width !== layer.mask?.width ||
+          prevLayer.mask?.height !== layer.mask?.height
         ) {
           this.invalidateLayerCache(layer.id);
         }
@@ -1494,6 +2013,62 @@ export class ForgeEngine {
       // In case the mask hasn't changed (already synchronized by the Tool), but the edges don't exist yet
       this.updateSelectionEdges();
     }
+  }
+
+  /**
+   * Applies a store update to the engine before React delivers the next render.
+   * Painting tools populate their caches before calling updateProject, so those
+   * caches can be retained when their metadata matches the new layer state.
+   */
+  private applyProjectUpdate(project: Project) {
+    const previousProject = this.project;
+    if (!previousProject || previousProject.id !== project.id) {
+      this.project = project;
+      return;
+    }
+
+    for (const layer of project.layers) {
+      const previousLayer = previousProject.layers.find((candidate) => candidate.id === layer.id);
+      const layerChanged =
+        !previousLayer ||
+        previousLayer.data !== layer.data ||
+        previousLayer.width !== layer.width ||
+        previousLayer.height !== layer.height;
+
+      if (layerChanged) {
+        const cachedCanvas = this.layerCanvasCache.get(layer.id);
+        const cachedDataUrl = (
+          cachedCanvas as (HTMLCanvasElement & { _dataUrl?: string }) | undefined
+        )?._dataUrl;
+        const hasMatchingLayerCache =
+          !!cachedCanvas &&
+          cachedCanvas.width === layer.width &&
+          cachedCanvas.height === layer.height &&
+          cachedDataUrl === layer.data;
+
+        if (!hasMatchingLayerCache) this.invalidateLayerCache(layer.id);
+      }
+
+      const maskChanged =
+        previousLayer?.mask?.data !== layer.mask?.data ||
+        previousLayer?.mask?.x !== layer.mask?.x ||
+        previousLayer?.mask?.y !== layer.mask?.y ||
+        previousLayer?.mask?.width !== layer.mask?.width ||
+        previousLayer?.mask?.height !== layer.mask?.height;
+      if (maskChanged) {
+        const cachedMask = this.maskCanvasCache.get(layer.id);
+        if (!cachedMask || cachedMask.dataUrl !== layer.mask?.data) {
+          this.maskCanvasCache.delete(layer.id);
+        } else if (
+          previousLayer?.mask?.width !== layer.mask?.width ||
+          previousLayer?.mask?.height !== layer.mask?.height
+        ) {
+          cachedMask.alphaCanvas = undefined;
+        }
+      }
+    }
+
+    this.project = project;
   }
 
   /**
@@ -1584,14 +2159,7 @@ export class ForgeEngine {
     }
 
     this.ctx.save();
-    this.ctx.setTransform(
-      this.project.zoom,
-      0,
-      0,
-      this.project.zoom,
-      this.project.panX,
-      this.project.panY,
-    );
+    this.setViewportTransform(this.project.zoom, this.project.panX, this.project.panY);
 
     // If we have a floating layer, use its coordinates for the selection border
     const bounds = this.project.selection.floatingLayer || this.project.selection.bounds;
@@ -1655,14 +2223,7 @@ export class ForgeEngine {
     if (!showGuides && !this.draggingGuide) return;
 
     this.ctx.save();
-    this.ctx.setTransform(
-      this.project.zoom,
-      0,
-      0,
-      this.project.zoom,
-      this.project.panX,
-      this.project.panY,
-    );
+    this.setViewportTransform(this.project.zoom, this.project.panX, this.project.panY);
 
     this.ctx.lineWidth = 1 / this.project.zoom;
     this.ctx.strokeStyle = "#00ffff"; // Cyan guides
@@ -1696,8 +2257,8 @@ export class ForgeEngine {
     }
 
     // Viewport bounds in project space
-    const viewportWidth = this.canvas.width / this.project.zoom;
-    const viewportHeight = this.canvas.height / this.project.zoom;
+    const viewportWidth = this.viewportWidth / this.project.zoom;
+    const viewportHeight = this.viewportHeight / this.project.zoom;
     const startX = -this.project.panX / this.project.zoom;
     const startY = -this.project.panY / this.project.zoom;
 
@@ -1737,10 +2298,7 @@ export class ForgeEngine {
     if (!this.project || !this.canvas.parentElement) return;
     const cw = this.canvas.parentElement.clientWidth;
     const ch = this.canvas.parentElement.clientHeight;
-    if (this.canvas.width !== cw || this.canvas.height !== ch) {
-      this.canvas.width = cw;
-      this.canvas.height = ch;
-    }
+    this.resizeViewport(cw, ch);
     const padding = 40;
     const scaleX = (cw - padding * 2) / this.project.width;
     const scaleY = (ch - padding * 2) / this.project.height;
@@ -1760,6 +2318,7 @@ export class ForgeEngine {
     if (!this.project || !this.canvas.parentElement) return;
     const cw = this.canvas.parentElement.clientWidth;
     const ch = this.canvas.parentElement.clientHeight;
+    this.resizeViewport(cw, ch);
 
     const targetW = overrideWidth ?? this.project.width;
     const targetH = overrideHeight ?? this.project.height;
@@ -1791,8 +2350,8 @@ export class ForgeEngine {
     const startPanY = this.project.panY;
 
     // We want to interpolate the "project point" that is at the center of the viewport
-    const viewportWidth = this.canvas.width;
-    const viewportHeight = this.canvas.height;
+    const viewportWidth = this.viewportWidth;
+    const viewportHeight = this.viewportHeight;
     const centerX = viewportWidth / 2;
     const centerY = viewportHeight / 2;
 
@@ -1884,21 +2443,31 @@ export class ForgeEngine {
     // Detect tool change
     const activeToolId = useToolStore.getState().activeToolId;
     if (activeToolId !== this.currentToolId) {
-      const context = this.getToolContext();
-      if (context) {
-        if (this.currentToolId && this.tools[this.currentToolId]) {
-          this.tools[this.currentToolId].onDeactivate(context);
+      if (this.project.selection.floatingLayer) {
+        this.waitForFloatingSelectionCommit();
+      } else if (!this.toolTransitionPromise) {
+        const context = this.getToolContext();
+        if (context) {
+          if (this.temporaryColorPickerActive) {
+            this.getColorPickerTool().cancelTemporaryPreview(context);
+            this.temporaryColorPickerActive = false;
+          }
+
+          if (this.currentToolId && this.tools[this.currentToolId]) {
+            this.tools[this.currentToolId].onDeactivate(context);
+          }
+          this.currentToolId = activeToolId;
+          if (this.currentToolId && this.tools[this.currentToolId]) {
+            this.tools[this.currentToolId].onActivate(context);
+          }
+          // Reset default cursor when switching
+          this.canvas.style.cursor = "default";
         }
-        this.currentToolId = activeToolId;
-        if (this.currentToolId && this.tools[this.currentToolId]) {
-          this.tools[this.currentToolId].onActivate(context);
-        }
-        // Reset default cursor when switching
-        this.canvas.style.cursor = "default";
       }
     }
 
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.setTransform(this.devicePixelRatio, 0, 0, this.devicePixelRatio, 0, 0);
+    this.ctx.clearRect(0, 0, this.viewportWidth, this.viewportHeight);
     this.ctx.imageSmoothingEnabled = false;
 
     // --- STEP 1: COMPOSITE PROJECT IN 1:1 BUFFER ---
@@ -1932,14 +2501,7 @@ export class ForgeEngine {
 
     // --- STEP 2: DRAW BUFFER TO VIEWPORT ---
     this.ctx.save();
-    this.ctx.setTransform(
-      this.project.zoom,
-      0,
-      0,
-      this.project.zoom,
-      this.project.panX,
-      this.project.panY,
-    );
+    this.setViewportTransform(this.project.zoom, this.project.panX, this.project.panY);
 
     // Draw checkerboard background
     this.ctx.fillStyle = this.getCheckerPattern();
@@ -1967,8 +2529,10 @@ export class ForgeEngine {
 
     this.renderGuides();
 
+    this.captureSceneSnapshot();
+
     // --- STEP 3: RENDER TOOLS AND UI ---
-    const tool = this.getActiveTool();
+    const tool = this.getInteractionTool();
     const context = this.getToolContext();
     if (tool && context) tool.onRender(this.ctx, context);
 
@@ -1993,11 +2557,18 @@ export class ForgeEngine {
         this.ctx.lineWidth = 1 / this.project.zoom;
         this.ctx.setLineDash([4 / this.project.zoom, 2 / this.project.zoom]);
 
-        if (activeLayer.rotation) {
+        if (activeLayer.type === "text" && this.hasTextLayerTransform(activeLayer)) {
+          const corners = this.getTextLayerCorners(activeLayer);
+          this.ctx.beginPath();
+          this.ctx.moveTo(corners[0].x, corners[0].y);
+          corners.slice(1).forEach((corner) => this.ctx.lineTo(corner.x, corner.y));
+          this.ctx.closePath();
+          this.ctx.stroke();
+        } else if (activeLayer.rotation) {
           const centerX = activeLayer.x + activeLayer.width / 2;
           const centerY = activeLayer.y + activeLayer.height / 2;
           this.ctx.translate(centerX, centerY);
-          this.ctx.rotate((activeLayer.rotation * Math.PI) / 180);
+          this.ctx.rotate(((activeLayer.rotation || 0) * Math.PI) / 180);
           this.ctx.strokeRect(
             -activeLayer.width / 2,
             -activeLayer.height / 2,
@@ -2016,9 +2587,45 @@ export class ForgeEngine {
     this.renderSelection();
   }
 
+  /** Captures the rendered scene before tool overlays are drawn on the main canvas. */
+  private captureSceneSnapshot(): void {
+    this.sceneCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this.sceneCtx.clearRect(0, 0, this.sceneCanvas.width, this.sceneCanvas.height);
+    this.sceneCtx.drawImage(this.canvas, 0, 0);
+    this.sceneSnapshotReady = true;
+  }
+
   /**
    * Renders a single layer to a given context.
    */
+  private hasTextLayerTransform(layer: Layer): boolean {
+    return (
+      Math.abs(layer.rotation || 0) > 0.001 ||
+      (layer.scaleX ?? 1) !== 1 ||
+      (layer.scaleY ?? 1) !== 1
+    );
+  }
+
+  private getTextLayerCorners(layer: Layer) {
+    const halfWidth = (layer.width * Math.abs(layer.scaleX ?? 1)) / 2;
+    const halfHeight = (layer.height * Math.abs(layer.scaleY ?? 1)) / 2;
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    const rotation = ((layer.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+
+    return [
+      { x: -halfWidth, y: -halfHeight },
+      { x: halfWidth, y: -halfHeight },
+      { x: halfWidth, y: halfHeight },
+      { x: -halfWidth, y: halfHeight },
+    ].map((point) => ({
+      x: centerX + point.x * cos - point.y * sin,
+      y: centerY + point.x * sin + point.y * cos,
+    }));
+  }
+
   private renderLayer(ctx: CanvasRenderingContext2D, layer: Layer) {
     ctx.save();
     ctx.globalAlpha = layer.opacity / 100;
@@ -2027,18 +2634,59 @@ export class ForgeEngine {
     const tool = this.getActiveTool();
     const isEditing = tool?.getEditingLayerId() === layer.id;
     const editingState = isEditing ? (tool as any).getEditingState?.() : undefined;
+    const isEditingMask = isEditing && this.project?.activeMaskId === layer.id;
+    const hasStyles = layer.styles
+      ? Object.values(layer.styles).some((s: any) => s?.enabled)
+      : false;
+    const hasMask = layer.mask?.enabled || isEditingMask;
 
     if (editingState) {
       editingState.isCtrlPressed = this.isCtrlPressed;
     }
 
     let renderLayerTarget = layer;
+    let forceVectorText = false;
+    let bufferedTextTransform:
+      | {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          scaleX: number;
+          scaleY: number;
+          rotation: number;
+          anchor: { x: number; y: number };
+        }
+      | undefined;
+    const hasEffectiveTextTransform = layer.type === "text" && this.hasTextLayerTransform(layer);
 
-    if (isEditing && tool?.id === "transform") {
+    if (
+      !isEditing &&
+      layer.type === "text" &&
+      (hasStyles || hasMask) &&
+      hasEffectiveTextTransform
+    ) {
+      bufferedTextTransform = {
+        x: layer.x + layer.width / 2,
+        y: layer.y + layer.height / 2,
+        width: layer.width,
+        height: layer.height,
+        scaleX: layer.scaleX ?? 1,
+        scaleY: layer.scaleY ?? 1,
+        rotation: layer.rotation || 0,
+        anchor: { x: 0.5, y: 0.5 },
+      };
+      forceVectorText = true;
+    }
+
+    if (isEditing && tool?.id === "transform" && layer.type !== "group") {
       const transform = useToolStore.getState().toolSettings.transform;
       const isRotated = Math.abs(transform.rotation % 360) >= 0.01;
 
-      if (!isRotated) {
+      if (layer.type === "text" && (hasStyles || hasMask)) {
+        bufferedTextTransform = transform;
+        forceVectorText = true;
+      } else if (!isRotated && layer.type !== "text") {
         // Pixel-perfect rendering when not rotated
         const targetWidth = Math.round(transform.width * Math.abs(transform.scaleX));
         const targetHeight = Math.round(transform.height * Math.abs(transform.scaleY));
@@ -2071,7 +2719,8 @@ export class ForgeEngine {
           }
         }
       } else {
-        // Rotated preview
+        // Text is always rendered from its glyphs during a transform. This keeps the preview
+        // sharp for rotation, non-uniform scaling, and negative scales (mirroring).
         ctx.translate(transform.x, transform.y);
         ctx.rotate((transform.rotation * Math.PI) / 180);
 
@@ -2097,24 +2746,41 @@ export class ForgeEngine {
             x: lx,
             y: ly,
             rotation: 0,
+            scaleX: 1,
+            scaleY: 1,
           };
+          forceVectorText = layer.type === "text";
         }
       }
-    } else if (layer.rotation) {
+    } else if (
+      !(layer.type === "text" && (hasStyles || hasMask)) &&
+      (layer.rotation ||
+        (layer.type === "text" && ((layer.scaleX ?? 1) !== 1 || (layer.scaleY ?? 1) !== 1)))
+    ) {
       const centerX = Math.round(layer.x + layer.width / 2);
       const centerY = Math.round(layer.y + layer.height / 2);
       ctx.translate(centerX, centerY);
-      ctx.rotate((layer.rotation * Math.PI) / 180);
+      ctx.rotate(((layer.rotation || 0) * Math.PI) / 180);
+      if (layer.type === "text") {
+        ctx.scale(layer.scaleX ?? 1, layer.scaleY ?? 1);
+      }
       ctx.translate(-centerX, -centerY);
+      if (layer.type === "text" && (hasStyles || hasMask)) {
+        bufferedTextTransform = {
+          x: centerX,
+          y: centerY,
+          width: layer.width,
+          height: layer.height,
+          scaleX: layer.scaleX ?? 1,
+          scaleY: layer.scaleY ?? 1,
+          rotation: layer.rotation || 0,
+          anchor: { x: 0.5, y: 0.5 },
+        };
+        forceVectorText = true;
+      }
     }
 
     const drawingCanvas = isEditing ? tool?.getDrawingCanvas() : null;
-    const isEditingMask = isEditing && this.project?.activeMaskId === layer.id;
-
-    const hasStyles = layer.styles
-      ? Object.values(layer.styles).some((s: any) => s?.enabled)
-      : false;
-    const hasMask = layer.mask?.enabled || isEditingMask;
 
     if (drawingCanvas && !isEditingMask) {
       ctx.save();
@@ -2128,10 +2794,14 @@ export class ForgeEngine {
         renderLayerTarget,
         editingState,
         isEditingMask ? drawingCanvas : undefined,
+        forceVectorText,
+        bufferedTextTransform,
       );
     } else {
       ctx.globalAlpha *= (layer.fill ?? 100) / 100;
-      this.renderLayerToContext(ctx, renderLayerTarget, editingState);
+      this.renderLayerToContext(ctx, renderLayerTarget, editingState, {
+        forceVector: forceVectorText,
+      });
     }
     ctx.restore();
   }
@@ -2143,7 +2813,11 @@ export class ForgeEngine {
     ctx: CanvasRenderingContext2D,
     layer: Layer,
     editingState?: any,
-    options?: { skipStyles?: boolean },
+    options?: {
+      skipStyles?: boolean;
+      forceVector?: boolean;
+      groupTransformOrigin?: { x: number; y: number };
+    },
   ) {
     switch (layer.type) {
       case "raster":
@@ -2166,7 +2840,8 @@ export class ForgeEngine {
           options,
         );
         break;
-      case "group":
+      case "group": {
+        const groupTransform = this.getGroupRenderTransform(layer, options?.groupTransformOrigin);
         GroupLayer.render(
           ctx,
           layer,
@@ -2174,8 +2849,10 @@ export class ForgeEngine {
           (c, l) => this.renderLayer(c, l),
           this.project!.width,
           this.project!.height,
+          groupTransform,
         );
         break;
+      }
       case "smart_object":
         SmartObjectLayer.render(
           ctx,
@@ -2189,6 +2866,9 @@ export class ForgeEngine {
       case "color_fill":
         ColorFillLayer.render(ctx, layer);
         break;
+      case "gradient_fill":
+        GradientFillLayer.render(ctx, layer);
+        break;
     }
   }
 
@@ -2200,22 +2880,89 @@ export class ForgeEngine {
     layer: Layer,
     editingState?: any,
     maskPreview?: { canvas: HTMLCanvasElement; x: number; y: number } | null,
+    forceVectorText = false,
+    textTransform?: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scaleX: number;
+      scaleY: number;
+      rotation: number;
+      anchor: { x: number; y: number };
+    },
   ) {
     const stroke = layer.styles?.stroke;
     const dropShadow = layer.styles?.dropShadow;
     const innerShadow = layer.styles?.innerShadow;
 
     let { x, y, width, height } = layer;
+    let contentLayer = layer;
 
-    // Groups in our engine often have 0 size. If they have styles, we must find their content bounds.
-    if (layer.type === "group" && (width === 0 || height === 0)) {
+    if (textTransform && layer.type === "text") {
+      const radians = (textTransform.rotation * Math.PI) / 180;
+      const corners = [
+        {
+          x: -textTransform.width * textTransform.anchor.x * textTransform.scaleX,
+          y: -textTransform.height * textTransform.anchor.y * textTransform.scaleY,
+        },
+        {
+          x: textTransform.width * (1 - textTransform.anchor.x) * textTransform.scaleX,
+          y: -textTransform.height * textTransform.anchor.y * textTransform.scaleY,
+        },
+        {
+          x: textTransform.width * (1 - textTransform.anchor.x) * textTransform.scaleX,
+          y: textTransform.height * (1 - textTransform.anchor.y) * textTransform.scaleY,
+        },
+        {
+          x: -textTransform.width * textTransform.anchor.x * textTransform.scaleX,
+          y: textTransform.height * (1 - textTransform.anchor.y) * textTransform.scaleY,
+        },
+      ].map((corner) => ({
+        x: textTransform.x + corner.x * Math.cos(radians) - corner.y * Math.sin(radians),
+        y: textTransform.y + corner.x * Math.sin(radians) + corner.y * Math.cos(radians),
+      }));
+      const minX = Math.min(...corners.map((corner) => corner.x));
+      const minY = Math.min(...corners.map((corner) => corner.y));
+      const maxX = Math.max(...corners.map((corner) => corner.x));
+      const maxY = Math.max(...corners.map((corner) => corner.y));
+      x = minX;
+      y = minY;
+      width = Math.max(1, maxX - minX);
+      height = Math.max(1, maxY - minY);
+      contentLayer = {
+        ...layer,
+        // The buffer context already translates the text to the transform anchor. Keeping the
+        // content at the local origin avoids applying the anchor offset twice.
+        x: 0,
+        y: 0,
+        width: textTransform.width,
+        height: textTransform.height,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+      };
+    }
+
+    // Groups are containers, so their style bounds come from their descendants. This is
+    // especially important while transforming a child: the child is rendered using its
+    // preview transform, but the group's old bounds would otherwise clip that preview.
+    if (layer.type === "group") {
       const allDescendantIds = this.getGroupDescendants(layer.id);
       const visibleDescendants = this.project!.layers.filter(
         (l) => allDescendantIds.has(l.id) && l.visible,
       );
 
       if (visibleDescendants.length > 0) {
-        const bounds = getCombinedStyledBounds(visibleDescendants);
+        const boundsLayer = this.getCurrentRenderBoundsLayer(layer);
+        const bounds =
+          boundsLayer !== layer
+            ? getCombinedStyledBounds([boundsLayer])
+            : getCombinedStyledBounds(
+                visibleDescendants.map((descendant) =>
+                  this.getCurrentRenderBoundsLayer(descendant),
+                ),
+              );
         x = bounds.x;
         y = bounds.y;
         width = bounds.width;
@@ -2232,11 +2979,58 @@ export class ForgeEngine {
     }
     // Inner shadow doesn't usually need padding outside the layer, but we use the same buffer logic.
 
+    const hasStyles =
+      stroke?.enabled === true || dropShadow?.enabled === true || innerShadow?.enabled === true;
+
+    // A static mask without styles does not need the full generic composition pipeline.
+    // Reuse one buffer and apply the precomputed alpha mask directly to it.
+    if (layer.mask?.enabled && !maskPreview && !hasStyles) {
+      const buffer = this.getLayerRenderBuffer(layer.id, width + padding * 2, height + padding * 2);
+      const bctx = buffer.getContext("2d")!;
+      bctx.setTransform(1, 0, 0, 1, 0, 0);
+      bctx.clearRect(0, 0, buffer.width, buffer.height);
+      bctx.imageSmoothingEnabled = false;
+
+      bctx.save();
+      bctx.translate(padding - x, padding - y);
+      const renderOptions: {
+        skipStyles: boolean;
+        forceVector?: boolean;
+        groupTransformOrigin?: { x: number; y: number };
+      } = {
+        skipStyles: true,
+        ...(forceVectorText ? { forceVector: true } : {}),
+      };
+      if (layer.type === "group") {
+        renderOptions.groupTransformOrigin = { x: 0, y: 0 };
+      }
+      if (textTransform) {
+        bctx.translate(textTransform.x, textTransform.y);
+        bctx.rotate((textTransform.rotation * Math.PI) / 180);
+        bctx.scale(textTransform.scaleX, textTransform.scaleY);
+        bctx.translate(
+          -textTransform.width * textTransform.anchor.x,
+          -textTransform.height * textTransform.anchor.y,
+        );
+      }
+      this.renderLayerToContext(bctx, contentLayer, editingState, renderOptions);
+      bctx.restore();
+
+      this.applyLayerMask(bctx, layer.id, layer.mask, buffer.width, buffer.height, padding, x, y);
+
+      const fillAlpha = (layer.fill ?? 100) / 100;
+      ctx.save();
+      ctx.globalAlpha *= fillAlpha;
+      ctx.drawImage(buffer, Math.round(x - padding), Math.round(y - padding));
+      ctx.restore();
+      return;
+    }
+
     // 1. Render layer content into an offscreen buffer
-    const buffer = document.createElement("canvas");
-    buffer.width = Math.ceil(width + padding * 2);
-    buffer.height = Math.ceil(height + padding * 2);
+    const buffer = this.getLayerRenderBuffer(layer.id, width + padding * 2, height + padding * 2);
     const bctx = buffer.getContext("2d")!;
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.clearRect(0, 0, buffer.width, buffer.height);
     bctx.imageSmoothingEnabled = false;
 
     // Adjust layer coordinates for the buffer
@@ -2244,13 +3038,38 @@ export class ForgeEngine {
     // aligns with 'padding, padding' in the buffer.
     bctx.save();
     bctx.translate(padding - x, padding - y);
-    this.renderLayerToContext(bctx, layer, editingState, { skipStyles: true });
+    const renderOptions: {
+      skipStyles: boolean;
+      forceVector?: boolean;
+      groupTransformOrigin?: { x: number; y: number };
+    } = {
+      skipStyles: true,
+      ...(forceVectorText ? { forceVector: true } : {}),
+    };
+    if (layer.type === "group") {
+      // GroupLayer composites its children in project coordinates into its own
+      // project-sized buffer. The outer buffer translation happens only when
+      // that completed image is drawn, so applying this offset here would shift
+      // the preview a second time.
+      renderOptions.groupTransformOrigin = { x: 0, y: 0 };
+    }
+    if (textTransform) {
+      bctx.translate(textTransform.x, textTransform.y);
+      bctx.rotate((textTransform.rotation * Math.PI) / 180);
+      bctx.scale(textTransform.scaleX, textTransform.scaleY);
+      bctx.translate(
+        -textTransform.width * textTransform.anchor.x,
+        -textTransform.height * textTransform.anchor.y,
+      );
+    }
+    this.renderLayerToContext(bctx, contentLayer, editingState, renderOptions);
     bctx.restore();
 
     // --- LAYER MASK (Applied to content before styles so styles adapt) ---
     if (layer.mask?.enabled || maskPreview) {
       this.applyLayerMask(
         bctx,
+        layer.id,
         layer.mask,
         buffer.width,
         buffer.height,
@@ -2325,10 +3144,176 @@ export class ForgeEngine {
   }
 
   /**
+   * Returns a layer copy with the bounds currently used by the transform preview.
+   * Group styles use these bounds to size their offscreen buffer before descendants
+   * are rendered, preventing transformed children from being clipped to stale bounds.
+   */
+  private getCurrentRenderBoundsLayer(layer: Layer): Layer {
+    const tool = this.getActiveTool();
+    if (tool?.id !== "transform" || tool.getEditingLayerId() !== layer.id) return layer;
+
+    const transform = useToolStore.getState().toolSettings.transform;
+    const width = transform.width * Math.abs(transform.scaleX);
+    const height = transform.height * Math.abs(transform.scaleY);
+    const rotation = (transform.rotation * Math.PI) / 180;
+
+    if (Math.abs(transform.rotation % 360) < 0.01) {
+      return {
+        ...layer,
+        x: transform.x - width * transform.anchor.x,
+        y: transform.y - height * transform.anchor.y,
+        width,
+        height,
+        rotation: 0,
+      };
+    }
+
+    const corners = [
+      { x: -width * transform.anchor.x, y: -height * transform.anchor.y },
+      { x: width * (1 - transform.anchor.x), y: -height * transform.anchor.y },
+      { x: width * (1 - transform.anchor.x), y: height * (1 - transform.anchor.y) },
+      { x: -width * transform.anchor.x, y: height * (1 - transform.anchor.y) },
+    ].map(({ x, y }) => ({
+      x: transform.x + x * Math.cos(rotation) - y * Math.sin(rotation),
+      y: transform.y + x * Math.sin(rotation) + y * Math.cos(rotation),
+    }));
+
+    const minX = Math.min(...corners.map((corner) => corner.x));
+    const minY = Math.min(...corners.map((corner) => corner.y));
+    const maxX = Math.max(...corners.map((corner) => corner.x));
+    const maxY = Math.max(...corners.map((corner) => corner.y));
+
+    return {
+      ...layer,
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      rotation: 0,
+    };
+  }
+
+  private getGroupContentBounds(groupId: string) {
+    const descendantIds = this.getGroupDescendants(groupId);
+    const descendants = this.project!.layers.filter(
+      (candidate) => descendantIds.has(candidate.id) && candidate.visible,
+    );
+    const contentLayers = descendants.filter((candidate) => candidate.type !== "group");
+    if (contentLayers.length === 0) return { x: 0, y: 0, width: 1, height: 1 };
+
+    const bounds = contentLayers.map((candidate) => getLayerGeometryBounds(candidate));
+    const minX = Math.min(...bounds.map((candidate) => candidate.x));
+    const minY = Math.min(...bounds.map((candidate) => candidate.y));
+    const maxX = Math.max(...bounds.map((candidate) => candidate.x + candidate.width));
+    const maxY = Math.max(...bounds.map((candidate) => candidate.y + candidate.height));
+
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+    };
+  }
+
+  private getGroupRenderTransform(
+    layer: Layer,
+    origin = { x: 0, y: 0 },
+  ): GroupRenderTransform | undefined {
+    const tool = this.getActiveTool();
+    if (tool?.id !== "transform" || tool.getEditingLayerId() !== layer.id) return undefined;
+
+    const transform = useToolStore.getState().toolSettings.transform;
+    const bounds = this.getGroupContentBounds(layer.id);
+    return {
+      ...transform,
+      baseX: bounds.x,
+      baseY: bounds.y,
+      originX: origin.x,
+      originY: origin.y,
+    };
+  }
+
+  /**
    * Applies a layer mask to a context.
    */
+  private getLayerRenderBuffer(layerId: string, width: number, height: number): HTMLCanvasElement {
+    const targetWidth = Math.max(1, Math.ceil(width));
+    const targetHeight = Math.max(1, Math.ceil(height));
+    const cached = this.layerRenderBufferCache.get(layerId);
+
+    if (cached && cached.width === targetWidth && cached.height === targetHeight) {
+      return cached.canvas;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    this.layerRenderBufferCache.set(layerId, {
+      canvas,
+      width: targetWidth,
+      height: targetHeight,
+    });
+    return canvas;
+  }
+
+  /**
+   * Converts a grayscale layer mask into a reusable alpha canvas.
+   * The conversion is intentionally keyed by the mask data and dimensions so it
+   * never runs as part of the steady-state render loop.
+   */
+  private getMaskAlphaCanvas(layerId: string, mask: Layer["mask"]): HTMLCanvasElement | null {
+    if (!mask?.data || mask.width <= 0 || mask.height <= 0) return null;
+
+    const cached = this.maskCanvasCache.get(layerId);
+    if (
+      cached?.dataUrl === mask.data &&
+      cached.alphaCanvas?.width === mask.width &&
+      cached.alphaCanvas.height === mask.height
+    ) {
+      return cached.alphaCanvas;
+    }
+
+    let sourceCanvas = cached?.dataUrl === mask.data ? cached.canvas : null;
+    if (!sourceCanvas) {
+      const image = this.imageCache.get(mask.data);
+      if (!image || !image.complete || image.naturalWidth <= 0) return null;
+
+      sourceCanvas = document.createElement("canvas");
+      sourceCanvas.width = mask.width;
+      sourceCanvas.height = mask.height;
+      sourceCanvas.getContext("2d")!.drawImage(image, 0, 0, mask.width, mask.height);
+    }
+
+    const alphaCanvas = document.createElement("canvas");
+    alphaCanvas.width = mask.width;
+    alphaCanvas.height = mask.height;
+    const alphaCtx = alphaCanvas.getContext("2d")!;
+    alphaCtx.drawImage(sourceCanvas, 0, 0, mask.width, mask.height);
+
+    const imageData = alphaCtx.getImageData(0, 0, mask.width, mask.height);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const luminosity = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      data[i + 3] = (data[i + 3] * luminosity) / 255;
+    }
+    alphaCtx.putImageData(imageData, 0, 0);
+
+    if (cached?.dataUrl === mask.data) {
+      cached.alphaCanvas = alphaCanvas;
+    } else {
+      this.maskCanvasCache.set(layerId, {
+        canvas: sourceCanvas,
+        dataUrl: mask.data,
+        alphaCanvas,
+      });
+    }
+
+    return alphaCanvas;
+  }
+
   private applyLayerMask(
     ctx: CanvasRenderingContext2D,
+    layerId: string,
     mask: any,
     width: number,
     height: number,
@@ -2337,6 +3322,25 @@ export class ForgeEngine {
     layerY: number,
     maskPreview?: { canvas: HTMLCanvasElement; x: number; y: number } | null,
   ) {
+    if (mask?.enabled && !maskPreview) {
+      const alphaCanvas = this.getMaskAlphaCanvas(layerId, mask);
+      if (alphaCanvas) {
+        const drawX = padding + (mask.x - layerX);
+        const drawY = padding + (mask.y - layerY);
+
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(alphaCanvas, drawX, drawY, mask.width, mask.height);
+        ctx.restore();
+        return;
+      }
+
+      if (mask.data && !this.imageCache.has(mask.data)) {
+        void this.preloadImage(mask.data).then(() => this.render());
+      }
+      return;
+    }
+
     const maskCanvas = document.createElement("canvas");
     maskCanvas.width = width;
     maskCanvas.height = height;
@@ -2344,8 +3348,14 @@ export class ForgeEngine {
 
     // 1. Draw base mask data
     if (mask?.enabled) {
+      const cachedMask = this.maskCanvasCache.get(layerId);
+      const cachedMaskMatches = cachedMask?.dataUrl === mask.data;
       const img = this.imageCache.get(mask.data);
-      if (img) {
+      if (cachedMaskMatches) {
+        const drawX = padding + (mask.x - layerX);
+        const drawY = padding + (mask.y - layerY);
+        mctx.drawImage(cachedMask!.canvas, drawX, drawY, mask.width, mask.height);
+      } else if (img) {
         // Align mask with the layer content in buffer space
         // mask.x, mask.y are in project coordinates
         // layerX, layerY are also project coordinates
@@ -2354,12 +3364,9 @@ export class ForgeEngine {
         mctx.drawImage(img, drawX, drawY, mask.width, mask.height);
       } else {
         // Load it for next time
-        const newImg = new Image();
-        newImg.onload = () => {
-          this.imageCache.set(mask.data, newImg);
-          this.render();
-        };
-        newImg.src = mask.data;
+        if (!this.imageCache.has(mask.data)) {
+          void this.preloadImage(mask.data).then(() => this.render());
+        }
         // While loading, treat as fully opaque (white)
         mctx.fillStyle = "white";
         mctx.fillRect(0, 0, width, height);
@@ -2793,14 +3800,7 @@ export class ForgeEngine {
   private renderPixelGrid() {
     if (!this.project) return;
     this.ctx.save();
-    this.ctx.setTransform(
-      this.project.zoom,
-      0,
-      0,
-      this.project.zoom,
-      this.project.panX,
-      this.project.panY,
-    );
+    this.setViewportTransform(this.project.zoom, this.project.panX, this.project.panY);
     this.ctx.lineWidth = 0.5 / this.project.zoom;
     this.ctx.strokeStyle = "rgba(128, 128, 128, 0.4)";
     this.ctx.beginPath();
@@ -2822,12 +3822,14 @@ export class ForgeEngine {
   public invalidateLayerCache(layerId: string) {
     this.layerCanvasCache.delete(layerId);
     this.layerReadyCache.delete(layerId);
+    this.maskCanvasCache.delete(layerId);
+    this.layerRenderBufferCache.delete(layerId);
   }
 
   /**
    * Extracts the selection into a floating layer.
    */
-  private async floatSelection(layerId: string): Promise<boolean> {
+  private async floatSelection(layerId: string, historyState?: HistoryState): Promise<boolean> {
     if (!this.project || !this.project.selection.hasSelection || !this.project.selection.bounds)
       return false;
 
@@ -2881,9 +3883,12 @@ export class ForgeEngine {
     this.layerReadyCache.set(layer.id, true);
 
     // Update Store
+    const newLayerData = newLayerCanvas.toDataURL();
+    (newLayerCanvas as HTMLCanvasElement & { _dataUrl?: string })._dataUrl = newLayerData;
     useProjectStore.getState().updateLayer(this.project.id, layer.id, {
-      data: newLayerCanvas.toDataURL(),
+      data: newLayerData,
     });
+    this.refreshProjectFromStore(this.project.id);
 
     useProjectStore.getState().updateProject(this.project.id, {
       selection: {
@@ -2891,6 +3896,11 @@ export class ForgeEngine {
         floatingLayer: floatingLayer,
       },
     });
+    this.refreshProjectFromStore(this.project.id);
+
+    if (historyState) {
+      this.floatingSelectionHistory = historyState;
+    }
 
     // Update local project reference immediately to avoid stale reads in the same frame
     this.project.selection.floatingLayer = floatingLayer;
@@ -2901,12 +3911,12 @@ export class ForgeEngine {
   /**
    * Commits the floating selection back to its source layer.
    */
-  private async commitFloatingLayer() {
-    if (!this.project || !this.project.selection.floatingLayer || !this.project.activeLayerId)
-      return;
+  private async commitFloatingLayer(): Promise<boolean> {
+    if (!this.project || !this.project.selection.floatingLayer) return true;
+    if (!this.project.activeLayerId) return false;
 
     const activeLayer = this.project.layers.find((l) => l.id === this.project?.activeLayerId);
-    if (!activeLayer || activeLayer.type !== "raster") return;
+    if (!activeLayer || activeLayer.type !== "raster") return false;
 
     const floatingLayer = this.project.selection.floatingLayer;
     const activeCanvas = await this.ensureLayerCanvas(activeLayer);
@@ -2942,13 +3952,16 @@ export class ForgeEngine {
     this.layerCanvasCache.set(activeLayer.id, finalCanvas);
     this.layerReadyCache.set(activeLayer.id, true);
 
+    const finalData = finalCanvas.toDataURL();
+    (finalCanvas as HTMLCanvasElement & { _dataUrl?: string })._dataUrl = finalData;
     useProjectStore.getState().updateLayer(this.project.id, activeLayer.id, {
       x: minX,
       y: minY,
       width: newW,
       height: newH,
-      data: finalCanvas.toDataURL(),
+      data: finalData,
     });
+    this.refreshProjectFromStore(this.project.id);
 
     useProjectStore.getState().updateProject(this.project.id, {
       selection: {
@@ -2956,15 +3969,37 @@ export class ForgeEngine {
         floatingLayer: null,
       },
     });
+    this.refreshProjectFromStore(this.project.id);
+
+    if (this.floatingSelectionHistory) {
+      useProjectStore.getState().addHistoryEntry(this.project.id, {
+        description: "Move Selection",
+        state: this.floatingSelectionHistory,
+      });
+      this.floatingSelectionHistory = null;
+    }
 
     this.project.selection.floatingLayer = null;
+    return true;
+  }
+
+  private refreshProjectFromStore(projectId: string): void {
+    const updatedProject = useProjectStore
+      .getState()
+      .projects.find((project) => project.id === projectId);
+    if (updatedProject) this.applyProjectUpdate(updatedProject);
   }
 
   /**
    * Selects all pixels in the project.
    */
-  public selectAll() {
+  public async selectAll() {
     if (!this.project) return;
+
+    if (this.project.selection.floatingLayer) {
+      const committed = await this.commitFloatingLayer();
+      if (!committed) return;
+    }
 
     useProjectStore.getState().pushHistory(this.project.id, "Select All");
 

@@ -8,9 +8,11 @@ import {
   Pencil,
   Eraser,
   PaintBucket,
+  Blend,
   Type,
   Maximize2,
   Crop,
+  Pipette,
   LucideIcon,
 } from "lucide-react";
 import { ToolId } from "@store/toolStore";
@@ -32,6 +34,7 @@ export const TOOLS: ToolDefinition[] = [
     name: "Transform",
   },
   { id: "crop", icon: Crop, label: "Crop (C)", name: "Crop" },
+  { id: "colorPicker", icon: Pipette, label: "Color Picker (I)", name: "Color Picker" },
   { id: "brush", icon: Brush, label: "Brush (B)", name: "Brush" },
   { id: "pencil", icon: Pencil, label: "Pencil (P)", name: "Pencil" },
   { id: "eraser", icon: Eraser, label: "Eraser (E)", name: "Eraser" },
@@ -41,5 +44,6 @@ export const TOOLS: ToolDefinition[] = [
     label: "Paint Bucket (G)",
     name: "Paint Bucket",
   },
+  { id: "gradient", icon: Blend, label: "Gradient (Shift+G)", name: "Gradient" },
   { id: "text", icon: Type, label: "Text (T)", name: "Text" },
 ];

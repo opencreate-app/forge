@@ -3,6 +3,16 @@
  */
 /// <reference types="vite/client" />
 
+interface Window {
+  electronAPI?: {
+    debugCrashRenderer?: () => void;
+    writeClipboardText?: (text: string) => Promise<boolean>;
+  };
+  __forgeDebug?: {
+    crashRenderer: () => void;
+  };
+}
+
 declare module "*.css" {
   const content: { [className: string]: string };
   export default content;

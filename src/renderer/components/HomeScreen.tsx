@@ -8,6 +8,13 @@ import { useUIStore } from "@store/uiStore";
 import { useRecentProjectsStore, RecentProject } from "@store/recentProjectsStore";
 import { ShortcutSpan } from "./ui/Global";
 import { createProjectFromImage, loadImage } from "@utils/projectUtils";
+import {
+  getDroppedFilePath,
+  getFileNameWithoutExtension,
+  isForgeProjectFile,
+  readFileAsDataUrl,
+  readFileAsText,
+} from "@utils/fileDrop";
 import { getRelativeTime, formatFileSize, formatFullDateTime } from "@utils/dateUtils";
 import ContextMenu from "./ui/ContextMenu";
 import { FolderOpen, Edit2, ImageDown, Images, Trash, XCircle } from "lucide-react";
@@ -86,7 +93,6 @@ const HomeScreen: React.FC = () => {
   const addProject = useProjectStore((state) => state.addProject);
   const setActiveTab = useUIStore((state) => state.setActiveTab);
   const recentProjects = useRecentProjectsStore((state) => state.recentProjects);
-  const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [projectToRename, setProjectToRename] = useState<RecentProject | null>(null);
   const [contextMenu, setContextMenu] = useState<{
@@ -120,8 +126,8 @@ const HomeScreen: React.FC = () => {
         projectData.filePath = recent.filePath;
         projectData.isDirty = false;
 
-        addProject(projectData);
-        setActiveTab(projectData.id);
+        const projectId = addProject(projectData);
+        setActiveTab(projectId);
         useUIStore.getState().showToast("Project opened successfully", "info");
       } else {
         useUIStore
@@ -279,10 +285,18 @@ const HomeScreen: React.FC = () => {
   };
 
   const handleCreateFromImage = useCallback(
-    (dataUrl: string, width: number, height: number, name: string, filePath?: string) => {
+    (
+      dataUrl: string,
+      width: number,
+      height: number,
+      name: string,
+      filePath?: string,
+      allowDuplicate = false,
+    ) => {
       const newProject = createProjectFromImage(dataUrl, width, height, name, filePath);
-      addProject(newProject);
-      setActiveTab(newProject.id);
+      const projectId = addProject(newProject, allowDuplicate);
+      setActiveTab(projectId);
+      return projectId;
     },
     [addProject, setActiveTab],
   );
@@ -322,70 +336,44 @@ const HomeScreen: React.FC = () => {
     e.stopPropagation();
   };
 
-  const handleDragEnter = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDraggingOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
 
     const files = Array.from(e.dataTransfer.files);
     for (const file of files) {
-      const isProject = file.name.toLowerCase().endsWith(".ocfd");
+      try {
+        const filePath = getDroppedFilePath(file);
 
-      if (isProject) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          try {
-            const content = event.target?.result as string;
-            const projectData = JSON.parse(content);
+        if (isForgeProjectFile(file)) {
+          const projectData = JSON.parse(await readFileAsText(file));
+          projectData.filePath = filePath;
+          projectData.isDirty = false;
 
-            // In Electron, File objects path should be retrieved via webUtils (exposed as getPathForFile)
-            projectData.filePath = (window as any).electronAPI.getPathForFile(file);
-            projectData.isDirty = false;
+          const projectId = addProject(projectData, true);
+          setActiveTab(projectId);
+          useUIStore.getState().showToast("Project opened successfully", "info");
+          continue;
+        }
 
-            addProject(projectData);
-            setActiveTab(projectData.id);
-            useUIStore.getState().showToast("Project opened successfully", "info");
-          } catch (err) {
-            console.error("Failed to parse project file", err);
-            useUIStore.getState().showToast("Failed to open project file", "error");
-          }
-        };
-        reader.readAsText(file);
-        break;
-      } else if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-          const dataUrl = event.target?.result as string;
-          try {
-            const img = await loadImage(dataUrl);
-            const filePath = (window as any).electronAPI.getPathForFile(file);
-            handleCreateFromImage(
-              dataUrl,
-              img.naturalWidth,
-              img.naturalHeight,
-              file.name.replace(/\.[^/.]+$/, ""),
-              filePath,
-            );
-          } catch (err) {
-            console.error("Failed to load dropped image", err);
-          }
-        };
-        reader.readAsDataURL(file);
-        break; // Just create one project for the first image
-      } else {
+        if (file.type.startsWith("image/")) {
+          const dataUrl = await readFileAsDataUrl(file);
+          const image = await loadImage(dataUrl);
+          handleCreateFromImage(
+            dataUrl,
+            image.naturalWidth,
+            image.naturalHeight,
+            getFileNameWithoutExtension(file),
+            filePath,
+            true,
+          );
+          continue;
+        }
+
         useUIStore.getState().showToast(`File "<b>${file.name}</b>" is not supported.`, "error");
+      } catch (error) {
+        console.error(`Failed to import dropped file ${file.name}`, error);
+        useUIStore.getState().showToast(`Failed to import file "<b>${file.name}</b>".`, "error");
       }
     }
   };
@@ -394,14 +382,8 @@ const HomeScreen: React.FC = () => {
 
   return (
     <div
-      className={`flex-1 flex flex-col items-center justify-center bg-bg-primary text-text gap-8 ${
-        isDraggingOver
-          ? "ring-2 ring-accent ring-inset relative after:absolute after:inset-0 after:bg-accent after:opacity-[20%]"
-          : ""
-      }`}
+      className="relative isolate flex flex-1 flex-col items-center justify-center gap-8 bg-bg-primary text-text"
       onDragOver={handleDragOver}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <style>
@@ -488,32 +470,39 @@ const HomeScreen: React.FC = () => {
           onClose={() => setContextMenu(null)}
           items={[
             {
+              id: "open-project",
               label: "Open Project",
               icon: FolderOpen,
               onClick: () => handleOpenRecent(contextMenu.project),
             },
             {
+              id: "rename-project",
               label: "Rename...",
               icon: Edit2,
               onClick: () => handleRenameRecent(contextMenu.project),
             },
             {
+              id: "project-actions-start",
               isSeparator: true,
             },
             {
+              id: "export-project",
               label: "Export...",
               icon: ImageDown,
               onClick: () => handleExportRecent(contextMenu.project),
             },
             {
+              id: "export-project-clipboard",
               label: "Export to Clipboard",
               icon: Images,
               onClick: () => handleExportRecent(contextMenu.project, true),
             },
             {
+              id: "project-actions-danger",
               isSeparator: true,
             },
             {
+              id: "remove-from-list",
               label: "Remove from List",
               icon: XCircle,
               danger: true,
@@ -528,6 +517,7 @@ const HomeScreen: React.FC = () => {
               },
             },
             {
+              id: "trash-project",
               label: "Trash Project",
               icon: Trash,
               danger: true,

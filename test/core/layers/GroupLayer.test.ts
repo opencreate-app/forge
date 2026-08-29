@@ -99,4 +99,58 @@ describe("GroupLayer", () => {
 
     expect(renderLayer).not.toHaveBeenCalled();
   });
+
+  it("should apply one transform to the complete child composition", () => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    const group: Layer = {
+      id: "g1",
+      type: "group",
+      visible: true,
+      locked: false,
+      opacity: 100,
+      fill: 100,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      name: "G",
+      blendMode: "source-over",
+    };
+    const child: Layer = {
+      ...group,
+      id: "l1",
+      parentId: group.id,
+      type: "raster",
+      x: 10,
+      y: 20,
+      width: 20,
+      height: 20,
+    };
+    const renderLayer = vi.fn();
+    const translateSpy = vi.spyOn(CanvasRenderingContext2D.prototype, "translate");
+    const scaleSpy = vi.spyOn(CanvasRenderingContext2D.prototype, "scale");
+
+    GroupLayer.render(ctx, group, [group, child], renderLayer, 100, 100, {
+      x: 50,
+      y: 60,
+      width: 40,
+      height: 40,
+      scaleX: 2,
+      scaleY: 2,
+      rotation: 0,
+      anchor: { x: 0.5, y: 0.5 },
+      baseX: 0,
+      baseY: 0,
+      originX: 0,
+      originY: 0,
+    });
+
+    expect(translateSpy).toHaveBeenCalledWith(50, 60);
+    expect(scaleSpy).toHaveBeenCalledWith(2, 2);
+    expect(renderLayer).toHaveBeenCalledWith(expect.anything(), child);
+
+    translateSpy.mockRestore();
+    scaleSpy.mockRestore();
+  });
 });

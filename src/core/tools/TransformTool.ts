@@ -4,6 +4,7 @@
 import { BaseTool, ToolContext, ToolId } from "./BaseTool";
 import { Layer } from "@/renderer/store/projectStore";
 import { useUIStore } from "@/renderer/store/uiStore";
+import { getLayerGeometryBounds } from "@/renderer/utils/projectUtils";
 
 interface TransformState {
   x: number;
@@ -15,6 +16,13 @@ interface TransformState {
   rotation: number;
   anchor: { x: number; y: number };
   isDirty: boolean;
+}
+
+interface TransformBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 interface Handle {
@@ -38,6 +46,8 @@ export class TransformTool extends BaseTool {
   private context: ToolContext | null = null;
   private unsubscribeStore: (() => void) | null = null;
   private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
+  private transformHistory: TransformState[] = [];
+  private transformHistoryIndex = -1;
 
   private isFloating = false;
 
@@ -63,22 +73,28 @@ export class TransformTool extends BaseTool {
 
     if (layer) {
       this.originalLayer = JSON.parse(JSON.stringify(layer));
+      const bounds =
+        layer.type === "group" ? this.getGroupBounds(context.project, layer.id) : layer;
       this.currentTransform = {
-        x: layer.x + layer.width / 2,
-        y: layer.y + layer.height / 2,
-        width: layer.width,
-        height: layer.height,
-        scaleX: 1,
-        scaleY: 1,
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
+        width: bounds.width,
+        height: bounds.height,
+        scaleX: layer.type === "text" ? (layer.scaleX ?? 1) : 1,
+        scaleY: layer.type === "text" ? (layer.scaleY ?? 1) : 1,
         rotation: layer.rotation || 0,
         anchor: { x: 0.5, y: 0.5 },
         isDirty: this.isFloating, // If we just floated, it's already a change from original
       };
+      this.transformHistory = [this.cloneTransform(this.currentTransform)];
+      this.transformHistoryIndex = 0;
       this.syncStore(context);
     }
 
     window.addEventListener("forge:transform-apply", this.handleApplyEvent);
     window.addEventListener("forge:transform-cancel", this.handleCancelEvent);
+    window.addEventListener("forge:transform-undo", this.handleUndoEvent);
+    window.addEventListener("forge:transform-redo", this.handleRedoEvent);
     window.addEventListener("keydown", this.handleKeyDown);
 
     this.unsubscribeStore = context.subscribe((settings) => {
@@ -94,9 +110,36 @@ export class TransformTool extends BaseTool {
           this.currentTransform.rotation !== newSettings.rotation
         ) {
           this.currentTransform = { ...newSettings };
+          if (!this.activeHandle) this.recordTransform(this.currentTransform);
         }
       }
     });
+  }
+
+  private getGroupBounds(project: ToolContext["project"], groupId: string): TransformBounds {
+    const descendantIds = new Set<string>();
+    const collect = (parentId: string) => {
+      project.layers
+        .filter((candidate) => candidate.parentId === parentId)
+        .forEach((candidate) => {
+          descendantIds.add(candidate.id);
+          if (candidate.type === "group") collect(candidate.id);
+        });
+    };
+    collect(groupId);
+
+    const layers = project.layers.filter(
+      (candidate) =>
+        descendantIds.has(candidate.id) && candidate.visible && candidate.type !== "group",
+    );
+    if (layers.length === 0) return { x: 0, y: 0, width: 1, height: 1 };
+
+    const bounds = layers.map((candidate) => getLayerGeometryBounds(candidate));
+    const minX = Math.min(...bounds.map((candidate) => candidate.x));
+    const minY = Math.min(...bounds.map((candidate) => candidate.y));
+    const maxX = Math.max(...bounds.map((candidate) => candidate.x + candidate.width));
+    const maxY = Math.max(...bounds.map((candidate) => candidate.y + candidate.height));
+    return { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
   }
 
   private handleKeyDown = (e: KeyboardEvent) => {
@@ -124,6 +167,14 @@ export class TransformTool extends BaseTool {
     if (this.context) this.cancel(this.context);
   };
 
+  private handleUndoEvent = () => {
+    if (this.context) this.undoTransform(this.context);
+  };
+
+  private handleRedoEvent = () => {
+    if (this.context) this.redoTransform(this.context);
+  };
+
   onDeactivate(context: ToolContext): void {
     this.originalLayer = null;
     this.currentTransform = null;
@@ -131,6 +182,8 @@ export class TransformTool extends BaseTool {
     this.activeSnapLines = [];
     window.removeEventListener("forge:transform-apply", this.handleApplyEvent);
     window.removeEventListener("forge:transform-cancel", this.handleCancelEvent);
+    window.removeEventListener("forge:transform-undo", this.handleUndoEvent);
+    window.removeEventListener("forge:transform-redo", this.handleRedoEvent);
     window.removeEventListener("keydown", this.handleKeyDown);
     if (this.unsubscribeStore) {
       this.unsubscribeStore();
@@ -140,6 +193,51 @@ export class TransformTool extends BaseTool {
     // Reset dirty state on deactivate
     context.updateToolSettings("transform", { isDirty: false });
     this.context = null;
+  }
+
+  private cloneTransform(transform: TransformState): TransformState {
+    return { ...transform, anchor: { ...transform.anchor } };
+  }
+
+  private recordTransform(transform: TransformState) {
+    const lastTransform = this.transformHistory[this.transformHistoryIndex];
+    if (
+      lastTransform &&
+      lastTransform.x === transform.x &&
+      lastTransform.y === transform.y &&
+      lastTransform.scaleX === transform.scaleX &&
+      lastTransform.scaleY === transform.scaleY &&
+      lastTransform.rotation === transform.rotation &&
+      lastTransform.width === transform.width &&
+      lastTransform.height === transform.height
+    ) {
+      return;
+    }
+
+    this.transformHistory = this.transformHistory.slice(0, this.transformHistoryIndex + 1);
+    this.transformHistory.push(this.cloneTransform(transform));
+    this.transformHistoryIndex = this.transformHistory.length - 1;
+  }
+
+  private restoreTransform(context: ToolContext, index: number) {
+    const transform = this.transformHistory[index];
+    if (!transform) return;
+
+    this.transformHistoryIndex = index;
+    this.currentTransform = { ...this.cloneTransform(transform), isDirty: index > 0 };
+    this.syncStore(context);
+  }
+
+  private undoTransform(context: ToolContext) {
+    if (this.transformHistoryIndex > 0) {
+      this.restoreTransform(context, this.transformHistoryIndex - 1);
+    }
+  }
+
+  private redoTransform(context: ToolContext) {
+    if (this.transformHistoryIndex < this.transformHistory.length - 1) {
+      this.restoreTransform(context, this.transformHistoryIndex + 1);
+    }
   }
 
   private syncStore(context: ToolContext) {
@@ -593,6 +691,9 @@ export class TransformTool extends BaseTool {
   }
 
   onMouseUp(): void {
+    if (this.currentTransform && this.dragStartTransform) {
+      this.recordTransform(this.currentTransform);
+    }
     this.activeHandle = null;
     this.dragStartTransform = null;
     this.activeSnapLines = [];
@@ -639,8 +740,8 @@ export class TransformTool extends BaseTool {
       ctx.strokeStyle = "red";
       ctx.lineWidth = 1 / scale;
 
-      const viewportWidth = context.canvas.width / scale;
-      const viewportHeight = context.canvas.height / scale;
+      const viewportWidth = context.viewportWidth / scale;
+      const viewportHeight = context.viewportHeight / scale;
       const startX = -context.project.panX / scale;
       const startY = -context.project.panY / scale;
 
@@ -773,6 +874,141 @@ export class TransformTool extends BaseTool {
         isDirty: true,
       });
       context.invalidateCache(layer.id);
+      context.setActiveTool(context.previousToolId);
+      return;
+    }
+
+    if (layer.type === "text") {
+      // Text remains an editable vector layer. The transform origin can differ from the
+      // rectangle center, so move the stored rectangle center to the transformed center while
+      // preserving the original text geometry and applying scale/rotation at render time.
+      const localCenterX = t.width * (0.5 - t.anchor.x) * t.scaleX;
+      const localCenterY = t.height * (0.5 - t.anchor.y) * t.scaleY;
+      const transformedCenterX = t.x + localCenterX * cos - localCenterY * sin;
+      const transformedCenterY = t.y + localCenterX * sin + localCenterY * cos;
+      const finalX = transformedCenterX - t.width / 2;
+      const finalY = transformedCenterY - t.height / 2;
+
+      context.updateProject({
+        layers: context.project.layers.map((candidate) =>
+          candidate.id === layer.id
+            ? {
+                ...candidate,
+                x: finalX,
+                y: finalY,
+                width: t.width,
+                height: t.height,
+                rotation: t.rotation,
+                scaleX: t.scaleX,
+                scaleY: t.scaleY,
+              }
+            : candidate,
+        ),
+        isDirty: true,
+      });
+      context.invalidateCache(layer.id);
+      context.setActiveTool(context.previousToolId);
+      return;
+    }
+
+    if (layer.type === "group") {
+      const groupBounds = this.getGroupBounds(context.project, layer.id);
+      const descendantIds = new Set<string>();
+      const collect = (parentId: string) => {
+        context.project.layers
+          .filter((candidate) => candidate.parentId === parentId)
+          .forEach((candidate) => {
+            descendantIds.add(candidate.id);
+            if (candidate.type === "group") collect(candidate.id);
+          });
+      };
+      collect(layer.id);
+
+      const updatedLayers: Layer[] = [];
+      for (const candidate of context.project.layers) {
+        if (!descendantIds.has(candidate.id) || candidate.type === "group" || !candidate.visible) {
+          updatedLayers.push(candidate);
+          continue;
+        }
+
+        const centerX = candidate.x + candidate.width / 2;
+        const centerY = candidate.y + candidate.height / 2;
+        const localX = centerX - (groupBounds.x + groupBounds.width * t.anchor.x);
+        const localY = centerY - (groupBounds.y + groupBounds.height * t.anchor.y);
+        const scaledLocalX = localX * t.scaleX;
+        const scaledLocalY = localY * t.scaleY;
+        const transformedCenterX = t.x + (scaledLocalX * cos - scaledLocalY * sin);
+        const transformedCenterY = t.y + (scaledLocalX * sin + scaledLocalY * cos);
+        const width = Math.max(1, Math.round(candidate.width * Math.abs(t.scaleX)));
+        const height = Math.max(1, Math.round(candidate.height * Math.abs(t.scaleY)));
+
+        if (candidate.type === "raster") {
+          const sourceCanvas = context.getLayerCanvas(candidate.id);
+          if (sourceCanvas?.ready) {
+            const childRotation = ((candidate.rotation || 0) * Math.PI) / 180;
+            const childCos = Math.cos(childRotation);
+            const childSin = Math.sin(childRotation);
+            const corners = [
+              { x: -candidate.width / 2, y: -candidate.height / 2 },
+              { x: candidate.width / 2, y: -candidate.height / 2 },
+              { x: candidate.width / 2, y: candidate.height / 2 },
+              { x: -candidate.width / 2, y: candidate.height / 2 },
+            ].map((corner) => {
+              const childX = corner.x * childCos - corner.y * childSin;
+              const childY = corner.x * childSin + corner.y * childCos;
+              const scaledX = childX * t.scaleX;
+              const scaledY = childY * t.scaleY;
+              return {
+                x: transformedCenterX + scaledX * cos - scaledY * sin,
+                y: transformedCenterY + scaledX * sin + scaledY * cos,
+              };
+            });
+            const minX = Math.floor(Math.min(...corners.map((corner) => corner.x)));
+            const minY = Math.floor(Math.min(...corners.map((corner) => corner.y)));
+            const maxX = Math.ceil(Math.max(...corners.map((corner) => corner.x)));
+            const maxY = Math.ceil(Math.max(...corners.map((corner) => corner.y)));
+            const rasterWidth = Math.max(1, maxX - minX);
+            const rasterHeight = Math.max(1, maxY - minY);
+            const rasterCanvas = document.createElement("canvas");
+            rasterCanvas.width = rasterWidth;
+            rasterCanvas.height = rasterHeight;
+            const rasterContext = rasterCanvas.getContext("2d")!;
+            rasterContext.translate(-minX, -minY);
+            rasterContext.translate(transformedCenterX, transformedCenterY);
+            rasterContext.rotate(rot);
+            rasterContext.scale(t.scaleX, t.scaleY);
+            rasterContext.rotate(childRotation);
+            rasterContext.drawImage(
+              sourceCanvas.canvas,
+              -candidate.width / 2,
+              -candidate.height / 2,
+            );
+
+            updatedLayers.push({
+              ...candidate,
+              x: minX,
+              y: minY,
+              width: rasterWidth,
+              height: rasterHeight,
+              data: rasterCanvas.toDataURL(),
+              rotation: 0,
+            });
+            context.invalidateCache(candidate.id);
+            continue;
+          }
+        }
+
+        updatedLayers.push({
+          ...candidate,
+          x: Math.round(transformedCenterX - width / 2),
+          y: Math.round(transformedCenterY - height / 2),
+          width,
+          height,
+          rotation: ((candidate.rotation || 0) + t.rotation) % 360,
+        });
+      }
+
+      context.updateProject({ layers: updatedLayers, isDirty: true });
       context.setActiveTool(context.previousToolId);
       return;
     }

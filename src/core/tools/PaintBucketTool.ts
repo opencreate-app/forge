@@ -10,6 +10,14 @@ import {
 } from "@/renderer/store/projectStore";
 import { useUIStore } from "@store/uiStore";
 
+interface SelectionConstraint {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  alpha: Uint8ClampedArray | null;
+}
+
 export class PaintBucketTool extends BaseTool {
   id: ToolId = "paintBucket";
 
@@ -93,8 +101,17 @@ export class PaintBucketTool extends BaseTool {
     // For now, let's require a raster layer or fill the whole selection/canvas.
     if (!sampleCanvas) {
       // If there's a selection, we can just fill that.
-      if (context.project.selection.hasSelection && context.project.selection.mask) {
-        this.createColorFillLayer(context, context.project.selection.mask);
+      if (
+        context.project.selection.hasSelection &&
+        context.project.selection.mask &&
+        context.project.selection.bounds
+      ) {
+        this.createColorFillLayer(context, context.project.selection.mask, {
+          x: context.project.selection.bounds!.x,
+          y: context.project.selection.bounds!.y,
+          width: context.project.selection.bounds!.width,
+          height: context.project.selection.bounds!.height,
+        });
         return;
       }
 
@@ -107,12 +124,24 @@ export class PaintBucketTool extends BaseTool {
 
     // click must be within sample canvas
     if (localX < 0 || localX >= sampleCanvas.width || localY < 0 || localY >= sampleCanvas.height) {
-      if (context.project.selection.hasSelection && context.project.selection.mask) {
-        this.createColorFillLayer(context, context.project.selection.mask);
+      if (
+        context.project.selection.hasSelection &&
+        context.project.selection.mask &&
+        context.project.selection.bounds
+      ) {
+        this.createColorFillLayer(context, context.project.selection.mask, {
+          x: context.project.selection.bounds!.x,
+          y: context.project.selection.bounds!.y,
+          width: context.project.selection.bounds!.width,
+          height: context.project.selection.bounds!.height,
+        });
         return;
       }
       return;
     }
+
+    const selection = await this.getSelectionConstraint(context);
+    if (selection && this.getSelectionAlpha(selection, clickX, clickY) === 0) return;
 
     const ctx = sampleCanvas.getContext("2d", { willReadFrequently: true })!;
     const imageData = ctx.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height);
@@ -197,11 +226,19 @@ export class PaintBucketTool extends BaseTool {
     this.createColorFillLayer(context, maskCanvas.toDataURL());
   }
 
-  private async performFill(clickX: number, clickY: number, context: ToolContext, layer: any) {
+  private async performFill(clickX: number, clickY: number, context: ToolContext, layer: Layer) {
     const canvas = await context.ensureLayerCanvas(layer);
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
+    const selection = await this.getSelectionConstraint(context);
+
+    if (selection && this.getSelectionAlpha(selection, clickX, clickY) === 0) return;
+
+    if (this.isCanvasEmpty(data)) {
+      this.convertEmptyRasterToColorFill(context, layer);
+      return;
+    }
 
     const localX = clickX - layer.x;
     const localY = clickY - layer.y;
@@ -249,16 +286,31 @@ export class PaintBucketTool extends BaseTool {
         targetA,
         fillColor,
         settings.tolerance,
+        selection,
+        layer.x,
+        layer.y,
       );
     } else {
-      this.globalReplace(data, targetR, targetG, targetB, targetA, fillColor, settings.tolerance);
+      this.globalReplace(
+        data,
+        canvas.width,
+        targetR,
+        targetG,
+        targetB,
+        targetA,
+        fillColor,
+        settings.tolerance,
+        selection,
+        layer.x,
+        layer.y,
+      );
     }
 
     ctx.putImageData(imageData, 0, 0);
 
     // Update layer
     const dataUrl = canvas.toDataURL("image/png");
-    context.setLayerCache(layer.id, canvas);
+    context.setLayerCache(layer.id, canvas, dataUrl);
 
     const layers = context.project.layers.map((l) => {
       if (l.id === layer.id) {
@@ -276,6 +328,39 @@ export class PaintBucketTool extends BaseTool {
     context.updateProject({ layers, isDirty: true });
   }
 
+  private isCanvasEmpty(data: Uint8ClampedArray): boolean {
+    for (let index = 3; index < data.length; index += 4) {
+      if (data[index] !== 0) return false;
+    }
+
+    return true;
+  }
+
+  private convertEmptyRasterToColorFill(context: ToolContext, layer: Layer): void {
+    if (this.historySnapshot) {
+      context.addHistoryEntry({
+        description: "Paint Bucket",
+        state: this.historySnapshot,
+      });
+    }
+
+    const layers = context.project.layers.map((currentLayer) =>
+      currentLayer.id === layer.id
+        ? {
+            ...currentLayer,
+            type: "color_fill" as const,
+            colorFill: { color: context.foregroundColor },
+            mask: this.createSelectionMask(context) || currentLayer.mask,
+            data: undefined,
+            dataOriginal: undefined,
+          }
+        : currentLayer,
+    );
+
+    context.invalidateCache(layer.id);
+    context.updateProject({ layers, isDirty: true });
+  }
+
   private floodFill(
     data: Uint8ClampedArray,
     width: number,
@@ -288,6 +373,9 @@ export class PaintBucketTool extends BaseTool {
     ta: number,
     fill: { r: number; g: number; b: number; a: number },
     tolerance: number,
+    selection: SelectionConstraint | null = null,
+    offsetX = 0,
+    offsetY = 0,
   ) {
     const stack: [number, number][] = [[startX, startY]];
     const visited = new Uint8Array(width * height);
@@ -299,6 +387,10 @@ export class PaintBucketTool extends BaseTool {
       const idx = y * width + x;
       if (visited[idx]) continue;
       visited[idx] = 1;
+
+      if (selection && this.getSelectionAlpha(selection, x + offsetX, y + offsetY) === 0) {
+        continue;
+      }
 
       const pixelIdx = idx * 4;
       if (
@@ -315,7 +407,6 @@ export class PaintBucketTool extends BaseTool {
         )
       ) {
         data[pixelIdx] = fill.r;
-        data[pixelIdx + 1] = fill.r;
         data[pixelIdx + 1] = fill.g;
         data[pixelIdx + 2] = fill.b;
         data[pixelIdx + 3] = fill.a;
@@ -330,14 +421,24 @@ export class PaintBucketTool extends BaseTool {
 
   private globalReplace(
     data: Uint8ClampedArray,
+    width: number,
     tr: number,
     tg: number,
     tb: number,
     ta: number,
     fill: { r: number; g: number; b: number; a: number },
     tolerance: number,
+    selection: SelectionConstraint | null = null,
+    offsetX = 0,
+    offsetY = 0,
   ) {
     for (let i = 0; i < data.length; i += 4) {
+      const pixelIndex = i / 4;
+      const x = pixelIndex % width;
+      const y = Math.floor(pixelIndex / width);
+      if (selection && this.getSelectionAlpha(selection, x + offsetX, y + offsetY) === 0) {
+        continue;
+      }
       if (
         this.colorsMatch(data[i], data[i + 1], data[i + 2], data[i + 3], tr, tg, tb, ta, tolerance)
       ) {
@@ -349,7 +450,11 @@ export class PaintBucketTool extends BaseTool {
     }
   }
 
-  private createColorFillLayer(context: ToolContext, maskData: string) {
+  private createColorFillLayer(
+    context: ToolContext,
+    maskData: string,
+    bounds = { x: 0, y: 0, width: context.project.width, height: context.project.height },
+  ) {
     const layerCount = context.project.layers.filter((l) => l.type === "color_fill").length;
     const newLayer: Partial<Layer> = {
       name: `Color Fill ${layerCount + 1}`,
@@ -357,10 +462,10 @@ export class PaintBucketTool extends BaseTool {
       colorFill: { color: context.foregroundColor },
       mask: {
         data: maskData,
-        x: 0,
-        y: 0,
-        width: context.project.width,
-        height: context.project.height,
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
         enabled: true,
         linked: true,
       },
@@ -368,6 +473,51 @@ export class PaintBucketTool extends BaseTool {
 
     const addLayer = useProjectStore.getState().addLayer;
     addLayer(context.project.id, newLayer);
+  }
+
+  private createSelectionMask(context: ToolContext) {
+    const selection = context.project.selection;
+    if (!selection.hasSelection || !selection.mask || !selection.bounds) return undefined;
+
+    return {
+      data: selection.mask,
+      x: selection.bounds.x,
+      y: selection.bounds.y,
+      width: selection.bounds.width,
+      height: selection.bounds.height,
+      enabled: true,
+      linked: true,
+    };
+  }
+
+  private getSelectionConstraint(context: ToolContext): SelectionConstraint | null {
+    const selection = context.project.selection;
+    if (!selection.hasSelection || !selection.bounds) return null;
+
+    const { bounds } = selection;
+    const { canvas, ctx } = context.getSelectionCanvas();
+    let alpha: Uint8ClampedArray | null = null;
+
+    if (canvas.width === bounds.width && canvas.height === bounds.height) {
+      try {
+        alpha = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      } catch {
+        alpha = null;
+      }
+    }
+
+    return { ...bounds, alpha };
+  }
+
+  private getSelectionAlpha(selection: SelectionConstraint, projectX: number, projectY: number) {
+    const localX = Math.floor(projectX - selection.x);
+    const localY = Math.floor(projectY - selection.y);
+    if (localX < 0 || localX >= selection.width || localY < 0 || localY >= selection.height) {
+      return 0;
+    }
+
+    if (!selection.alpha) return 255;
+    return selection.alpha[(localY * selection.width + localX) * 4 + 3];
   }
 
   private floodFillMask(

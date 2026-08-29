@@ -3,14 +3,19 @@
  */
 import React, { useState, useRef, useEffect } from "react";
 import { ChevronDown } from "lucide-react";
+import SliderPopover from "./SliderPopover";
 
 interface ToolSettingInputProps {
   label: React.ReactNode;
   value: number;
-  onChange: (value: number) => void;
+  onChange: (value: number, gestureStartValue?: number, gestureId?: number) => void;
   min?: number;
   max?: number;
   step?: number;
+  shiftStep?: number;
+  onSliderPointerDown?: (event: React.PointerEvent<HTMLInputElement>) => void;
+  onSliderPointerUp?: (event: React.PointerEvent<HTMLInputElement>) => void;
+  onSliderPointerCancel?: (event: React.PointerEvent<HTMLInputElement>) => void;
   unit?: string;
   displayMultiplier?: number; // E.g., 100 for percentage (internal value 1.0 -> 100 in UI)
 }
@@ -22,6 +27,10 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
   min = 0,
   max = 500,
   step = 1,
+  shiftStep,
+  onSliderPointerDown,
+  onSliderPointerUp,
+  onSliderPointerCancel,
   unit = "",
   displayMultiplier = 1,
 }) => {
@@ -30,9 +39,14 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
   const isDragging = useRef(false);
   const startX = useRef(0);
   const startValue = useRef(0);
+  const sliderStartValue = useRef(0);
+  const gestureSequence = useRef(0);
+  const sliderGestureId = useRef<number | null>(null);
 
   // Value converted for display (e.g., 0.5 * 100 = 50)
   const displayValue = Number((value * displayMultiplier).toFixed(displayMultiplier === 1 ? 0 : 2));
+
+  const getStep = (shiftKey: boolean) => (shiftKey && shiftStep !== undefined ? shiftStep : step);
 
   const clampAndSave = (newValue: number) => {
     const clamped = Math.min(max, Math.max(min, newValue));
@@ -41,6 +55,7 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
 
   // Scrubbing logic (dragging on label)
   const handleMouseDown = (e: React.MouseEvent) => {
+    const gestureId = ++gestureSequence.current;
     isDragging.current = true;
     startX.current = e.clientX;
     startValue.current = value;
@@ -50,15 +65,17 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
       if (!isDragging.current) return;
       const delta = moveEvent.clientX - startX.current;
 
-      // 1px = 1 unit of display value
+      // 1px = 1 unit of display value, or one accelerated step with Shift.
       const startDisplayValue = startValue.current * displayMultiplier;
-      let newDisplayValue = startDisplayValue + delta;
+      const activeStep = getStep(moveEvent.shiftKey);
+      let newDisplayValue = startDisplayValue + delta * activeStep;
 
       // Snap to step
-      newDisplayValue = Math.round(newDisplayValue / step) * step;
+      newDisplayValue = Math.round(newDisplayValue / activeStep) * activeStep;
 
       const newValue = newDisplayValue / displayMultiplier;
-      clampAndSave(newValue);
+      const clamped = Math.min(max, Math.max(min, newValue));
+      onChange(clamped, startValue.current, gestureId);
     };
 
     const handleMouseUp = () => {
@@ -76,7 +93,7 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const direction = e.deltaY > 0 ? -1 : 1;
-    const delta = (direction * step) / displayMultiplier;
+    const delta = (direction * getStep(e.shiftKey)) / displayMultiplier;
     clampAndSave(value + delta);
   };
 
@@ -120,7 +137,19 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
             // Prevent arrow keys from move the layer
             e.stopPropagation();
             if (e.key === "Enter") setIsOpen(false);
+
+            if (
+              shiftStep !== undefined &&
+              e.shiftKey &&
+              (e.key === "ArrowUp" || e.key === "ArrowDown")
+            ) {
+              e.preventDefault();
+              const direction = e.key === "ArrowUp" ? 1 : -1;
+              clampAndSave(value + (direction * shiftStep) / displayMultiplier);
+            }
           }}
+          min={min}
+          max={max}
           onClick={(e) => e.stopPropagation()}
           className="bg-transparent border-none text-[0.75rem] w-10 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none text-white font-medium"
         />
@@ -131,39 +160,35 @@ const ToolSettingInput: React.FC<ToolSettingInputProps> = ({
         />
       </div>
 
-      {isOpen && (
-        <div
-          className="absolute top-[calc(100%+8px)] left-[-20px] z-50 bg-[#1a1a1a] border border-[#333] p-3 rounded shadow-2xl min-w-[160px] animate-in fade-in slide-in-from-top-2 duration-200"
-          onWheel={(e) => e.stopPropagation()} // Allows parent container wheel to work or captures here
-        >
-          <div className="flex flex-col gap-2">
-            <div className="flex justify-between text-[0.65rem] text-[#666] uppercase font-bold px-0.5">
-              <span>
-                {Math.round(min * displayMultiplier)}
-                {unit}
-              </span>
-              <span>
-                {Math.round(max * displayMultiplier)}
-                {unit}
-              </span>
-            </div>
-            <input
-              type="range"
-              min={min * displayMultiplier}
-              max={max * displayMultiplier}
-              step={step}
-              value={displayValue}
-              onChange={(e) => {
-                const val = parseFloat(e.target.value);
-                onChange(val / displayMultiplier);
-              }}
-              className="w-full h-1.5 bg-[#333] rounded-lg appearance-none cursor-pointer accent-accent"
-            />
-          </div>
-          {/* Triangle arrow for the popup */}
-          <div className="absolute top-[-5px] left-[40px] w-2 h-2 bg-[#1a1a1a] border-t border-l border-[#333] rotate-45" />
-        </div>
-      )}
+      <SliderPopover
+        isOpen={isOpen}
+        min={min * displayMultiplier}
+        max={max * displayMultiplier}
+        step={step}
+        value={displayValue}
+        minLabel={`${Math.round(min * displayMultiplier)}${unit}`}
+        maxLabel={`${Math.round(max * displayMultiplier)}${unit}`}
+        onPointerDown={(event) => {
+          sliderGestureId.current = ++gestureSequence.current;
+          sliderStartValue.current = value;
+          onSliderPointerDown?.(event);
+        }}
+        onPointerUp={(event) => {
+          sliderGestureId.current = null;
+          onSliderPointerUp?.(event);
+        }}
+        onPointerCancel={(event) => {
+          sliderGestureId.current = null;
+          onSliderPointerCancel?.(event);
+        }}
+        onChange={(sliderValue) => {
+          onChange(
+            sliderValue / displayMultiplier,
+            sliderStartValue.current,
+            sliderGestureId.current ?? undefined,
+          );
+        }}
+      />
     </div>
   );
 };

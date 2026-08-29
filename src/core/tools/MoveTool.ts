@@ -15,6 +15,10 @@ export class MoveTool extends BaseTool {
     new Map();
   private movingLayerIds: string[] = [];
   private isFloating = false;
+  private duplicatePending = false;
+  private duplicateSourceIds: string[] = [];
+  private snapExcludedLayerIds = new Set<string>();
+  private floatingSelectionMovePromise: Promise<boolean> | null = null;
   private historySnapshot: HistoryState | null = null;
   private activeSnapLines: { type: "horizontal" | "vertical"; position: number }[] = [];
 
@@ -67,14 +71,53 @@ export class MoveTool extends BaseTool {
     return Array.from(targets).filter((id) => !context.isLayerLocked(id));
   }
 
+  /** Returns selected top-level layers, avoiding duplicate cloning of group descendants. */
+  private getSelectedLayerIds(context: ToolContext): string[] {
+    const { project } = context;
+    const selectedIds =
+      project.selectedLayerIds.length > 0
+        ? project.selectedLayerIds
+        : project.activeLayerId
+          ? [project.activeLayerId]
+          : [];
+    const selectedSet = new Set(selectedIds);
+
+    return selectedIds.filter((id) => {
+      let parentId = project.layers.find((layer) => layer.id === id)?.parentId;
+      while (parentId) {
+        if (selectedSet.has(parentId)) return false;
+        parentId = project.layers.find((layer) => layer.id === parentId)?.parentId;
+      }
+      return true;
+    });
+  }
+
+  private initializeMovingLayers(context: ToolContext, layerIds: string[]): void {
+    const { project } = context;
+    this.movingLayerIds = layerIds;
+    this.initialPositions.clear();
+
+    for (const id of this.movingLayerIds) {
+      const layer = project.layers.find((l) => l.id === id);
+      if (layer) {
+        this.initialPositions.set(id, {
+          x: layer.x,
+          y: layer.y,
+          maskX: layer.mask?.x,
+          maskY: layer.mask?.y,
+        });
+      }
+    }
+  }
+
   async onMouseDown(e: MouseEvent, context: ToolContext): Promise<void> {
     if (e.button !== 0) return;
 
     const { project } = context;
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
 
-    // 1. Auto Select Logic (Enabled by setting OR by holding Alt key)
-    if (context.settings.move.autoSelect || e.altKey) {
+    // 1. Auto Select Logic. Alt is reserved for duplicating the current selection.
+    if (context.settings.move.autoSelect && !e.altKey) {
       // Find top-most layer at this point (reverse search)
       const foundLayer = [...project.layers]
         .reverse()
@@ -102,11 +145,23 @@ export class MoveTool extends BaseTool {
     // Capture snapshot BEFORE any changes
     this.historySnapshot = createHistoryState(project);
 
+    this.duplicateSourceIds =
+      e.altKey && !project.selection.floatingLayer ? this.getSelectedLayerIds(context) : [];
+    this.duplicatePending = this.duplicateSourceIds.length > 0;
+    this.snapExcludedLayerIds = new Set(
+      this.duplicateSourceIds.flatMap((id) => [id, ...this.getDescendantIds(project.layers, id)]),
+    );
+
     // If we have a selection and no floating layer yet, we float it now
     // Selection floating currently only supports the active layer
-    if (activeLayerId && project.selection.hasSelection && !project.selection.floatingLayer) {
+    if (
+      !this.duplicatePending &&
+      activeLayerId &&
+      project.selection.hasSelection &&
+      !project.selection.floatingLayer
+    ) {
       if (!context.isLayerLocked(activeLayerId)) {
-        const success = await context.floatSelection(activeLayerId);
+        const success = await context.floatSelection(activeLayerId, this.historySnapshot);
         if (success) {
           this.isFloating = true;
         }
@@ -120,36 +175,38 @@ export class MoveTool extends BaseTool {
     this.isDragging = true;
     this.startX = x;
     this.startY = y;
-    this.initialPositions.clear();
 
     if (this.isFloating) {
       const floatingLayer = context.project.selection.floatingLayer!;
       this.movingLayerIds = ["floating-selection"];
+      this.initialPositions.clear();
       this.initialPositions.set("floating-selection", { x: floatingLayer.x, y: floatingLayer.y });
-    } else {
-      this.movingLayerIds = this.getTargetLayerIds(context);
-      for (const id of this.movingLayerIds) {
-        const layer = project.layers.find((l) => l.id === id);
-        if (layer) {
-          this.initialPositions.set(id, {
-            x: layer.x,
-            y: layer.y,
-            maskX: layer.mask?.x,
-            maskY: layer.mask?.y,
-          });
-        }
-      }
+    } else if (!this.duplicatePending) {
+      this.initializeMovingLayers(context, this.getTargetLayerIds(context));
     }
   }
 
   onMouseMove(e: MouseEvent, context: ToolContext): void {
-    if (!this.isDragging || this.movingLayerIds.length === 0) return;
+    if (!this.isDragging) return;
 
     const { project } = context;
     const { x, y } = context.screenToProject(e.offsetX, e.offsetY);
     // Use Math.round to force movement to project pixels (no subpixels)
     let dx = Math.round(x - this.startX);
     let dy = Math.round(y - this.startY);
+
+    if (this.duplicatePending) {
+      if (dx === 0 && dy === 0) return;
+
+      const duplicatedIds = context.duplicateLayers(this.duplicateSourceIds, true);
+      this.duplicatePending = false;
+      this.duplicateSourceIds = [];
+      this.initializeMovingLayers(context, this.getTargetLayerIds(context));
+
+      if (duplicatedIds.length === 0 || this.movingLayerIds.length === 0) return;
+    }
+
+    if (this.movingLayerIds.length === 0) return;
 
     this.activeSnapLines = [];
 
@@ -200,7 +257,10 @@ export class MoveTool extends BaseTool {
 
         if (snapToLayers) {
           const otherLayers = project.layers.filter(
-            (l) => !this.movingLayerIds.includes(l.id) && context.isLayerVisible(l.id),
+            (l) =>
+              !this.movingLayerIds.includes(l.id) &&
+              !this.snapExcludedLayerIds.has(l.id) &&
+              context.isLayerVisible(l.id),
           );
           for (const layer of otherLayers) {
             vSnaps.push(layer.x, layer.x + layer.width / 2, layer.x + layer.width);
@@ -324,7 +384,7 @@ export class MoveTool extends BaseTool {
       const dx = Math.round(x - this.startX);
       const dy = Math.round(y - this.startY);
 
-      if (this.historySnapshot && (dx !== 0 || dy !== 0)) {
+      if (this.historySnapshot && !this.isFloating && (dx !== 0 || dy !== 0)) {
         context.addHistoryEntry({
           description: "Move Tool",
           state: this.historySnapshot,
@@ -335,14 +395,78 @@ export class MoveTool extends BaseTool {
     }
     this.movingLayerIds = [];
     this.initialPositions.clear();
+    this.duplicatePending = false;
+    this.duplicateSourceIds = [];
+    this.snapExcludedLayerIds.clear();
     this.historySnapshot = null;
   }
 
-  onKeyDown(e: KeyboardEvent, context: ToolContext): boolean {
+  private async moveFloatingSelectionWithArrow(
+    e: KeyboardEvent,
+    context: ToolContext,
+  ): Promise<boolean> {
+    const { project } = context;
+    let floatingLayer = project.selection.floatingLayer;
+
+    if (!floatingLayer) {
+      const activeLayerId = project.activeLayerId;
+      if (!activeLayerId) return false;
+
+      if (!this.floatingSelectionMovePromise) {
+        this.floatingSelectionMovePromise = context.floatSelection(
+          activeLayerId,
+          createHistoryState(project),
+        );
+      }
+
+      const success = await this.floatingSelectionMovePromise;
+      this.floatingSelectionMovePromise = null;
+      if (!success) return false;
+      floatingLayer = context.project.selection.floatingLayer;
+    }
+
+    if (!floatingLayer) return false;
+
+    const distance = e.shiftKey ? 8 : 1;
+    const dx = e.key === "ArrowLeft" ? -distance : e.key === "ArrowRight" ? distance : 0;
+    const dy = e.key === "ArrowUp" ? -distance : e.key === "ArrowDown" ? distance : 0;
+    const bounds = context.project.selection.bounds ?? {
+      x: floatingLayer.x,
+      y: floatingLayer.y,
+      width: floatingLayer.width,
+      height: floatingLayer.height,
+    };
+
+    context.updateProject({
+      selection: {
+        ...context.project.selection,
+        floatingLayer: {
+          ...floatingLayer,
+          x: floatingLayer.x + dx,
+          y: floatingLayer.y + dy,
+        },
+        bounds: {
+          ...bounds,
+          x: bounds.x + dx,
+          y: bounds.y + dy,
+        },
+      },
+      isDirty: true,
+    });
+    context.updateSelectionEdges();
+    return true;
+  }
+
+  onKeyDown(e: KeyboardEvent, context: ToolContext): boolean | Promise<boolean> {
     const isArrow = e.key.startsWith("Arrow");
     if (!isArrow) return false;
 
     const { project } = context;
+    if (project.selection.hasSelection || project.selection.floatingLayer) {
+      e.preventDefault();
+      return this.moveFloatingSelectionWithArrow(e, context);
+    }
+
     const targetIds = this.getTargetLayerIds(context);
     if (targetIds.length === 0) return false;
 
@@ -384,19 +508,31 @@ export class MoveTool extends BaseTool {
     return true;
   }
 
+  onDeactivate(_context: ToolContext): void {
+    this.isDragging = false;
+    this.isFloating = false;
+    this.movingLayerIds = [];
+    this.initialPositions.clear();
+    this.duplicatePending = false;
+    this.duplicateSourceIds = [];
+    this.snapExcludedLayerIds.clear();
+    this.floatingSelectionMovePromise = null;
+    this.historySnapshot = null;
+  }
+
   onRender(ctx: CanvasRenderingContext2D, context: ToolContext): void {
     if (!this.isDragging || this.activeSnapLines.length === 0) return;
 
     const { project } = context;
     ctx.save();
-    ctx.setTransform(project.zoom, 0, 0, project.zoom, project.panX, project.panY);
+    context.setViewportTransform(project.zoom, project.panX, project.panY);
 
     ctx.lineWidth = 1 / project.zoom;
     ctx.strokeStyle = "red";
 
     // Viewport bounds in project space
-    const viewportWidth = context.canvas.width / project.zoom;
-    const viewportHeight = context.canvas.height / project.zoom;
+    const viewportWidth = context.viewportWidth / project.zoom;
+    const viewportHeight = context.viewportHeight / project.zoom;
     const startX = -project.panX / project.zoom;
     const startY = -project.panY / project.zoom;
 

@@ -11,9 +11,11 @@ export type ToolId =
   | "pencil"
   | "eraser"
   | "paintBucket"
+  | "gradient"
   | "text"
   | "transform"
-  | "crop";
+  | "crop"
+  | "colorPicker";
 
 export type SelectMode = "replace" | "unite" | "subtract" | "intersect";
 export type SelectShape = "rectangle" | "ellipse" | "lasso" | "wand";
@@ -30,6 +32,9 @@ export interface ToolSettings {
     antiAliasing: boolean;
     contiguous: boolean;
     fillTarget: "raster" | "color_fill";
+  };
+  gradient: {
+    presetId: string;
   };
   text: {
     fontFamily: string;
@@ -100,6 +105,9 @@ export const useToolStore = create<ToolState>()(
           antiAliasing: true,
           contiguous: true,
           fillTarget: "raster",
+        },
+        gradient: {
+          presetId: "foreground-background",
         },
         text: {
           fontFamily: "Arial",
