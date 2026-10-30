@@ -79,11 +79,19 @@ export class ForgeEngine {
   private checkerPattern: CanvasPattern | null = null;
 
   private ZOOM_SENSITIVITY = 0.05;
-  private ZOOM_SMOOTHING = 0.15;
+  private VIEWPORT_SMOOTHING_DURATION = 75;
   private readonly KEYBOARD_ZOOM_FACTOR = 1.1;
   private animationFrameId: number | null = null;
   private viewportAnimationId: number | null = null;
   private targetViewport: { zoom: number; panX: number; panY: number } | null = null;
+  private wheelZoomAnimation: {
+    anchorX: number;
+    anchorY: number;
+    anchorProjectX: number;
+    anchorProjectY: number;
+    lastTime: number;
+  } | null = null;
+  private wheelPanAnimation: { lastTime: number } | null = null;
   private viewportWidth = 0;
   private viewportHeight = 0;
   private devicePixelRatio = 1;
@@ -1558,12 +1566,7 @@ export class ForgeEngine {
    */
   private handleWheel(e: WheelEvent) {
     if (!this.project) return;
-    this.stopViewportAnimation();
     e.preventDefault();
-
-    let newScale = this.project.zoom;
-    let newOriginX = this.project.panX;
-    let newOriginY = this.project.panY;
 
     if (e.ctrlKey || e.metaKey) {
       const mx = e.offsetX;
@@ -1572,25 +1575,112 @@ export class ForgeEngine {
       const normalizedDelta =
         Math.sign(wheelDelta) * Math.min(Math.abs(wheelDelta * this.ZOOM_SENSITIVITY), 0.5);
 
+      if (!this.wheelZoomAnimation) {
+        this.stopViewportAnimation();
+      }
+
+      const baseZoom = this.targetViewport?.zoom ?? this.project.zoom;
       const zoomFactor = Math.exp(normalizedDelta);
-      const targetScale = Math.min(Math.max(this.project.zoom * zoomFactor, 0.05), 50);
+      const targetZoom = Math.min(Math.max(baseZoom * zoomFactor, 0.05), 50);
+      const anchorProjectX = (mx - this.project.panX) / this.project.zoom;
+      const anchorProjectY = (my - this.project.panY) / this.project.zoom;
 
-      const scaleChange = (targetScale - this.project.zoom) * this.ZOOM_SMOOTHING;
-      newScale = this.project.zoom + scaleChange;
+      this.targetViewport = {
+        zoom: targetZoom,
+        panX: mx - anchorProjectX * targetZoom,
+        panY: my - anchorProjectY * targetZoom,
+      };
+      this.wheelZoomAnimation = {
+        anchorX: mx,
+        anchorY: my,
+        anchorProjectX,
+        anchorProjectY,
+        lastTime: performance.now(),
+      };
 
-      newOriginX = mx - (mx - this.project.panX) * (newScale / this.project.zoom);
-      newOriginY = my - (my - this.project.panY) * (newScale / this.project.zoom);
-    } else {
-      newOriginX = this.project.panX - e.deltaX;
-      newOriginY = this.project.panY - e.deltaY;
+      if (this.viewportAnimationId === null) {
+        this.viewportAnimationId = requestAnimationFrame(this.animateWheel);
+      }
+      return;
     }
 
-    this.project.zoom = newScale;
-    this.project.panX = newOriginX;
-    this.project.panY = newOriginY;
+    if (!this.wheelPanAnimation) {
+      this.stopViewportAnimation();
+      this.targetViewport = {
+        zoom: this.project.zoom,
+        panX: this.project.panX,
+        panY: this.project.panY,
+      };
+      this.wheelPanAnimation = { lastTime: performance.now() };
+    }
 
-    this.onViewportChange?.(newScale, newOriginX, newOriginY);
+    const deltaX = e.shiftKey ? e.deltaY : e.deltaX;
+    const deltaY = e.shiftKey ? 0 : e.deltaY;
+    const basePanX = this.targetViewport?.panX ?? this.project.panX;
+    const basePanY = this.targetViewport?.panY ?? this.project.panY;
+    this.targetViewport = {
+      zoom: this.project.zoom,
+      panX: basePanX - deltaX,
+      panY: basePanY - deltaY,
+    };
+
+    if (this.viewportAnimationId === null) {
+      this.viewportAnimationId = requestAnimationFrame(this.animateWheel);
+    }
   }
+
+  private animateWheel = (now: number) => {
+    const target = this.targetViewport;
+    if (!this.project || !target) {
+      this.viewportAnimationId = null;
+      return;
+    }
+
+    const zoomAnimation = this.wheelZoomAnimation;
+    const panAnimation = this.wheelPanAnimation;
+    if (!zoomAnimation && !panAnimation) {
+      this.viewportAnimationId = null;
+      return;
+    }
+
+    const animation = zoomAnimation ?? panAnimation!;
+    const elapsed = Math.max(0, now - animation.lastTime);
+    animation.lastTime = now;
+    const smoothing = 1 - Math.exp(-elapsed / this.VIEWPORT_SMOOTHING_DURATION);
+    let settled: boolean;
+    if (zoomAnimation) {
+      const currentZoom = Math.exp(
+        Math.log(this.project.zoom) +
+          (Math.log(target.zoom) - Math.log(this.project.zoom)) * smoothing,
+      );
+      settled =
+        Math.abs(Math.log(target.zoom / currentZoom)) < 0.0005 &&
+        Math.abs(target.panX - this.project.panX) < 0.1 &&
+        Math.abs(target.panY - this.project.panY) < 0.1;
+      this.project.zoom = settled ? target.zoom : currentZoom;
+      this.project.panX = zoomAnimation.anchorX - zoomAnimation.anchorProjectX * this.project.zoom;
+      this.project.panY = zoomAnimation.anchorY - zoomAnimation.anchorProjectY * this.project.zoom;
+    } else {
+      const currentPanX = this.project.panX + (target.panX - this.project.panX) * smoothing;
+      const currentPanY = this.project.panY + (target.panY - this.project.panY) * smoothing;
+      settled =
+        Math.abs(target.panX - currentPanX) < 0.1 && Math.abs(target.panY - currentPanY) < 0.1;
+      this.project.panX = settled ? target.panX : currentPanX;
+      this.project.panY = settled ? target.panY : currentPanY;
+    }
+
+    this.onViewportChange?.(this.project.zoom, this.project.panX, this.project.panY);
+
+    if (settled) {
+      this.viewportAnimationId = null;
+      this.targetViewport = null;
+      this.wheelZoomAnimation = null;
+      this.wheelPanAnimation = null;
+      return;
+    }
+
+    this.viewportAnimationId = requestAnimationFrame(this.animateWheel);
+  };
 
   /**
    * Handles mouse down events.
@@ -1687,10 +1777,13 @@ export class ForgeEngine {
    * Stops any ongoing viewport animation.
    */
   private stopViewportAnimation() {
-    if (this.viewportAnimationId) {
+    if (this.viewportAnimationId !== null) {
       cancelAnimationFrame(this.viewportAnimationId);
       this.viewportAnimationId = null;
     }
+    this.targetViewport = null;
+    this.wheelZoomAnimation = null;
+    this.wheelPanAnimation = null;
   }
 
   /**
@@ -1848,6 +1941,7 @@ export class ForgeEngine {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
     }
+    this.stopViewportAnimation();
     if ((document as any).fonts) {
       (document as any).fonts.removeEventListener("loadingdone", this.handleFontsLoaded);
     }
@@ -2339,11 +2433,8 @@ export class ForgeEngine {
   private animateToViewport(targetZoom: number, targetPanX: number, targetPanY: number) {
     if (!this.project) return;
 
+    this.stopViewportAnimation();
     this.targetViewport = { zoom: targetZoom, panX: targetPanX, panY: targetPanY };
-
-    if (this.viewportAnimationId) {
-      cancelAnimationFrame(this.viewportAnimationId);
-    }
 
     const startZoom = this.project.zoom;
     const startPanX = this.project.panX;

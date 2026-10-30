@@ -546,6 +546,107 @@ describe("ForgeEngine", () => {
     expect(onViewportChange).toHaveBeenCalledWith(2, -400, -300);
   });
 
+  it("smoothly zooms around the cursor and accumulates wheel input", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange);
+    const project = createMockProject({ zoom: 1, panX: 0, panY: 0 });
+    engine.setProject(project);
+
+    const frames: Array<{ id: number; callback: FrameRequestCallback }> = [];
+    let nextFrameId = 0;
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback: FrameRequestCallback) => {
+        const id = ++nextFrameId;
+        frames.push({ id, callback });
+        return id;
+      }),
+    );
+
+    const dispatchZoomWheel = () => {
+      const event = new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, cancelable: true });
+      Object.defineProperties(event, {
+        offsetX: { value: 200 },
+        offsetY: { value: 150 },
+      });
+      canvas.dispatchEvent(event);
+    };
+
+    const startTime = performance.now();
+    dispatchZoomWheel();
+    dispatchZoomWheel();
+
+    const firstFrame = frames.shift();
+    expect(firstFrame).toBeDefined();
+    firstFrame?.callback(startTime + 16);
+
+    expect(project.zoom).toBeGreaterThan(1);
+    expect(project.zoom).toBeLessThan(Math.exp(1));
+    expect((200 - project.panX) / project.zoom).toBeCloseTo(200);
+    expect((150 - project.panY) / project.zoom).toBeCloseTo(150);
+
+    const finalFrame = frames.shift();
+    expect(finalFrame).toBeDefined();
+    finalFrame?.callback(startTime + 1016);
+
+    expect(project.zoom).toBeCloseTo(Math.exp(1));
+    expect((200 - project.panX) / project.zoom).toBeCloseTo(200);
+    expect((150 - project.panY) / project.zoom).toBeCloseTo(150);
+    engine.destroy();
+  });
+
+  it("smoothly pans and accumulates wheel input", () => {
+    const engine = new ForgeEngine(canvas, onViewportChange);
+    const project = createMockProject({ zoom: 1, panX: 0, panY: 0 });
+    engine.setProject(project);
+
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      }),
+    );
+
+    const dispatchPanWheel = (shiftKey = false) => {
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaX: 10,
+          deltaY: 20,
+          shiftKey,
+          cancelable: true,
+        }),
+      );
+    };
+
+    const startTime = performance.now();
+    dispatchPanWheel();
+    dispatchPanWheel();
+
+    expect(project.panX).toBe(0);
+    expect(project.panY).toBe(0);
+
+    frames.shift()?.(startTime + 16);
+    expect(project.panX).toBeLessThan(0);
+    expect(project.panY).toBeLessThan(0);
+    expect(project.panX).toBeGreaterThan(-20);
+    expect(project.panY).toBeGreaterThan(-40);
+
+    frames.shift()?.(startTime + 1016);
+    expect(project.panX).toBe(-20);
+    expect(project.panY).toBe(-40);
+
+    dispatchPanWheel(true);
+    frames.shift()?.(startTime + 1032);
+    expect(project.panX).toBeLessThan(-20);
+    expect(project.panY).toBe(-40);
+
+    frames.shift()?.(startTime + 2032);
+    expect(project.panX).toBe(-40);
+    expect(project.panY).toBe(-40);
+    engine.destroy();
+  });
+
   it("applies logarithmic keyboard zoom steps and respects zoom limits", () => {
     const engine = new ForgeEngine(canvas, onViewportChange);
     engine.resizeViewport(800, 600, 1);
